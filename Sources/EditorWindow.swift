@@ -89,6 +89,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
     private let fileLabel = NSTextField(labelWithString: "")
     private let placeholder = NSTextField(labelWithString: "左のディレクトリからファイルを選択してください")
     private var folderButton: ToolStripButton!
+    private var pluginButton: ToolStripButton!
     private var terminalButton: ToolStripButton!
     private var gitButton: ToolStripButton!
     private var terminalFeed: TerminalFeed?
@@ -100,6 +101,17 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
     private var gitRefreshing = false
     private lazy var rootResolved = root.url.resolvingSymlinksInPath().path
     private var treeFeed: FeedView!
+    private let leftPane = NSView()
+    private weak var topFeed: FeedView?
+    private var pluginFeed: FeedView?
+    private let pluginPage = PluginPage()
+    private let barHost = NSView()
+    private var barHeight: NSLayoutConstraint!
+    private let bodyHost = NSView()
+    private var ext: EditorExtension?
+    private var selectedURL: URL?
+    private let gearButton = NSButton()
+    private let settingsMenu = EditorSettingsMenu()
     private let fileTabs = TabStrip()
     private var tabs: [URL: TabItemView] = [:]
     private var buffers: [URL: Buffer] = [:]
@@ -123,9 +135,9 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
         window.center()
         window.setFrameAutosaveName("Editor:\(project.path)")
         if !root.isDirectory { open(root.url) }
-        autosaveTimer = Timer.scheduledTimer(timeInterval: 10, target: self, selector: #selector(autosave),
-                                             userInfo: nil, repeats: true)
-        refreshGit()
+        NotificationCenter.default.addObserver(self, selector: #selector(applySettings), name: .settingsChanged, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(pluginsChanged), name: .pluginsChanged, object: nil)
+        applySettings()
     }
 
     private var baseDirectory: URL { root.isDirectory ? root.url : root.url.deletingLastPathComponent() }
@@ -170,6 +182,13 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
         cloudButton.action = #selector(autosave)
         cloudButton.translatesAutoresizingMaskIntoConstraints = false
         topBar.addSubview(cloudButton)
+        gearButton.image = Self.cloudImage("gearshape")
+        gearButton.isBordered = false
+        gearButton.toolTip = "エディタ設定"
+        gearButton.target = self
+        gearButton.action = #selector(gearClicked)
+        gearButton.translatesAutoresizingMaskIntoConstraints = false
+        topBar.addSubview(gearButton)
         let topLine = NSBox()
         topLine.boxType = .separator
         topLine.translatesAutoresizingMaskIntoConstraints = false
@@ -177,12 +196,14 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
         let strip = NSView()
         strip.translatesAutoresizingMaskIntoConstraints = false
         folderButton = ToolStripButton(symbol: "folder", tip: "ディレクトリ", target: self, action: #selector(toggleTree))
+        pluginButton = ToolStripButton(symbol: "puzzlepiece.extension", tip: "プラグイン", target: self, action: #selector(togglePlugins))
         terminalButton = ToolStripButton(symbol: "terminal", tip: "ターミナル", target: self, action: #selector(toggleTerminal))
         gitButton = ToolStripButton(symbol: "arrow.triangle.branch", tip: "Git", target: self, action: #selector(toggleGit))
         folderButton.active = true
-        strip.addSubview(folderButton)
-        strip.addSubview(terminalButton)
-        strip.addSubview(gitButton)
+        let upper = Self.buttonColumn([folderButton, pluginButton])
+        let lower = Self.buttonColumn([terminalButton, gitButton])
+        strip.addSubview(upper)
+        strip.addSubview(lower)
         let stripLine = NSBox()
         stripLine.boxType = .separator
         stripLine.translatesAutoresizingMaskIntoConstraints = false
@@ -211,7 +232,9 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
                                                name: NSView.frameDidChangeNotification, object: treeScroll.contentView)
 
         treeFeed = FeedView(title: "ディレクトリ", content: treeScroll)
-        treeFeed.onRemove = { [weak self] in self?.toggleTree() }
+        treeFeed.onRemove = { [weak self] in self?.hideTop() }
+        show(treeFeed, in: leftPane)
+        topFeed = treeFeed
 
         textView.font = .monospacedSystemFont(ofSize: 13, weight: .regular)
         textView.isRichText = false
@@ -231,22 +254,32 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
         editorScroll.hasHorizontalScroller = true
 
         let editorPane = NSView()
-        editorScroll.translatesAutoresizingMaskIntoConstraints = false
+        barHost.translatesAutoresizingMaskIntoConstraints = false
+        barHost.clipsToBounds = true
+        bodyHost.translatesAutoresizingMaskIntoConstraints = false
         editorPane.addSubview(fileTabs)
-        editorPane.addSubview(editorScroll)
+        editorPane.addSubview(barHost)
+        editorPane.addSubview(bodyHost)
+        show(editorScroll, in: bodyHost)
         placeholder.textColor = .tertiaryLabelColor
         placeholder.translatesAutoresizingMaskIntoConstraints = false
         editorPane.addSubview(placeholder)
+        pluginPage.onError = { [weak self] in self?.showError($0) }
+        barHeight = barHost.heightAnchor.constraint(equalToConstant: 0)
         NSLayoutConstraint.activate([
             fileTabs.topAnchor.constraint(equalTo: editorPane.topAnchor),
             fileTabs.leadingAnchor.constraint(equalTo: editorPane.leadingAnchor),
             fileTabs.trailingAnchor.constraint(equalTo: editorPane.trailingAnchor),
-            editorScroll.topAnchor.constraint(equalTo: fileTabs.bottomAnchor),
-            editorScroll.leadingAnchor.constraint(equalTo: editorPane.leadingAnchor),
-            editorScroll.trailingAnchor.constraint(equalTo: editorPane.trailingAnchor),
-            editorScroll.bottomAnchor.constraint(equalTo: editorPane.bottomAnchor),
-            placeholder.centerXAnchor.constraint(equalTo: editorScroll.centerXAnchor),
-            placeholder.centerYAnchor.constraint(equalTo: editorScroll.centerYAnchor),
+            barHost.topAnchor.constraint(equalTo: fileTabs.bottomAnchor),
+            barHost.leadingAnchor.constraint(equalTo: editorPane.leadingAnchor),
+            barHost.trailingAnchor.constraint(equalTo: editorPane.trailingAnchor),
+            barHeight,
+            bodyHost.topAnchor.constraint(equalTo: barHost.bottomAnchor),
+            bodyHost.leadingAnchor.constraint(equalTo: editorPane.leadingAnchor),
+            bodyHost.trailingAnchor.constraint(equalTo: editorPane.trailingAnchor),
+            bodyHost.bottomAnchor.constraint(equalTo: editorPane.bottomAnchor),
+            placeholder.centerXAnchor.constraint(equalTo: bodyHost.centerXAnchor),
+            placeholder.centerYAnchor.constraint(equalTo: bodyHost.centerYAnchor),
         ])
 
         rightSplit.isVertical = false
@@ -255,7 +288,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
 
         mainSplit.isVertical = true
         mainSplit.dividerStyle = .thin
-        mainSplit.addArrangedSubview(treeFeed)
+        mainSplit.addArrangedSubview(leftPane)
         mainSplit.addArrangedSubview(rightSplit)
         mainSplit.setHoldingPriority(.defaultLow + 10, forSubviewAt: 0)
         mainSplit.translatesAutoresizingMaskIntoConstraints = false
@@ -271,7 +304,9 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
             titleStack.leadingAnchor.constraint(equalTo: back.trailingAnchor, constant: 6),
             titleStack.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
             titleStack.trailingAnchor.constraint(lessThanOrEqualTo: cloudButton.leadingAnchor, constant: -12),
-            cloudButton.trailingAnchor.constraint(equalTo: topBar.trailingAnchor, constant: -12),
+            cloudButton.trailingAnchor.constraint(equalTo: gearButton.leadingAnchor, constant: -8),
+            gearButton.trailingAnchor.constraint(equalTo: topBar.trailingAnchor, constant: -12),
+            gearButton.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
             cloudButton.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
             topLine.topAnchor.constraint(equalTo: topBar.bottomAnchor),
             topLine.leadingAnchor.constraint(equalTo: content.leadingAnchor),
@@ -281,12 +316,11 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
             strip.leadingAnchor.constraint(equalTo: content.leadingAnchor),
             strip.bottomAnchor.constraint(equalTo: content.bottomAnchor),
             strip.widthAnchor.constraint(equalToConstant: 40),
-            folderButton.topAnchor.constraint(equalTo: strip.topAnchor, constant: 8),
-            folderButton.centerXAnchor.constraint(equalTo: strip.centerXAnchor),
-            gitButton.bottomAnchor.constraint(equalTo: strip.bottomAnchor, constant: -8),
-            gitButton.centerXAnchor.constraint(equalTo: strip.centerXAnchor),
-            terminalButton.bottomAnchor.constraint(equalTo: gitButton.topAnchor, constant: -4),
-            terminalButton.centerXAnchor.constraint(equalTo: strip.centerXAnchor),
+            upper.topAnchor.constraint(equalTo: strip.topAnchor, constant: 8),
+            upper.centerXAnchor.constraint(equalTo: strip.centerXAnchor),
+            lower.bottomAnchor.constraint(equalTo: strip.bottomAnchor, constant: -8),
+            lower.centerXAnchor.constraint(equalTo: strip.centerXAnchor),
+            lower.topAnchor.constraint(greaterThanOrEqualTo: upper.bottomAnchor, constant: 8),
             stripLine.topAnchor.constraint(equalTo: topLine.bottomAnchor),
             stripLine.bottomAnchor.constraint(equalTo: content.bottomAnchor),
             stripLine.leadingAnchor.constraint(equalTo: strip.trailingAnchor),
@@ -331,13 +365,69 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
         column.width = max(width, treeScroll.contentView.bounds.width - outline.intercellSpacing.width)
     }
 
-    @objc private func toggleTree() {
-        let pane: NSView = treeFeed
-        pane.isHidden.toggle()
-        folderButton.active = !pane.isHidden
-        mainSplit.adjustSubviews()
-        if !pane.isHidden { mainSplit.setPosition(260, ofDividerAt: 0) }
+    private static func buttonColumn(_ buttons: [NSView]) -> NSStackView {
+        let stack = NSStackView(views: buttons)
+        stack.orientation = .vertical
+        stack.spacing = 4
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        return stack
     }
+
+    private func show(_ view: NSView, in host: NSView) {
+        host.subviews.filter { $0 !== view }.forEach { $0.removeFromSuperview() }
+        view.isHidden = false
+        guard view.superview !== host else { return }
+        view.removeFromSuperview()
+        view.translatesAutoresizingMaskIntoConstraints = false
+        host.addSubview(view)
+        NSLayoutConstraint.activate([
+            view.topAnchor.constraint(equalTo: host.topAnchor),
+            view.leadingAnchor.constraint(equalTo: host.leadingAnchor),
+            view.trailingAnchor.constraint(equalTo: host.trailingAnchor),
+            view.bottomAnchor.constraint(equalTo: host.bottomAnchor),
+        ])
+    }
+
+    private func toggleTop(_ feed: FeedView) {
+        if topFeed === feed, !leftPane.isHidden {
+            hideTop()
+            return
+        }
+        show(feed, in: leftPane)
+        topFeed = feed
+        folderButton.active = feed === treeFeed
+        pluginButton.active = feed === pluginFeed
+        guard leftPane.isHidden else { return }
+        leftPane.isHidden = false
+        mainSplit.adjustSubviews()
+        mainSplit.setPosition(260, ofDividerAt: 0)
+    }
+
+    private func hideTop() {
+        leftPane.isHidden = true
+        folderButton.active = false
+        pluginButton.active = false
+        mainSplit.adjustSubviews()
+    }
+
+    @objc private func toggleTree() { toggleTop(treeFeed) }
+
+    @objc private func togglePlugins() {
+        let feed: FeedView
+        if let existing = pluginFeed {
+            feed = existing
+        } else {
+            let list = PluginList()
+            list.onOpen = { [weak self] id in self?.open(PluginStore.pageURL(id)) }
+            list.onError = { [weak self] in self?.showError($0) }
+            feed = FeedView(title: "プラグイン", content: list)
+            feed.onRemove = { [weak self] in self?.hideTop() }
+            pluginFeed = feed
+        }
+        toggleTop(feed)
+    }
+
+    @objc private func gearClicked() { settingsMenu.popUp(from: gearButton) }
 
     private func showBottom(_ view: NSView) {
         view.isHidden = false
@@ -356,6 +446,10 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
             hideBottom(feed)
             terminalButton.active = false
             return
+        }
+        if let git = gitFeed, !git.isHidden {
+            git.isHidden = true
+            gitButton.active = false
         }
         let feed: TerminalFeed
         if let existing = terminalFeed {
@@ -383,6 +477,10 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
             hideBottom(feed)
             gitButton.active = false
             return
+        }
+        if let terminal = terminalFeed, !terminal.isHidden {
+            terminal.isHidden = true
+            terminalButton.active = false
         }
         let feed: FeedView
         if let existing = gitFeed {
@@ -424,6 +522,12 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
     }
 
     func refreshGit() {
+        guard Settings.gitEnabled else {
+            git = nil
+            branchView.isHidden = true
+            outline.reloadData(forRowIndexes: IndexSet(integersIn: 0..<outline.numberOfRows), columnIndexes: IndexSet(integer: 0))
+            return
+        }
         guard !gitRefreshing else { return }
         gitRefreshing = true
         let dir = baseDirectory
@@ -432,6 +536,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.gitRefreshing = false
+                guard Settings.gitEnabled else { return }
                 self.git = snapshot
                 self.branchLabel.stringValue = snapshot?.branch ?? ""
                 self.branchView.isHidden = snapshot == nil
@@ -509,14 +614,21 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
     }
 
     private func open(_ url: URL) {
+        if let id = PluginStore.id(from: url) {
+            openPluginPage(id)
+            return
+        }
         storeCurrent()
         let buffer = buffers[url] ?? Buffer(url: url)
         buffers[url] = buffer
         current = buffer
-        addTab(for: url)
+        selectedURL = url
+        addTab(for: url, title: url.lastPathComponent)
         placeholder.isHidden = true
         textView.string = buffer.text
+        styleText()
         textView.isEditable = buffer.editable
+        attachExtension()
         textView.undoManager?.removeAllActions()
         textView.setSelectedRange(NSRange(location: 0, length: 0))
         textView.scrollToBeginningOfDocument(nil)
@@ -524,12 +636,106 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
         updateTitle()
     }
 
-    private func addTab(for url: URL) {
+    private func openPluginPage(_ id: String) {
+        guard let info = PluginStore.info(id) else { return }
+        storeCurrent()
+        current = nil
+        let url = PluginStore.pageURL(id)
+        selectedURL = url
+        addTab(for: url, title: info.name)
+        detachExtension()
+        pluginPage.show(id)
+        show(pluginPage, in: bodyHost)
+        placeholder.isHidden = true
+        fileLabel.stringValue = "プラグイン > \(info.name)"
+        updateCloud()
+    }
+
+    private func attachExtension() {
+        guard let current else { return detachExtension() }
+        ext = current.editable ? PluginStore.makeExtension(for: current.url, code: editorScroll) : nil
+        guard let ext else { return detachExtension() }
+        show(ext.bar, in: barHost)
+        barHeight.constant = 30
+        show(ext.body, in: bodyHost)
+        ext.update(text: textView.string)
+    }
+
+    private func detachExtension() {
+        ext = nil
+        barHost.subviews.forEach { $0.removeFromSuperview() }
+        barHeight.constant = 0
+        show(editorScroll, in: bodyHost)
+    }
+
+    private func showEmpty() {
+        selectedURL = nil
+        detachExtension()
+        textView.string = ""
+        textView.isEditable = false
+        placeholder.isHidden = false
+        fileLabel.stringValue = ""
+        updateCloud()
+    }
+
+    @objc private func pluginsChanged() {
+        (pluginFeed?.content as? PluginList)?.reload()
+        pluginPage.refresh()
+        if current != nil {
+            storeCurrent()
+            attachExtension()
+        }
+    }
+
+    private func styleText() {
+        guard let storage = textView.textStorage else { return }
+        let attrs: [NSAttributedString.Key: Any] = [.font: Settings.font, .foregroundColor: Settings.foreground,
+                                                    .paragraphStyle: Settings.paragraphStyle]
+        storage.setAttributes(attrs, range: NSRange(location: 0, length: storage.length))
+        textView.typingAttributes = attrs
+    }
+
+    @objc private func applySettings() {
+        textView.font = Settings.font
+        textView.backgroundColor = Settings.background
+        textView.insertionPointColor = Settings.foreground
+        textView.defaultParagraphStyle = Settings.paragraphStyle
+        styleText()
+        let wrap = Settings.wrapLines
+        textView.isHorizontallyResizable = !wrap
+        textView.textContainer?.widthTracksTextView = wrap
+        editorScroll.hasHorizontalScroller = !wrap
+        if wrap {
+            textView.autoresizingMask = [.width]
+            textView.frame.size.width = editorScroll.contentSize.width
+            textView.textContainer?.containerSize = NSSize(width: editorScroll.contentSize.width, height: CGFloat.greatestFiniteMagnitude)
+        } else {
+            textView.autoresizingMask = []
+            textView.textContainer?.containerSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        }
+        ext?.applySettings()
+
+        autosaveTimer?.invalidate()
+        autosaveTimer = Settings.autosaveEnabled
+            ? Timer.scheduledTimer(timeInterval: Settings.autosaveInterval, target: self, selector: #selector(autosave),
+                                   userInfo: nil, repeats: true)
+            : nil
+        updateCloud()
+
+        gitButton.isHidden = !Settings.gitEnabled
+        if !Settings.gitEnabled, let feed = gitFeed, !feed.isHidden {
+            hideBottom(feed)
+            gitButton.active = false
+        }
+        refreshGit()
+    }
+
+    private func addTab(for url: URL, title: String) {
         if tabs[url] == nil {
-            let tab = TabItemView(title: url.lastPathComponent, closable: true)
-            tab.toolTip = url.path
+            let tab = TabItemView(title: title, closable: true)
+            tab.toolTip = url.isFileURL ? url.path : title
             tab.onSelect = { [weak self] in
-                guard let self, self.current?.url != url else { return }
+                guard let self, self.selectedURL != url else { return }
                 self.open(url)
             }
             tab.onClose = { [weak self] in self?.closeTab(url) }
@@ -544,7 +750,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
         guard let tab = tabs[url] else { return }
         let order = fileTabs.stack.arrangedSubviews
         let index = order.firstIndex(of: tab) ?? 0
-        if current?.url == url { storeCurrent() }
+        if selectedURL == url { storeCurrent() }
         if let buffer = buffers[url], buffer.dirty, buffer.editable {
             do {
                 try buffer.text.write(to: url, atomically: true, encoding: .utf8)
@@ -556,7 +762,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
         tab.removeFromSuperview()
         tabs[url] = nil
         buffers[url] = nil
-        guard current?.url == url else { updateTitle(); return }
+        guard selectedURL == url else { updateTitle(); return }
         current = nil
         let remaining = fileTabs.stack.arrangedSubviews
         if !remaining.isEmpty,
@@ -564,11 +770,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
             open(next)
             return
         }
-        textView.string = ""
-        textView.isEditable = false
-        placeholder.isHidden = false
-        fileLabel.stringValue = ""
-        updateCloud()
+        showEmpty()
     }
 
     private func storeCurrent() {
@@ -577,13 +779,14 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
     }
 
     func textDidChange(_ notification: Notification) {
+        ext?.update(text: textView.string)
         guard let current, !current.dirty else { return }
         current.dirty = true
         updateTitle()
     }
 
     private func updateTitle() {
-        guard let current else { return }
+        guard let current else { return updateCloud() }
         let base = baseDirectory
         var relative = current.url.path
         if relative.hasPrefix(base.path + "/") { relative.removeFirst(base.path.count + 1) }
@@ -594,7 +797,8 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
     private func updateCloud() {
         let dirty = buffers.values.contains { $0.dirty }
         cloudButton.image = Self.cloudImage(dirty ? "icloud.and.arrow.up" : "checkmark.icloud")
-        cloudButton.toolTip = dirty ? "保存中…" : "自動保存済み"
+        cloudButton.toolTip = !dirty ? (Settings.autosaveEnabled ? "自動保存済み" : "保存済み")
+            : Settings.autosaveEnabled ? "保存中…" : "未保存（クリックで保存）"
         window?.isDocumentEdited = dirty
     }
 
@@ -763,7 +967,7 @@ extension EditorWindowController {
 
     private func reopenTabs(_ map: (URL) -> URL?) {
         let order = fileTabs.stack.arrangedSubviews.compactMap { view in tabs.first { $0.value === view }?.key }
-        let selected = current?.url
+        let selected = selectedURL
         order.forEach { tabs[$0]?.removeFromSuperview() }
         tabs = [:]
         buffers = [:]
@@ -773,11 +977,7 @@ extension EditorWindowController {
         if let selected, let target = map(selected) {
             open(target)
         } else if reopened.isEmpty {
-            textView.string = ""
-            textView.isEditable = false
-            placeholder.isHidden = false
-            fileLabel.stringValue = ""
-            updateCloud()
+            showEmpty()
         }
     }
 

@@ -87,6 +87,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WelcomeDelegate {
     }
 
     private func askSaveProject(_ project: Project) -> Project {
+        if let saved = ProjectStore.all.first(where: { $0.path == project.path }) { return saved }
+        switch Settings.projectAddMode {
+        case .never:
+            return project
+        case .always:
+            ProjectStore.touch(project)
+            welcome.reload()
+            return project
+        case .ask:
+            break
+        }
         let alert = NSAlert()
         alert.messageText = "プロジェクトとして保存しますか？"
         alert.informativeText = "保存すると、次回から初期画面の左側から開けます。\n\(project.path)"
@@ -192,16 +203,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WelcomeDelegate {
 
     @objc private func settingsClicked() {
         if settingsWindow == nil {
-            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 420, height: 240),
-                                  styleMask: [.titled, .closable], backing: .buffered, defer: false)
+            let view = BaseSettingsView(version: currentVersion)
+            let window = NSWindow(contentRect: view.frame, styleMask: [.titled, .closable], backing: .buffered, defer: false)
             window.title = "設定"
             window.isReleasedWhenClosed = false
-            let label = NSTextField(labelWithString: "\(appName) v\(currentVersion)")
-            label.frame = NSRect(x: 20, y: 190, width: 380, height: 20)
-            window.contentView?.addSubview(label)
+            window.contentView = view
             window.center()
             settingsWindow = window
         }
+        (settingsWindow?.contentView as? BaseSettingsView)?.load()
         settingsWindow?.makeKeyAndOrderFront(nil)
     }
 
