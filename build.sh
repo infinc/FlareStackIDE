@@ -11,7 +11,7 @@ ICONSET="$ROOT/build/AppIcon.iconset"
 rm -rf "$APP" "$ICONSET"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" "$ICONSET"
 
-swiftc -target arm64-apple-macos13 -O "$ROOT/Sources/main.swift" -o "$APP/Contents/MacOS/$NAME"
+swiftc -target arm64-apple-macos13 -O "$ROOT"/Sources/*.swift -o "$APP/Contents/MacOS/$NAME"
 
 for s in 16 32 128 256 512; do
     sips -z $s $s "$ROOT/data/pics/icon.png" --out "$ICONSET/icon_${s}x${s}.png" >/dev/null
