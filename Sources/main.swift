@@ -8,6 +8,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WelcomeDelegate {
     private var settingsWindow: NSWindow?
     private var cloneSheet: CloneWindowController?
     private var updateButton: NSButton?
+    private var lightEditors: [LightEditorWindowController] = []
+    private var pendingURLs: [URL] = []
+    private var launched = false
 
     private var currentVersion: String { AppUpdate.shared.currentVersion }
 
@@ -18,8 +21,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WelcomeDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
             self?.splash?.orderOut(nil)
             self?.splash = nil
-            self?.showMainWindow()
+            guard let self else { return }
+            self.showMainWindow()
+            self.launched = true
             PluginStore.refreshCatalog()
+            let urls = self.pendingURLs
+            self.pendingURLs = []
+            urls.forEach(self.openFromFinder)
         }
     }
 
@@ -32,6 +40,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WelcomeDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         editors.forEach { $0.saveAll() }
+        lightEditors.forEach { $0.save() }
+    }
+
+    func application(_ application: NSApplication, open urls: [URL]) {
+        guard launched else {
+            pendingURLs += urls
+            return
+        }
+        urls.forEach(openFromFinder)
+    }
+
+    private func openFromFinder(_ url: URL) {
+        NSApp.activate(ignoringOtherApps: true)
+        if let project = askSaveProject(Project(name: url.lastPathComponent, path: url.path)) { openEditor(project) }
+    }
+
+    private func openLight(_ url: URL) {
+        if let existing = lightEditors.first(where: { $0.url.standardizedFileURL == url.standardizedFileURL }) {
+            existing.window?.makeKeyAndOrderFront(nil)
+            return
+        }
+        let editor = LightEditorWindowController(url: url)
+        editor.onClose = { [weak self, weak editor] in
+            guard let self else { return }
+            self.lightEditors.removeAll { $0 === editor }
+            if self.editors.isEmpty, self.lightEditors.isEmpty { self.mainWindow?.makeKeyAndOrderFront(nil) }
+        }
+        lightEditors.append(editor)
+        editor.showWindow(nil)
+        mainWindow?.orderOut(nil)
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -85,10 +123,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WelcomeDelegate {
         panel.prompt = "開く"
         guard panel.runModal() == .OK, let url = panel.url else { return }
 
-        openEditor(askSaveProject(Project(name: url.lastPathComponent, path: url.path)))
+        if let project = askSaveProject(Project(name: url.lastPathComponent, path: url.path)) { openEditor(project) }
     }
 
-    private func askSaveProject(_ project: Project) -> Project {
+    private func askSaveProject(_ project: Project, allowLight: Bool = true) -> Project? {
         if let saved = ProjectStore.all.first(where: { $0.path == project.path }) { return saved }
         switch Settings.projectAddMode {
         case .never:
@@ -105,7 +143,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WelcomeDelegate {
         alert.informativeText = "保存すると、次回から初期画面の左側から開けます。\n\(project.path)"
         alert.addButton(withTitle: "保存する")
         alert.addButton(withTitle: "保存しない")
-        if alert.runModal() == .alertFirstButtonReturn {
+        var isDir: ObjCBool = false
+        let light = allowLight && PluginStore.isInstalled(LightEditorWindowController.pluginID)
+            && FileManager.default.fileExists(atPath: project.path, isDirectory: &isDir) && !isDir.boolValue
+        if light { alert.addButton(withTitle: "Light Editerで開く") }
+        let response = alert.runModal()
+        if light, response == .alertThirdButtonReturn {
+            openLight(project.url)
+            return nil
+        }
+        if response == .alertFirstButtonReturn {
             ProjectStore.touch(ProjectStore.all.first { $0.path == project.path } ?? project)
             welcome.reload()
         }
@@ -127,7 +174,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WelcomeDelegate {
             NSAlert(error: error).runModal()
             return
         }
-        openEditor(askSaveProject(Project(name: request.name, path: request.destination.path))).clone(request)
+        let project = askSaveProject(Project(name: request.name, path: request.destination.path), allowLight: false)
+            ?? Project(name: request.name, path: request.destination.path)
+        openEditor(project).clone(request)
     }
 
     func welcomeOpen(_ project: Project) {
@@ -167,6 +216,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WelcomeDelegate {
         editor.onBack = { [weak self] in
             self?.welcome.reload()
             self?.mainWindow?.makeKeyAndOrderFront(nil)
+        }
+        editor.onProjectRenamed = { [weak self] in self?.welcome.reload() }
+        editor.onOpenProject = { [weak self, weak editor] target, newWindow in
+            guard let self, let editor else { return }
+            ProjectStore.touch(target)
+            self.welcome.reload()
+            let frame = editor.window?.frame
+            let opened = self.openEditor(target)
+            guard !newWindow, opened !== editor else { return }
+            if let frame { opened.window?.setFrame(frame, display: true) }
+            editor.window?.close()
         }
         editors.append(editor)
         editor.showWindow(nil)

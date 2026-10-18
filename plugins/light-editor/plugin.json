@@ -1,0 +1,10 @@
+{
+  "id": "light-editor",
+  "name": "Light Editer",
+  "version": "1.0",
+  "author": "FlareStackIDE",
+  "symbol": "doc.text",
+  "summary": "ファイルだけを開く軽量エディタ",
+  "fileExtensions": [],
+  "files": ["README.md"]
+}

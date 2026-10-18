@@ -1,0 +1,10 @@
+{
+  "id": "runner",
+  "name": "Runner",
+  "version": "1.0",
+  "author": "FlareStackIDE",
+  "symbol": "play.circle",
+  "summary": "起動構成を作ってプログラムを実行",
+  "fileExtensions": [],
+  "files": ["README.md"]
+}

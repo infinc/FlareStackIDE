@@ -1,8 +1,14 @@
 import AppKit
 
-final class TabItemView: NSView {
+final class TabItemView: NSView, NSTextFieldDelegate {
     var onSelect: (() -> Void)?
     var onClose: (() -> Void)?
+    var onRename: ((String) -> Void)?
+    var onMove: (() -> Void)?
+    var draggable = false
+    private var dragStart: CGFloat?
+    private var dragged = false
+    private var oldTitle = ""
     var selected = false { didSet { updateColor() } }
     var plain = false { didSet { needsDisplay = true } }
     var title: String {
@@ -48,7 +54,70 @@ final class TabItemView: NSView {
 
     required init?(coder: NSCoder) { fatalError() }
 
-    override func mouseDown(with event: NSEvent) { onSelect?() }
+    override func mouseDown(with event: NSEvent) {
+        if event.clickCount == 2, onRename != nil {
+            beginRename()
+            return
+        }
+        dragStart = event.locationInWindow.x
+        dragged = false
+        onSelect?()
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard draggable, let start = dragStart, let stack = superview as? NSStackView else { return }
+        let dx = event.locationInWindow.x - start
+        guard dragged || abs(dx) > 4 else { return }
+        dragged = true
+        let tabs = stack.arrangedSubviews.filter { $0 is TabItemView }
+        guard let mine = tabs.firstIndex(of: self) else { return }
+        let x = stack.convert(event.locationInWindow, from: nil).x
+        if mine + 1 < tabs.count, x > tabs[mine + 1].frame.midX {
+            move(in: stack, after: tabs[mine + 1])
+            dragStart = event.locationInWindow.x
+        } else if mine > 0, x < tabs[mine - 1].frame.midX {
+            move(in: stack, before: tabs[mine - 1])
+            dragStart = event.locationInWindow.x
+        }
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        if dragged { onMove?() }
+        dragStart = nil
+        dragged = false
+    }
+
+    private func move(in stack: NSStackView, after: NSView? = nil, before: NSView? = nil) {
+        stack.removeArrangedSubview(self)
+        let anchor = (after ?? before)!
+        guard let index = stack.arrangedSubviews.firstIndex(of: anchor) else { return }
+        stack.insertArrangedSubview(self, at: after != nil ? index + 1 : index)
+        stack.layoutSubtreeIfNeeded()
+    }
+
+    private func beginRename() {
+        oldTitle = label.stringValue
+        label.isEditable = true
+        label.isSelectable = true
+        label.isBezeled = false
+        label.drawsBackground = true
+        label.backgroundColor = .textBackgroundColor
+        label.delegate = self
+        window?.makeFirstResponder(label)
+        label.currentEditor()?.selectAll(nil)
+    }
+
+    func controlTextDidEndEditing(_ obj: Notification) {
+        label.isEditable = false
+        label.isSelectable = false
+        label.drawsBackground = false
+        let name = label.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        if name.isEmpty {
+            label.stringValue = oldTitle
+        } else {
+            onRename?(name)
+        }
+    }
 
     private func updateColor() {
         label.textColor = selected ? .labelColor : .secondaryLabelColor
@@ -136,6 +205,11 @@ final class TabStrip: NSView {
 final class FeedView: NSView {
     var onRemove: (() -> Void)?
     let content: NSView
+    private var tab: TabItemView!
+    var title: String {
+        get { tab.title }
+        set { tab.title = newValue }
+    }
 
     static func barButton(symbol: String, tip: String, target: AnyObject?, action: Selector?) -> NSButton {
         let button = NSButton(image: NSImage(systemSymbolName: symbol, accessibilityDescription: tip)!
@@ -161,7 +235,7 @@ final class FeedView: NSView {
         super.init(frame: .zero)
         let minus = Self.barButton(symbol: "minus", tip: "フィードを閉じる", target: nil, action: nil)
         let bar = TabStrip(trailing: Self.trailingStack(extras + [minus]))
-        let tab = TabItemView(title: title, closable: false)
+        tab = TabItemView(title: title, closable: false)
         tab.selected = true
         tab.plain = true
         bar.stack.addArrangedSubview(tab)

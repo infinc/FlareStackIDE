@@ -53,16 +53,28 @@ final class Buffer {
 
 final class ToolStripButton: NSButton {
     var active = false { didSet { needsDisplay = true } }
+    private var symbol = ""
+    private var width: NSLayoutConstraint!
+    private var height: NSLayoutConstraint!
 
     convenience init(symbol: String, tip: String, target: AnyObject, action: Selector) {
-        let config = NSImage.SymbolConfiguration(pointSize: 15, weight: .regular)
-        self.init(image: NSImage(systemSymbolName: symbol, accessibilityDescription: tip)!.withSymbolConfiguration(config)!,
-                  target: target, action: action)
+        self.init(image: NSImage(systemSymbolName: symbol, accessibilityDescription: tip)!, target: target, action: action)
+        self.symbol = symbol
         isBordered = false
         toolTip = tip
         translatesAutoresizingMaskIntoConstraints = false
-        widthAnchor.constraint(equalToConstant: 30).isActive = true
-        heightAnchor.constraint(equalToConstant: 30).isActive = true
+        width = widthAnchor.constraint(equalToConstant: 30)
+        height = heightAnchor.constraint(equalToConstant: 30)
+        NSLayoutConstraint.activate([width, height])
+        applySize()
+    }
+
+    func applySize() {
+        let side = max(Settings.bigTabWidth - 10, 22)
+        width.constant = side
+        height.constant = side
+        image = NSImage(systemSymbolName: symbol, accessibilityDescription: toolTip)?
+            .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: Settings.bigTabIconSize, weight: .regular))
     }
 
     override func draw(_ dirtyRect: NSRect) {
@@ -75,9 +87,11 @@ final class ToolStripButton: NSButton {
 }
 
 final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutlineViewDataSource, NSOutlineViewDelegate, NSTextViewDelegate, NSMenuDelegate {
-    let project: Project
+    private(set) var project: Project
     var onClose: (() -> Void)?
     var onBack: (() -> Void)?
+    var onOpenProject: ((Project, Bool) -> Void)?
+    var onProjectRenamed: (() -> Void)?
 
     private let root: FileNode
     private let outline = NSOutlineView()
@@ -123,6 +137,23 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
     private let cloudButton = NSButton()
     private var autosaveTimer: Timer?
     private var cloning: GitClone?
+    private let projectButton = NSButton()
+    private var topHeight: NSLayoutConstraint!
+    private var stripWidth: NSLayoutConstraint!
+    private var watcher: FileWatcher?
+    private var gitWork: DispatchWorkItem?
+    private var runButton: RunButton!
+    private lazy var runner = RunnerStore(project: project, base: baseDirectory)
+    private var runFeed: FeedView?
+    private let runContainer = NSView()
+    private var runPane: TerminalPane?
+    private var runConfig: RunConfig?
+    private var scanner: CodeScanner?
+    private var scanWork: DispatchWorkItem?
+    private var diagnostics: [URL: [Diagnostic]] = [:]
+    private let badge = ProblemBadge()
+    private let problemsView = ProblemsView()
+    private var problemsFeed: FeedView?
 
     init(project: Project) {
         self.project = project
@@ -138,10 +169,15 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
         build()
         window.center()
         window.setFrameAutosaveName("Editor:\(project.path)")
-        if !root.isDirectory { open(root.url) }
         NotificationCenter.default.addObserver(self, selector: #selector(applySettings), name: .settingsChanged, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(pluginsChanged), name: .pluginsChanged, object: nil)
+        applyPlugins()
+        if !root.isDirectory { open(root.url) }
         applySettings()
+        watcher = FileWatcher(path: baseDirectory.path) { [weak self] in
+            self?.reloadTree()
+            self?.refreshGit()
+        }
         PluginStore.refreshCatalog()
     }
 
@@ -159,10 +195,17 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
         back.toolTip = "初期画面に戻る"
         back.translatesAutoresizingMaskIntoConstraints = false
         topBar.addSubview(back)
-        let name = NSTextField(labelWithString: project.name)
-        name.font = .systemFont(ofSize: 13, weight: .bold)
-        name.translatesAutoresizingMaskIntoConstraints = false
+        projectButton.isBordered = false
+        projectButton.image = NSImage(systemSymbolName: "chevron.down", accessibilityDescription: nil)?
+            .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 8, weight: .bold))
+        projectButton.imagePosition = .imageTrailing
+        projectButton.toolTip = "プロジェクト"
+        projectButton.target = self
+        projectButton.action = #selector(projectClicked)
+        updateProjectTitle()
+        let name = projectButton
         fileLabel.textColor = .secondaryLabelColor
+        fileLabel.addGestureRecognizer(NSClickGestureRecognizer(target: self, action: #selector(pathClicked)))
         fileLabel.lineBreakMode = .byTruncatingHead
         fileLabel.translatesAutoresizingMaskIntoConstraints = false
         fileLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -202,9 +245,11 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
         pluginButton = ToolStripButton(symbol: "puzzlepiece.extension", tip: "プラグイン", target: self, action: #selector(togglePlugins))
         terminalButton = ToolStripButton(symbol: "terminal", tip: "ターミナル", target: self, action: #selector(toggleTerminal))
         gitButton = ToolStripButton(symbol: "arrow.triangle.branch", tip: "Git", target: self, action: #selector(toggleGit))
+        runButton = RunButton(target: self, action: #selector(runClicked))
+        runButton.onMenu = { [weak self] in self?.showRunMenu($0) }
         folderButton.active = true
         let upper = Self.buttonColumn([folderButton, pluginButton])
-        let lower = Self.buttonColumn([terminalButton, gitButton])
+        let lower = Self.buttonColumn([runButton, terminalButton, gitButton])
         strip.addSubview(upper)
         strip.addSubview(lower)
         let stripLine = NSBox()
@@ -240,6 +285,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
         show(treeFeed, in: leftPane)
         topFeed = treeFeed
 
+        textView.textContainer?.replaceLayoutManager(DiagnosticLayoutManager())
         _ = textView.layoutManager
         textView.font = .monospacedSystemFont(ofSize: 13, weight: .regular)
         textView.isRichText = false
@@ -269,6 +315,10 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
         placeholder.textColor = .tertiaryLabelColor
         placeholder.translatesAutoresizingMaskIntoConstraints = false
         editorPane.addSubview(placeholder)
+        badge.isHidden = true
+        badge.onClick = { [weak self] in self?.toggleProblems() }
+        editorPane.addSubview(badge)
+        problemsView.onSelect = { [weak self] in self?.reveal($0) }
         pluginPage.onError = { [weak self] in self?.showError($0) }
         barHeight = barHost.heightAnchor.constraint(equalToConstant: 0)
         NSLayoutConstraint.activate([
@@ -285,6 +335,8 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
             bodyHost.bottomAnchor.constraint(equalTo: editorPane.bottomAnchor),
             placeholder.centerXAnchor.constraint(equalTo: bodyHost.centerXAnchor),
             placeholder.centerYAnchor.constraint(equalTo: bodyHost.centerYAnchor),
+            badge.topAnchor.constraint(equalTo: bodyHost.topAnchor, constant: 4),
+            badge.trailingAnchor.constraint(equalTo: bodyHost.trailingAnchor, constant: -20),
         ])
 
         rightSplit.isVertical = false
@@ -299,11 +351,14 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
         mainSplit.translatesAutoresizingMaskIntoConstraints = false
 
         [topBar, topLine, strip, stripLine, mainSplit].forEach(content.addSubview)
+        topHeight = topBar.heightAnchor.constraint(equalToConstant: Settings.bigTabHeight)
+        stripWidth = strip.widthAnchor.constraint(equalToConstant: Settings.bigTabWidth)
         NSLayoutConstraint.activate([
+            topHeight,
+            stripWidth,
             topBar.topAnchor.constraint(equalTo: content.topAnchor),
             topBar.leadingAnchor.constraint(equalTo: content.leadingAnchor),
             topBar.trailingAnchor.constraint(equalTo: content.trailingAnchor),
-            topBar.heightAnchor.constraint(equalToConstant: 32),
             back.leadingAnchor.constraint(equalTo: topBar.leadingAnchor, constant: 10),
             back.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
             titleStack.leadingAnchor.constraint(equalTo: back.trailingAnchor, constant: 6),
@@ -320,7 +375,6 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
             strip.topAnchor.constraint(equalTo: topLine.bottomAnchor),
             strip.leadingAnchor.constraint(equalTo: content.leadingAnchor),
             strip.bottomAnchor.constraint(equalTo: content.bottomAnchor),
-            strip.widthAnchor.constraint(equalToConstant: 40),
             upper.topAnchor.constraint(equalTo: strip.topAnchor, constant: 8),
             upper.centerXAnchor.constraint(equalTo: strip.centerXAnchor),
             lower.bottomAnchor.constraint(equalTo: strip.bottomAnchor, constant: -8),
@@ -435,6 +489,10 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
     @objc private func gearClicked() { settingsMenu.popUp(from: gearButton) }
 
     private func showBottom(_ view: NSView) {
+        for feed in [terminalFeed, gitFeed, runFeed, problemsFeed].compactMap({ $0 }) where feed !== view { feed.isHidden = true }
+        terminalButton.active = view === terminalFeed
+        gitButton.active = view === gitFeed
+        runButton.play.active = view === runFeed
         view.isHidden = false
         rightSplit.adjustSubviews()
         rightSplit.setPosition(rightSplit.bounds.height * 0.62, ofDividerAt: 0)
@@ -451,10 +509,6 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
             hideBottom(feed)
             terminalButton.active = false
             return
-        }
-        if let git = gitFeed, !git.isHidden {
-            git.isHidden = true
-            gitButton.active = false
         }
         let feed: TerminalFeed
         if let existing = terminalFeed {
@@ -482,10 +536,6 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
             hideBottom(feed)
             gitButton.active = false
             return
-        }
-        if let terminal = terminalFeed, !terminal.isHidden {
-            terminal.isHidden = true
-            terminalButton.active = false
         }
         let feed: FeedView
         if let existing = gitFeed {
@@ -634,7 +684,10 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
         styleText()
         textView.isEditable = buffer.editable
         highlighter = buffer.editable ? PluginStore.makeHighlighter(for: url) : nil
+        (editorScroll.verticalRulerView as? LineNumberRuler)?.textChanged()
         recolor()
+        applyDiagnostics()
+        scheduleScan(delay: 0)
         attachExtension()
         textView.undoManager?.removeAllActions()
         textView.setSelectedRange(NSRange(location: 0, length: 0))
@@ -652,6 +705,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
         addTab(for: url, title: info.name)
         highlighter = nil
         detachExtension()
+        applyDiagnostics()
         pluginPage.show(id)
         show(pluginPage, in: bodyHost)
         placeholder.isHidden = true
@@ -682,6 +736,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
         detachExtension()
         textView.string = ""
         textView.isEditable = false
+        applyDiagnostics()
         placeholder.isHidden = false
         fileLabel.stringValue = ""
         updateCloud()
@@ -690,12 +745,33 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
     @objc private func pluginsChanged() {
         (pluginFeed?.content as? PluginList)?.reload()
         pluginPage.refresh()
+        applyPlugins()
         if let current {
             storeCurrent()
             highlighter = current.editable ? PluginStore.makeHighlighter(for: current.url) : nil
             recolor()
             attachExtension()
         }
+    }
+
+    private func applyPlugins() {
+        let runnerOn = PluginStore.isInstalled(RunnerStore.pluginID)
+        runButton.isHidden = !runnerOn
+        if !runnerOn, let feed = runFeed {
+            runPane?.stop()
+            if !feed.isHidden { hideBottom(feed) }
+            runButton.play.active = false
+        }
+        updateRunTip()
+        let scannerOn = PluginStore.isInstalled(CodeScanner.pluginID)
+        if scannerOn != (scanner != nil) {
+            scanner = CodeScanner.make()
+            diagnostics = [:]
+            if scanner == nil, let feed = problemsFeed, !feed.isHidden { hideBottom(feed) }
+            applyDiagnostics()
+            scheduleScan(delay: 0)
+        }
+        editorScroll.setLineNumbers(PluginStore.isInstalled(LineNumberRuler.pluginID), textView: textView)
     }
 
     private func styleText() {
@@ -712,6 +788,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
         guard let layout = textView.layoutManager else { return }
         let text = textView.string
         layout.removeTemporaryAttribute(.foregroundColor, forCharacterRange: NSRange(location: 0, length: (text as NSString).length))
+        defer { paintErrors() }
         guard let highlighter, let url = current?.url else { return }
         for span in highlighter.spans(text, file: url) {
             layout.addTemporaryAttribute(.foregroundColor, value: span.color, forCharacterRange: span.range)
@@ -729,6 +806,9 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
     @objc private func applySettings() {
         topBar.paint(.bigTab)
         strip.paint(.bigTab)
+        topHeight.constant = Settings.bigTabHeight
+        stripWidth.constant = Settings.bigTabWidth
+        [folderButton, pluginButton, runButton.play, terminalButton, gitButton].forEach { $0?.applySize() }
         textView.font = Settings.font
         textView.backgroundColor = Settings.background
         editorScroll.backgroundColor = Settings.background
@@ -751,7 +831,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
         ext?.applySettings()
 
         autosaveTimer?.invalidate()
-        autosaveTimer = Settings.autosaveEnabled
+        autosaveTimer = Settings.autosaveEnabled && !Settings.autosaveImmediate
             ? Timer.scheduledTimer(timeInterval: Settings.autosaveInterval, target: self, selector: #selector(autosave),
                                    userInfo: nil, repeats: true)
             : nil
@@ -774,6 +854,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
                 self.open(url)
             }
             tab.onClose = { [weak self] in self?.closeTab(url) }
+            tab.draggable = true
             tabs[url] = tab
             fileTabs.stack.addArrangedSubview(tab)
         }
@@ -797,6 +878,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
         tab.removeFromSuperview()
         tabs[url] = nil
         buffers[url] = nil
+        diagnostics[url] = nil
         guard selectedURL == url else { updateTitle(); return }
         current = nil
         let remaining = fileTabs.stack.arrangedSubviews
@@ -816,9 +898,30 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
     func textDidChange(_ notification: Notification) {
         ext?.update(text: textView.string)
         scheduleRecolor()
-        guard let current, !current.dirty else { return }
+        scheduleScan(delay: 0.5)
+        guard let current else { return }
+        if Settings.autosaveImmediate, current.editable {
+            current.text = textView.string
+            do {
+                try current.text.write(to: current.url, atomically: false, encoding: .utf8)
+                current.dirty = false
+            } catch {
+                current.dirty = true
+            }
+            updateTitle()
+            scheduleGitRefresh()
+            return
+        }
+        guard !current.dirty else { return }
         current.dirty = true
         updateTitle()
+    }
+
+    private func scheduleGitRefresh() {
+        gitWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.refreshGit() }
+        gitWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6, execute: work)
     }
 
     private func updateTitle() {
@@ -904,6 +1007,8 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
     }
 
     func windowWillClose(_ notification: Notification) {
+        watcher?.stop()
+        runPane?.stop()
         cloning?.cancel()
         autosaveTimer?.invalidate()
         terminalFeed?.stopAll()
@@ -1100,5 +1205,300 @@ extension EditorWindowController {
         }
         reloadTree()
         refreshGit()
+    }
+}
+
+extension EditorWindowController {
+    private func updateProjectTitle() {
+        projectButton.attributedTitle = NSAttributedString(string: project.name + " ", attributes: [
+            .font: NSFont.systemFont(ofSize: 13, weight: .bold), .foregroundColor: NSColor.labelColor])
+        window?.title = "\(project.name) — \(appName)"
+    }
+
+    private func menuItem(_ title: String, _ action: Selector?, _ value: Any? = nil) -> NSMenuItem {
+        let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+        item.target = self
+        item.representedObject = value
+        return item
+    }
+
+    @objc private func projectClicked() {
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        menu.addItem(menuItem("プロジェクト名を変更…", #selector(renameProject)))
+        menu.addItem(.separator())
+        let others = ProjectStore.all.filter { $0.path != project.path }
+        let header = menuItem("他のプロジェクト", nil)
+        header.isEnabled = false
+        menu.addItem(header)
+        if others.isEmpty {
+            let none = menuItem("（ありません）", nil)
+            none.isEnabled = false
+            menu.addItem(none)
+        }
+        for other in others {
+            let item = menuItem(other.name, #selector(otherProjectClicked(_:)), other.path)
+            item.toolTip = other.path
+            item.image = NSWorkspace.shared.icon(forFile: other.path)
+            item.image?.size = NSSize(width: 16, height: 16)
+            menu.addItem(item)
+        }
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: projectButton.bounds.height + 4), in: projectButton)
+    }
+
+    @objc private func renameProject() {
+        let alert = NSAlert()
+        alert.messageText = "プロジェクト名を変更"
+        alert.addButton(withTitle: "変更")
+        alert.addButton(withTitle: "キャンセル")
+        let field = NSTextField(string: project.name)
+        field.frame = NSRect(x: 0, y: 0, width: 280, height: 24)
+        alert.accessoryView = field
+        alert.window.initialFirstResponder = field
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let name = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, name != project.name else { return }
+        if ProjectStore.all.contains(where: { $0.path == project.path }) {
+            ProjectStore.rename(project, to: name)
+        } else {
+            ProjectStore.touch(Project(name: name, path: project.path))
+        }
+        project.name = name
+        updateProjectTitle()
+        onProjectRenamed?()
+    }
+
+    @objc private func otherProjectClicked(_ sender: NSMenuItem) {
+        guard let path = sender.representedObject as? String, let other = ProjectStore.all.first(where: { $0.path == path }) else { return }
+        guard FileManager.default.fileExists(atPath: other.path) else {
+            showMessage("「\(other.name)」が見つかりません。\n\(other.path)")
+            return
+        }
+        let alert = NSAlert()
+        alert.messageText = "「\(other.name)」を開く"
+        alert.informativeText = other.path
+        alert.addButton(withTitle: "このウィンドウで開く")
+        alert.addButton(withTitle: "別のウィンドウで開く")
+        alert.addButton(withTitle: "キャンセル")
+        let response = alert.runModal()
+        guard response != .alertThirdButtonReturn else { return }
+        if response == .alertFirstButtonReturn, let error = saveAll() {
+            showError(error)
+            return
+        }
+        onOpenProject?(other, response == .alertSecondButtonReturn)
+    }
+
+    @objc private func pathClicked(_ gesture: NSClickGestureRecognizer) {
+        guard let url = selectedURL, url.isFileURL else { return }
+        let menu = NSMenu()
+        menu.addItem(menuItem("パスをコピー", #selector(copyCurrentPath(_:)), url.path))
+        menu.addItem(menuItem("相対パスをコピー", #selector(copyCurrentPath(_:)), relativePath(url)))
+        menu.addItem(menuItem("Finderで表示", #selector(revealCurrent(_:)), url.path))
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: fileLabel.bounds.height + 4), in: fileLabel)
+    }
+
+    private func relativePath(_ url: URL) -> String {
+        let base = baseDirectory.standardizedFileURL.path
+        let path = url.standardizedFileURL.path
+        return path.hasPrefix(base + "/") ? String(path.dropFirst(base.count + 1)) : path
+    }
+
+    @objc private func copyCurrentPath(_ sender: NSMenuItem) {
+        guard let path = sender.representedObject as? String else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(path, forType: .string)
+    }
+
+    @objc private func revealCurrent(_ sender: NSMenuItem) {
+        guard let path = sender.representedObject as? String else { return }
+        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
+    }
+}
+
+extension EditorWindowController {
+    private func updateRunTip() {
+        runButton.play.toolTip = runner.selected.map { "実行: \($0.name)" } ?? "実行（起動構成を作成）"
+    }
+
+    @objc private func runClicked() {
+        if let config = runner.selected { return run(config) }
+        newRunConfig()
+    }
+
+    private func showRunMenu(_ anchor: NSView) {
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        if runner.configs.isEmpty {
+            let none = menuItem("起動構成なし", nil)
+            none.isEnabled = false
+            menu.addItem(none)
+        }
+        for config in runner.configs {
+            let item = menuItem(config.name, #selector(selectRunConfig(_:)), config.id)
+            item.state = config.id == runner.selectedID ? .on : .off
+            item.toolTip = runner.command(for: config)
+            menu.addItem(item)
+        }
+        menu.addItem(.separator())
+        menu.addItem(menuItem("新しい起動構成…", #selector(newRunConfig)))
+        if let selected = runner.selected {
+            menu.addItem(menuItem("「\(selected.name)」を編集…", #selector(editRunConfig)))
+            menu.addItem(menuItem("「\(selected.name)」を削除", #selector(deleteRunConfig)))
+        }
+        menu.popUp(positioning: nil, at: NSPoint(x: anchor.bounds.maxX, y: anchor.bounds.maxY), in: anchor)
+    }
+
+    @objc private func selectRunConfig(_ sender: NSMenuItem) {
+        runner.selectedID = sender.representedObject as? String
+        updateRunTip()
+    }
+
+    @objc private func newRunConfig() {
+        let initial = current.map { RunConfig(name: $0.url.lastPathComponent, directory: "", script: relativePath($0.url)) }
+        guard let config = RunnerStore.edit(initial, base: baseDirectory, title: "新しい起動構成") else { return }
+        var created = config
+        created.id = UUID().uuidString
+        runner.upsert(created)
+        updateRunTip()
+    }
+
+    @objc private func editRunConfig() {
+        guard let selected = runner.selected,
+              let config = RunnerStore.edit(selected, base: baseDirectory, title: "起動構成を編集") else { return }
+        runner.upsert(config)
+        updateRunTip()
+    }
+
+    @objc private func deleteRunConfig() {
+        guard let selected = runner.selected else { return }
+        runner.remove(selected.id)
+        updateRunTip()
+    }
+
+    private func run(_ config: RunConfig) {
+        if let error = saveAll() { return showError(error) }
+        let feed: FeedView
+        if let existing = runFeed {
+            feed = existing
+        } else {
+            let stop = FeedView.barButton(symbol: "stop.fill", tip: "停止", target: self, action: #selector(stopRun))
+            let again = FeedView.barButton(symbol: "arrow.clockwise", tip: "再実行", target: self, action: #selector(rerun))
+            feed = FeedView(title: "実行", content: runContainer, extras: [stop, again])
+            feed.onRemove = { [weak self, weak feed] in
+                guard let self, let feed else { return }
+                self.hideBottom(feed)
+                self.runButton.play.active = false
+            }
+            runFeed = feed
+            feed.isHidden = true
+            rightSplit.addArrangedSubview(feed)
+        }
+        runPane?.stop()
+        runPane?.removeFromSuperview()
+        let pane = TerminalPane(cwd: runner.directory(of: config).path, command: runner.command(for: config))
+        pane.translatesAutoresizingMaskIntoConstraints = false
+        runContainer.addSubview(pane)
+        NSLayoutConstraint.activate([
+            pane.topAnchor.constraint(equalTo: runContainer.topAnchor),
+            pane.leadingAnchor.constraint(equalTo: runContainer.leadingAnchor),
+            pane.trailingAnchor.constraint(equalTo: runContainer.trailingAnchor),
+            pane.bottomAnchor.constraint(equalTo: runContainer.bottomAnchor),
+        ])
+        runPane = pane
+        runConfig = config
+        feed.title = "実行: \(config.name)"
+        if feed.isHidden { showBottom(feed) }
+        DispatchQueue.main.async { pane.focus() }
+    }
+
+    @objc private func stopRun() {
+        guard let pane = runPane, pane.running else { return }
+        pane.stop()
+        pane.show("\r\n\u{1B}[2m[停止しました]\u{1B}[0m\r\n")
+    }
+
+    @objc private func rerun() {
+        if let config = runConfig.flatMap({ c in runner.configs.first { $0.id == c.id } }) ?? runner.selected { run(config) }
+    }
+}
+
+extension EditorWindowController {
+    private func toggleProblems() {
+        if let feed = problemsFeed, !feed.isHidden {
+            hideBottom(feed)
+            return
+        }
+        let feed: FeedView
+        if let existing = problemsFeed {
+            feed = existing
+        } else {
+            feed = FeedView(title: "問題", content: problemsView)
+            feed.onRemove = { [weak self] in self?.toggleProblems() }
+            problemsFeed = feed
+            rightSplit.addArrangedSubview(feed)
+        }
+        showBottom(feed)
+        applyDiagnostics()
+    }
+
+    private func scheduleScan(delay: TimeInterval) {
+        scanWork?.cancel()
+        guard scanner != nil, let current, current.editable else { return }
+        let work = DispatchWorkItem { [weak self] in self?.scanNow() }
+        scanWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+    }
+
+    private func scanNow() {
+        guard let scanner, let current, current.editable else { return }
+        let url = current.url
+        scanner.scan(textView.string, url: url) { [weak self] found in
+            guard let self, self.buffers[url] != nil else { return }
+            self.diagnostics[url] = found
+            self.applyDiagnostics()
+        }
+    }
+
+    private func applyDiagnostics() {
+        let url = current?.editable == true ? current?.url : nil
+        let mine = url.flatMap { diagnostics[$0] } ?? []
+        badge.isHidden = scanner == nil || url == nil
+        badge.update(errors: mine.filter { $0.severity == .error }.count, warnings: mine.filter { $0.severity == .warning }.count)
+        let order = fileTabs.stack.arrangedSubviews.compactMap { view in tabs.first { $0.value === view }?.key }
+        let others = order.filter { $0 != url }.flatMap { diagnostics[$0] ?? [] }
+        problemsView.show(mine + others)
+
+        let length = (textView.string as NSString).length
+        let valid = mine.filter { NSMaxRange($0.range) <= length }
+        (textView.layoutManager as? DiagnosticLayoutManager)?.marks = valid.map { ($0.range, $0.color) }
+        if let storage = textView.textStorage {
+            storage.beginEditing()
+            storage.removeAttribute(.toolTip, range: NSRange(location: 0, length: storage.length))
+            for item in valid {
+                let kind = item.severity == .error ? "エラー" : "警告"
+                storage.addAttribute(.toolTip, value: "\(kind): \(item.message)", range: item.range)
+            }
+            storage.endEditing()
+        }
+        recolor()
+        textView.needsDisplay = true
+    }
+
+    private func paintErrors() {
+        guard let layout = textView.layoutManager as? DiagnosticLayoutManager else { return }
+        for mark in layout.marks where mark.color == .systemRed {
+            layout.addTemporaryAttribute(.foregroundColor, value: NSColor.systemRed, forCharacterRange: mark.range)
+        }
+    }
+
+    private func reveal(_ item: Diagnostic) {
+        if current?.url != item.url { open(item.url) }
+        let length = (textView.string as NSString).length
+        guard NSMaxRange(item.range) <= length else { return }
+        window?.makeFirstResponder(textView)
+        textView.setSelectedRange(item.range)
+        textView.scrollRangeToVisible(item.range)
+        textView.showFindIndicator(for: item.range)
     }
 }
