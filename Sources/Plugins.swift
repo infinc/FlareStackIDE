@@ -32,6 +32,8 @@ enum PluginStore {
     private(set) static var catalogError: Error?
     private static var busy: Set<String> = []
     private static var detailsCache: [String: String] = [:]
+    private static var highlighters: [String: Highlighter] = [:]
+    private static var notified: [String: String] = [:]
 
     static var source: URL {
         var text = UserDefaults.standard.string(forKey: "Plugins.Source") ?? defaultSource
@@ -62,7 +64,10 @@ enum PluginStore {
         return (try? JSONDecoder().decode([PluginInfo].self, from: data)) ?? []
     }
 
-    private static func changed() { NotificationCenter.default.post(name: .pluginsChanged, object: nil) }
+    private static func changed() {
+        highlighters = [:]
+        NotificationCenter.default.post(name: .pluginsChanged, object: nil)
+    }
 
     private static func failure(_ message: String) -> Error {
         NSError(domain: appName, code: 1, userInfo: [NSLocalizedDescriptionKey: message])
@@ -125,6 +130,7 @@ enum PluginStore {
                     catalogError = nil
                     try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
                     try? data.write(to: cacheURL, options: .atomic)
+                    DispatchQueue.main.async(execute: notifyUpdates)
                 } else {
                     catalogError = failure("プラグイン一覧の形式が正しくありません")
                 }
@@ -132,6 +138,32 @@ enum PluginStore {
                 catalogError = error
             }
             changed()
+        }
+    }
+
+    static func latestVersion(_ id: String) -> String? { remote.first { $0.id == id }?.version }
+
+    static func update(_ id: String) {
+        let name = info(id)?.name ?? id
+        install(id) { error in
+            if let error {
+                Toasts.post("\(name) の更新に失敗しました", message: error.localizedDescription)
+            } else {
+                Toasts.post("\(name) を v\(installed(id)?.version ?? "") に更新しました")
+            }
+        }
+    }
+
+    private static func notifyUpdates() {
+        for id in installedIDs where hasUpdate(id) {
+            guard let local = installed(id), let latest = latestVersion(id), !isBusy(id) else { continue }
+            if Settings.pluginAutoUpdate {
+                update(id)
+            } else if notified[id] != latest {
+                notified[id] = latest
+                Toasts.post("\(local.name) のアップデートがあります", message: "v\(local.version) → v\(latest)",
+                            actions: [("アップデート", { update(id) })])
+            }
         }
     }
 
@@ -233,6 +265,19 @@ enum PluginStore {
                 .joined(separator: " ").lowercased()
             return words.allSatisfy(text.contains)
         }
+    }
+
+    static func makeHighlighter(for url: URL) -> Highlighter? {
+        let keys = [url.pathExtension.lowercased(), url.lastPathComponent.lowercased()].filter { !$0.isEmpty }
+        for id in installedIDs {
+            guard let info = installed(id), info.fileExtensions.contains(where: keys.contains) else { continue }
+            if let cached = highlighters[id] { return cached }
+            if let made = Highlighter(folder: folder(id)) {
+                highlighters[id] = made
+                return made
+            }
+        }
+        return nil
     }
 
     static func makeExtension(for url: URL, code: NSView) -> EditorExtension? {
@@ -529,6 +574,188 @@ final class PluginPage: NSView {
     }
 }
 
+final class Highlighter {
+    private let context = JSContext()!
+    private let function: JSValue
+    private let paletteFunction: JSValue?
+    private var palette: [NSColor] = []
+    private var paletteDark: Bool?
+    static let limit = 400_000
+
+    init?(folder: URL) {
+        let file = folder.appendingPathComponent("main.js")
+        guard let script = try? String(contentsOf: file, encoding: .utf8) else { return nil }
+        context.evaluateScript(script, withSourceURL: file)
+        guard context.exception == nil, let highlight = context.objectForKeyedSubscript("highlight"), highlight.isObject else { return nil }
+        function = highlight
+        paletteFunction = context.objectForKeyedSubscript("palette").flatMap { $0.isObject ? $0 : nil }
+    }
+
+    private func colors(dark: Bool) -> [NSColor] {
+        if paletteDark != dark {
+            paletteDark = dark
+            let hexes = paletteFunction?.call(withArguments: [dark])?.toArray() as? [String] ?? []
+            palette = hexes.map { NSColor(hex: $0) ?? .textColor }
+        }
+        return palette
+    }
+
+    func spans(_ text: String, file: URL) -> [(range: NSRange, color: NSColor)] {
+        let length = (text as NSString).length
+        guard length <= Self.limit else { return [] }
+        let palette = colors(dark: Settings.editorIsDark)
+        context.exception = nil
+        let result = function.call(withArguments: [text, file.pathExtension.lowercased(), file.lastPathComponent.lowercased()])
+        guard context.exception == nil, let numbers = result?.toArray() as? [NSNumber] else { return [] }
+        var spans: [(range: NSRange, color: NSColor)] = []
+        spans.reserveCapacity(numbers.count / 3)
+        var i = 0
+        while i + 2 < numbers.count {
+            let start = numbers[i].intValue, count = numbers[i + 1].intValue, kind = numbers[i + 2].intValue
+            i += 3
+            guard start >= 0, count > 0, start + count <= length, palette.indices.contains(kind) else { continue }
+            spans.append((NSRange(location: start, length: count), palette[kind]))
+        }
+        return spans
+    }
+}
+
+final class PluginManagerView: NSView {
+    private let auto = NSButton(checkboxWithTitle: "プラグインを自動でアップデートする", target: nil, action: nil)
+    private let status = NSTextField(labelWithString: "")
+    private let list = NSStackView()
+
+    init() {
+        super.init(frame: NSRect(x: 0, y: 0, width: 520, height: 380))
+        auto.target = self
+        auto.action = #selector(autoChanged)
+        let check = NSButton(title: "更新を確認", target: self, action: #selector(checkClicked))
+        check.bezelStyle = .rounded
+        status.font = .systemFont(ofSize: 11)
+        status.textColor = .secondaryLabelColor
+        let top = NSStackView(views: [auto, NSView(), status, check])
+        top.translatesAutoresizingMaskIntoConstraints = false
+        list.orientation = .vertical
+        list.alignment = .leading
+        list.spacing = 0
+        list.translatesAutoresizingMaskIntoConstraints = false
+        let document = FlippedView()
+        document.translatesAutoresizingMaskIntoConstraints = false
+        document.addSubview(list)
+        let scroll = NSScrollView()
+        scroll.hasVerticalScroller = true
+        scroll.autohidesScrollers = true
+        scroll.borderType = .bezelBorder
+        scroll.documentView = document
+        scroll.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(top)
+        addSubview(scroll)
+        NSLayoutConstraint.activate([
+            widthAnchor.constraint(equalToConstant: 520),
+            heightAnchor.constraint(equalToConstant: 380),
+            top.topAnchor.constraint(equalTo: topAnchor, constant: 14),
+            top.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+            top.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
+            scroll.topAnchor.constraint(equalTo: top.bottomAnchor, constant: 12),
+            scroll.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+            scroll.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
+            scroll.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -16),
+            document.leadingAnchor.constraint(equalTo: scroll.contentView.leadingAnchor),
+            document.trailingAnchor.constraint(equalTo: scroll.contentView.trailingAnchor),
+            document.topAnchor.constraint(equalTo: scroll.contentView.topAnchor),
+            list.leadingAnchor.constraint(equalTo: document.leadingAnchor),
+            list.trailingAnchor.constraint(equalTo: document.trailingAnchor),
+            list.topAnchor.constraint(equalTo: document.topAnchor),
+            list.bottomAnchor.constraint(equalTo: document.bottomAnchor),
+        ])
+        NotificationCenter.default.addObserver(self, selector: #selector(reload), name: .pluginsChanged, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(reload), name: .settingsChanged, object: nil)
+        reload()
+        PluginStore.refreshCatalog()
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    private func row(_ info: PluginInfo) -> NSView {
+        let icon = NSImageView(image: PluginStore.symbol(info.symbol, size: 20))
+        icon.contentTintColor = .controlAccentColor
+        icon.widthAnchor.constraint(equalToConstant: 28).isActive = true
+        let name = NSTextField(labelWithString: info.name)
+        name.font = .systemFont(ofSize: 13, weight: .semibold)
+        var detail = "v\(info.version)　·　\(info.author)"
+        if PluginStore.hasUpdate(info.id), let latest = PluginStore.latestVersion(info.id) { detail += "　·　v\(latest) があります" }
+        let meta = NSTextField(labelWithString: detail)
+        meta.font = .systemFont(ofSize: 11)
+        meta.textColor = PluginStore.hasUpdate(info.id) ? .systemOrange : .secondaryLabelColor
+        let texts = NSStackView(views: [name, meta])
+        texts.orientation = .vertical
+        texts.alignment = .leading
+        texts.spacing = 2
+        texts.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        var views: [NSView] = [icon, texts, NSView()]
+        let busy = PluginStore.isBusy(info.id)
+        if PluginStore.hasUpdate(info.id) || busy {
+            let update = PluginActionButton(title: busy ? "取得中…" : "アップデート") { PluginStore.update(info.id) }
+            update.isEnabled = !busy
+            update.keyEquivalent = ""
+            views.append(update)
+        }
+        let remove = PluginActionButton(title: "削除") { [weak self] in
+            do { try PluginStore.uninstall(info.id) } catch { if let window = self?.window { NSAlert(error: error).beginSheetModal(for: window) } }
+        }
+        remove.isEnabled = !busy
+        views.append(remove)
+        let stack = NSStackView(views: views)
+        stack.spacing = 10
+        stack.edgeInsets = NSEdgeInsets(top: 8, left: 10, bottom: 8, right: 10)
+        return stack
+    }
+
+    @objc private func reload() {
+        auto.state = Settings.pluginAutoUpdate ? .on : .off
+        status.stringValue = PluginStore.loading ? "確認中…" : PluginStore.catalogError != nil ? "確認できませんでした" : ""
+        list.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        let installed = PluginStore.installedIDs.compactMap(PluginStore.installed)
+        if installed.isEmpty {
+            let empty = NSTextField(wrappingLabelWithString: "インストール済みのプラグインはありません。左のプラグインフィードから追加できます。")
+            empty.textColor = .secondaryLabelColor
+            let wrap = NSStackView(views: [empty])
+            wrap.edgeInsets = NSEdgeInsets(top: 12, left: 12, bottom: 12, right: 12)
+            list.addArrangedSubview(wrap)
+            return
+        }
+        for info in installed {
+            let view = row(info)
+            list.addArrangedSubview(view)
+            view.widthAnchor.constraint(equalTo: list.widthAnchor).isActive = true
+            let line = NSBox()
+            line.boxType = .separator
+            list.addArrangedSubview(line)
+            line.widthAnchor.constraint(equalTo: list.widthAnchor).isActive = true
+        }
+    }
+
+    @objc private func autoChanged() { Settings.pluginAutoUpdate = auto.state == .on }
+
+    @objc private func checkClicked() { PluginStore.refreshCatalog() }
+}
+
+private final class PluginActionButton: NSButton {
+    private var handler: (() -> Void)?
+
+    convenience init(title: String, handler: @escaping () -> Void) {
+        self.init(title: title, target: nil, action: nil)
+        self.handler = handler
+        bezelStyle = .rounded
+        controlSize = .small
+        target = self
+        action = #selector(clicked)
+        setContentHuggingPriority(.required, for: .horizontal)
+    }
+
+    @objc private func clicked() { handler?() }
+}
+
 final class ScriptExtension: NSObject, EditorExtension, WKNavigationDelegate {
     private enum Mode: Int { case code, split, preview }
 
@@ -568,8 +795,8 @@ final class ScriptExtension: NSObject, EditorExtension, WKNavigationDelegate {
         super.init()
         modes.controlSize = .small
         for (i, label) in ["コード", "コード＋プレビュー", "プレビュー"].enumerated() {
-            modes.setLabel(label, forSegment: i)
             modes.setToolTip(label, forSegment: i)
+            modes.setWidth(28, forSegment: i)
             modes.setImageScaling(.scaleProportionallyDown, forSegment: i)
         }
         modes.target = self
@@ -638,7 +865,7 @@ final class ScriptExtension: NSObject, EditorExtension, WKNavigationDelegate {
             "foreground": Self.css(Settings.foreground),
             "fontSize": Double(max(Settings.fontSize, 12)),
             "fontName": Settings.font.familyName ?? "",
-            "dark": Settings.background.isDark,
+            "dark": Settings.editorIsDark,
         ]
         context.exception = nil
         let result = renderer.call(withArguments: [latest, settings])

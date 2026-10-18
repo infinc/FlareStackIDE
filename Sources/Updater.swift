@@ -117,3 +117,78 @@ final class Updater {
         NSApp.terminate(nil)
     }
 }
+
+extension Notification.Name {
+    static let appUpdateChanged = Notification.Name("FlareStackIDE.appUpdateChanged")
+}
+
+final class AppUpdate {
+    static let shared = AppUpdate()
+    private(set) var latest: Release?
+    private(set) var installing = false
+    let currentVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0"
+    private lazy var updater = Updater(currentVersion: currentVersion)
+
+    private func changed() { NotificationCenter.default.post(name: .appUpdateChanged, object: nil) }
+
+    func check() {
+        updater.checkLatest { [weak self] release in
+            self?.latest = release
+            self?.changed()
+        }
+    }
+
+    func present(in window: NSWindow) {
+        guard let release = latest, !installing else { return }
+        let text = NSTextView(frame: NSRect(x: 0, y: 0, width: 460, height: 260))
+        text.textStorage?.setAttributedString(renderMarkdown(release.body ?? ""))
+        text.isEditable = false
+        text.textContainerInset = NSSize(width: 6, height: 6)
+        let scroll = NSScrollView(frame: text.frame)
+        scroll.documentView = text
+        scroll.hasVerticalScroller = true
+        scroll.borderType = .bezelBorder
+
+        let alert = NSAlert()
+        alert.messageText = "\(appName) \(release.tag_name) が利用可能です"
+        alert.informativeText = "現在のバージョン: v\(currentVersion)"
+        alert.accessoryView = scroll
+        alert.addButton(withTitle: "アップデートする")
+        alert.addButton(withTitle: "しない")
+        alert.beginSheetModal(for: window) { [weak self] response in
+            if response == .alertFirstButtonReturn { self?.install(release, in: window) }
+        }
+    }
+
+    private func install(_ release: Release, in window: NSWindow) {
+        installing = true
+        changed()
+        let toast = Toasts.progress("\(appName) \(release.tag_name) をインストール中", in: window)
+        toast?.update("ダウンロードしています…", 0.3)
+        updater.install(release) { [weak self] error in
+            guard let self else { return }
+            self.installing = false
+            let alert = NSAlert()
+            if let error {
+                toast?.finish("アップデートに失敗しました", failed: true)
+                self.changed()
+                alert.alertStyle = .warning
+                alert.messageText = "アップデートに失敗しました"
+                alert.informativeText = error.localizedDescription
+                alert.addButton(withTitle: "OK")
+                alert.beginSheetModal(for: window)
+                return
+            }
+            toast?.finish("インストールが完了しました")
+            self.latest = nil
+            self.changed()
+            alert.messageText = "\(release.tag_name) のインストールが完了しました"
+            alert.informativeText = "今すぐ再起動しますか？"
+            alert.addButton(withTitle: "再起動する")
+            alert.addButton(withTitle: "しない")
+            alert.beginSheetModal(for: window) { response in
+                if response == .alertFirstButtonReturn { Updater.relaunch() }
+            }
+        }
+    }
+}

@@ -167,69 +167,6 @@ final class GitClone {
     }
 }
 
-final class ProgressToast: NSVisualEffectView {
-    private let titleLabel = NSTextField(labelWithString: "")
-    private let statusLabel = NSTextField(labelWithString: "準備しています…")
-    private let bar = NSProgressIndicator()
-
-    init(title: String) {
-        super.init(frame: .zero)
-        material = .popover
-        blendingMode = .withinWindow
-        state = .active
-        wantsLayer = true
-        layer?.cornerRadius = 10
-        layer?.borderWidth = 1
-        layer?.borderColor = NSColor.separatorColor.cgColor
-        translatesAutoresizingMaskIntoConstraints = false
-
-        titleLabel.stringValue = title
-        titleLabel.font = .systemFont(ofSize: 12, weight: .semibold)
-        titleLabel.lineBreakMode = .byTruncatingMiddle
-        statusLabel.font = .systemFont(ofSize: 11)
-        statusLabel.textColor = .secondaryLabelColor
-        bar.style = .bar
-        bar.isIndeterminate = false
-        bar.minValue = 0
-        bar.maxValue = 1
-
-        let stack = NSStackView(views: [titleLabel, bar, statusLabel])
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = 6
-        stack.edgeInsets = NSEdgeInsets(top: 10, left: 12, bottom: 10, right: 12)
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(stack)
-        NSLayoutConstraint.activate([
-            widthAnchor.constraint(equalToConstant: 300),
-            stack.leadingAnchor.constraint(equalTo: leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: trailingAnchor),
-            stack.topAnchor.constraint(equalTo: topAnchor),
-            stack.bottomAnchor.constraint(equalTo: bottomAnchor),
-            bar.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -24),
-            titleLabel.widthAnchor.constraint(lessThanOrEqualTo: stack.widthAnchor, constant: -24),
-        ])
-    }
-
-    required init?(coder: NSCoder) { fatalError() }
-
-    func update(_ status: String, _ value: Double) {
-        statusLabel.stringValue = status
-        bar.doubleValue = value
-    }
-
-    func finish(_ status: String, failed: Bool = false) {
-        statusLabel.stringValue = status
-        statusLabel.textColor = failed ? .systemRed : .systemGreen
-        if !failed { bar.doubleValue = 1 }
-        DispatchQueue.main.asyncAfter(deadline: .now() + (failed ? 6 : 3)) { [weak self] in
-            NSAnimationContext.runAnimationGroup({ $0.duration = 0.3; self?.animator().alphaValue = 0 }) {
-                self?.removeFromSuperview()
-            }
-        }
-    }
-}
-
 final class CloneWindowController: NSWindowController, NSTableViewDataSource, NSTableViewDelegate, NSSearchFieldDelegate {
     var onClone: ((CloneRequest) -> Void)?
 

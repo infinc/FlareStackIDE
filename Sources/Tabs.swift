@@ -119,7 +119,11 @@ final class TabStrip: NSView {
             constraints.append(scroll.trailingAnchor.constraint(equalTo: trailingAnchor))
         }
         NSLayoutConstraint.activate(constraints)
+        NotificationCenter.default.addObserver(self, selector: #selector(applyColors), name: .settingsChanged, object: nil)
+        applyColors()
     }
+
+    @objc private func applyColors() { paint(.midTab) }
 
     required init?(coder: NSCoder) { fatalError() }
 
@@ -176,7 +180,11 @@ final class FeedView: NSView {
             content.trailingAnchor.constraint(equalTo: trailingAnchor),
             content.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
+        NotificationCenter.default.addObserver(self, selector: #selector(applyColors), name: .settingsChanged, object: nil)
+        applyColors()
     }
+
+    @objc private func applyColors() { paint(.feed) }
 
     required init?(coder: NSCoder) { fatalError() }
 

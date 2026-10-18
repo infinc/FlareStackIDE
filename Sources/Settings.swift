@@ -16,18 +16,55 @@ enum ProjectAddMode: String, CaseIterable {
     }
 }
 
+enum Surface: String, CaseIterable {
+    case editor, feed, midTab, bigTab
+
+    var title: String {
+        switch self {
+        case .editor: return "コード編集画面"
+        case .feed: return "フィード"
+        case .midTab: return "中タブ"
+        case .bigTab: return "大タブ"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .editor: return "コードを編集する領域の背景"
+        case .feed: return "ディレクトリ・プラグイン・ターミナル・Git の中身"
+        case .midTab: return "「ディレクトリ」「ターミナル」の見出しや、ファイルのタブ列"
+        case .bigTab: return "一番上のバーと一番左のアイコン列"
+        }
+    }
+
+    fileprivate var key: String { self == .editor ? "Editor.Background" : "Surface.\(rawValue)" }
+
+    var systemColor: NSColor {
+        switch self {
+        case .editor: return .textBackgroundColor
+        case .feed: return .controlBackgroundColor
+        case .midTab, .bigTab: return .windowBackgroundColor
+        }
+    }
+}
+
 enum Settings {
     private static let defaults = UserDefaults.standard
 
-    static let backgrounds: [(name: String, hex: String)] = [
-        ("システム", ""), ("ホワイト", "#FFFFFF"), ("ペーパー", "#F7F3E8"), ("ソラ", "#EEF4FB"),
-        ("ダーク", "#1E1F22"), ("ミッドナイト", "#14182B"), ("フォレスト", "#18241E"), ("ブラック", "#000000"),
+    static let themes: [(name: String, colors: [String])] = [
+        ("システム", ["", "", "", ""]),
+        ("ホワイト", ["#FFFFFF", "#F6F6F7", "#EDEDEF", "#E4E4E7"]),
+        ("ペーパー", ["#F7F3E8", "#F0EBDD", "#E8E1CF", "#DFD7C1"]),
+        ("ソラ", ["#EEF4FB", "#E6EEF8", "#DCE6F3", "#D1DDEE"]),
+        ("ダーク", ["#1E1F22", "#232428", "#2B2D31", "#313338"]),
+        ("ミッドナイト", ["#14182B", "#181D33", "#1E243D", "#252C48"]),
+        ("フォレスト", ["#18241E", "#1C2A23", "#22332A", "#2A3D33"]),
+        ("ブラック", ["#000000", "#0A0A0A", "#141414", "#1C1C1C"]),
     ]
     static let foregrounds: [(name: String, hex: String)] = [
         ("自動", ""), ("ブラック", "#1D1D1F"), ("グレー", "#6E6E73"), ("ホワイト", "#F2F2F2"),
         ("グリーン", "#7FD28A"), ("アンバー", "#F0B35A"), ("シアン", "#6CC8E0"),
     ]
-    static let fontSizes: [CGFloat] = [10, 11, 12, 13, 14, 15, 16, 18, 20, 24, 28]
     static let lineSpacings: [(name: String, value: CGFloat)] = [("標準", 0), ("やや広め", 3), ("広め", 6), ("とても広め", 10)]
     static let autosaveIntervals: [TimeInterval] = [3, 10, 30, 60]
 
@@ -50,9 +87,27 @@ enum Settings {
         changed()
     }
 
+    static func surfaceHex(_ surface: Surface) -> String { value(surface.key, "") }
+
+    static func setSurfaceHex(_ hex: String, for surface: Surface) { set(hex, surface.key) }
+
+    static func surfaceColor(_ surface: Surface) -> NSColor? { NSColor(hex: surfaceHex(surface)) }
+
+    static var themeIndex: Int? {
+        let current = Surface.allCases.map(surfaceHex)
+        return themes.firstIndex { $0.colors == current }
+    }
+
+    static func applyTheme(_ index: Int) {
+        guard themes.indices.contains(index) else { return }
+        for (surface, hex) in zip(Surface.allCases, themes[index].colors) { defaults.set(hex, forKey: surface.key) }
+        defaults.set("", forKey: "Editor.Foreground")
+        changed()
+    }
+
     static var backgroundHex: String {
-        get { value("Editor.Background", "") }
-        set { set(newValue, "Editor.Background") }
+        get { surfaceHex(.editor) }
+        set { setSurfaceHex(newValue, for: .editor) }
     }
 
     static var foregroundHex: String {
@@ -80,6 +135,21 @@ enum Settings {
         set { set(newValue, "Editor.Wrap") }
     }
 
+    static var toastDuration: TimeInterval {
+        get { value("Toast.Duration", 5.0) }
+        set { set(min(max(newValue, 2), 30), "Toast.Duration") }
+    }
+
+    static var toastSize: ToastSize {
+        get { ToastSize(rawValue: value("Toast.Size", "medium")) ?? .medium }
+        set { set(newValue.rawValue, "Toast.Size") }
+    }
+
+    static var pluginAutoUpdate: Bool {
+        get { value("Plugins.AutoUpdate", false) }
+        set { set(newValue, "Plugins.AutoUpdate") }
+    }
+
     static var gitEnabled: Bool {
         get { value("Base.Git", true) }
         set { set(newValue, "Base.Git") }
@@ -101,8 +171,8 @@ enum Settings {
     }
 
     static func resetEditor() {
-        ["Editor.Background", "Editor.Foreground", "Editor.Font", "Editor.FontSize", "Editor.LineSpacing", "Editor.Wrap"]
-            .forEach { defaults.removeObject(forKey: $0) }
+        (["Editor.Foreground", "Editor.Font", "Editor.FontSize", "Editor.LineSpacing", "Editor.Wrap", "Toast.Duration", "Toast.Size"]
+            + Surface.allCases.map(\.key)).forEach { defaults.removeObject(forKey: $0) }
         changed()
     }
 
@@ -110,11 +180,16 @@ enum Settings {
         NSFont(name: fontName, size: fontSize) ?? .monospacedSystemFont(ofSize: fontSize, weight: .regular)
     }
 
-    static var background: NSColor { NSColor(hex: backgroundHex) ?? .textBackgroundColor }
+    static var background: NSColor { surfaceColor(.editor) ?? .textBackgroundColor }
+
+    static var editorIsDark: Bool {
+        if let color = surfaceColor(.editor) { return color.isDark }
+        return NSApp.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+    }
 
     static var foreground: NSColor {
         if let color = NSColor(hex: foregroundHex) { return color }
-        guard let bg = NSColor(hex: backgroundHex) else { return .textColor }
+        guard let bg = surfaceColor(.editor) else { return .textColor }
         return bg.isDark ? NSColor(white: 0.92, alpha: 1) : NSColor(white: 0.1, alpha: 1)
     }
 
@@ -133,47 +208,81 @@ extension NSColor {
                   blue: CGFloat(value & 0xFF) / 255, alpha: 1)
     }
 
+    var hexString: String {
+        var rgb = self
+        NSApp.effectiveAppearance.performAsCurrentDrawingAppearance { rgb = self.usingColorSpace(.sRGB) ?? self }
+        let c = [rgb.redComponent, rgb.greenComponent, rgb.blueComponent].map { Int((min(max($0, 0), 1) * 255).rounded()) }
+        return String(format: "#%02X%02X%02X", c[0], c[1], c[2])
+    }
+
     var isDark: Bool {
         guard let rgb = usingColorSpace(.sRGB) else { return false }
         return 0.299 * rgb.redComponent + 0.587 * rgb.greenComponent + 0.114 * rgb.blueComponent < 0.5
     }
 
-    static func swatch(_ hex: String) -> NSImage {
-        NSImage(size: NSSize(width: 14, height: 14), flipped: false) { rect in
-            let path = NSBezierPath(roundedRect: rect.insetBy(dx: 1, dy: 1), xRadius: 3, yRadius: 3)
-            (NSColor(hex: hex) ?? .textBackgroundColor).setFill()
-            path.fill()
-            NSColor.separatorColor.setStroke()
-            path.stroke()
+    static func swatch(_ hexes: [String]) -> NSImage {
+        NSImage(size: NSSize(width: 14 * CGFloat(max(hexes.count, 1)) - CGFloat(max(hexes.count - 1, 0)) * 4, height: 14), flipped: false) { rect in
+            for (i, hex) in hexes.enumerated() {
+                let path = NSBezierPath(roundedRect: NSRect(x: CGFloat(i) * 10 + 1, y: 1, width: 12, height: 12), xRadius: 3, yRadius: 3)
+                (NSColor(hex: hex) ?? .textBackgroundColor).setFill()
+                path.fill()
+                NSColor.separatorColor.setStroke()
+                path.stroke()
+            }
             return true
         }
     }
 }
 
+extension NSView {
+    func paint(_ surface: Surface) {
+        wantsLayer = true
+        let color = Settings.surfaceColor(surface)
+        layer?.backgroundColor = color?.cgColor
+        appearance = color.map { NSAppearance(named: $0.isDark ? .darkAqua : .aqua)! }
+    }
+}
+
+enum Popups {
+    private static var windows: [String: NSWindow] = [:]
+
+    static func show(_ key: String, title: String, over parent: NSWindow?, make: () -> NSView) {
+        let window = windows[key] ?? {
+            let view = make()
+            let panel = NSPanel(contentRect: NSRect(origin: .zero, size: view.fittingSize),
+                                styleMask: [.titled, .closable], backing: .buffered, defer: false)
+            panel.title = title
+            panel.isReleasedWhenClosed = false
+            panel.hidesOnDeactivate = false
+            panel.contentView = view
+            windows[key] = panel
+            return panel
+        }()
+        if !window.isVisible, let parent {
+            let frame = parent.frame
+            window.setFrameOrigin(NSPoint(x: frame.midX - window.frame.width / 2, y: frame.midY - window.frame.height / 2))
+        }
+        window.makeKeyAndOrderFront(nil)
+    }
+}
+
 final class EditorSettingsMenu: NSObject {
     private let menu = NSMenu()
+    private weak var window: NSWindow?
 
     func popUp(from button: NSButton) {
+        window = button.window
         build()
         menu.popUp(positioning: nil, at: NSPoint(x: 0, y: button.bounds.height + 4), in: button)
     }
 
-    private func item(_ title: String, _ action: Selector, _ value: Any? = nil, checked: Bool = false, image: NSImage? = nil) -> NSMenuItem {
+    private func item(_ title: String, _ action: Selector, _ value: Any? = nil, checked: Bool = false, symbol: String? = nil, image: NSImage? = nil) -> NSMenuItem {
         let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
         item.target = self
         item.representedObject = value
         item.state = checked ? .on : .off
-        item.image = image
+        item.image = image ?? symbol.flatMap { NSImage(systemSymbolName: $0, accessibilityDescription: title) }
         return item
-    }
-
-    private func submenu(_ title: String, symbol: String, _ items: [NSMenuItem]) -> NSMenuItem {
-        let parent = NSMenuItem(title: title, action: nil, keyEquivalent: "")
-        parent.image = NSImage(systemSymbolName: symbol, accessibilityDescription: title)
-        let sub = NSMenu()
-        items.forEach(sub.addItem)
-        parent.submenu = sub
-        return parent
     }
 
     private func build() {
@@ -181,38 +290,403 @@ final class EditorSettingsMenu: NSObject {
         let header = NSMenuItem(title: "エディタ設定", action: nil, keyEquivalent: "")
         header.isEnabled = false
         menu.addItem(header)
-        menu.addItem(submenu("背景色", symbol: "paintpalette", Settings.backgrounds.map {
-            item($0.name, #selector(setBackground(_:)), $0.hex, checked: Settings.backgroundHex == $0.hex, image: NSColor.swatch($0.hex))
-        }))
-        menu.addItem(submenu("文字色", symbol: "character", Settings.foregrounds.map {
-            item($0.name, #selector(setForeground(_:)), $0.hex, checked: Settings.foregroundHex == $0.hex, image: NSColor.swatch($0.hex))
-        }))
-        menu.addItem(submenu("フォント", symbol: "textformat", Settings.fontNames.map {
-            let entry = item($0.name, #selector(setFont(_:)), $0.postScript, checked: Settings.fontName == $0.postScript)
-            entry.attributedTitle = NSAttributedString(string: $0.name, attributes: [
-                .font: NSFont(name: $0.postScript, size: 13) ?? .monospacedSystemFont(ofSize: 13, weight: .regular)])
-            return entry
-        }))
-        var sizes = [item("大きく", #selector(growFont)), item("小さく", #selector(shrinkFont)), .separator()]
-        sizes += Settings.fontSizes.map { item("\(Int($0)) pt", #selector(setFontSize(_:)), $0, checked: Settings.fontSize == $0) }
-        menu.addItem(submenu("フォントサイズ（\(Int(Settings.fontSize)) pt）", symbol: "textformat.size", sizes))
-        menu.addItem(submenu("行間", symbol: "line.3.horizontal", Settings.lineSpacings.map {
-            item($0.name, #selector(setLineSpacing(_:)), $0.value, checked: Settings.lineSpacing == $0.value)
-        }))
-        menu.addItem(item("行を折り返す", #selector(toggleWrap), checked: Settings.wrapLines))
+        if let release = AppUpdate.shared.latest {
+            menu.addItem(item("アップデート \(release.tag_name)", #selector(updateClicked), symbol: "arrow.down.circle"))
+            menu.addItem(.separator())
+        }
+        menu.addItem(item("プラグイン", #selector(pluginsClicked), symbol: "puzzlepiece.extension"))
+        let theme = NSMenuItem(title: "テーマ", action: nil, keyEquivalent: "")
+        theme.image = NSImage(systemSymbolName: "paintpalette", accessibilityDescription: "テーマ")
+        let themes = NSMenu()
+        for (i, entry) in Settings.themes.enumerated() {
+            themes.addItem(item(entry.name, #selector(themeClicked(_:)), i, checked: Settings.themeIndex == i, image: NSColor.swatch(entry.colors)))
+        }
+        theme.submenu = themes
+        menu.addItem(theme)
+        menu.addItem(item("自動保存: \(Settings.autosaveEnabled ? "オン" : "オフ")", #selector(toggleAutosave),
+                          symbol: Settings.autosaveEnabled ? "checkmark.icloud" : "icloud.slash"))
         menu.addItem(.separator())
-        menu.addItem(item("初期値に戻す", #selector(reset)))
+        menu.addItem(item("設定…", #selector(preferencesClicked), symbol: "gearshape"))
     }
 
-    @objc private func setBackground(_ sender: NSMenuItem) { Settings.backgroundHex = sender.representedObject as? String ?? "" }
-    @objc private func setForeground(_ sender: NSMenuItem) { Settings.foregroundHex = sender.representedObject as? String ?? "" }
-    @objc private func setFont(_ sender: NSMenuItem) { Settings.fontName = sender.representedObject as? String ?? "" }
-    @objc private func setFontSize(_ sender: NSMenuItem) { Settings.fontSize = sender.representedObject as? CGFloat ?? 13 }
-    @objc private func setLineSpacing(_ sender: NSMenuItem) { Settings.lineSpacing = sender.representedObject as? CGFloat ?? 0 }
-    @objc private func growFont() { Settings.fontSize += 1 }
-    @objc private func shrinkFont() { Settings.fontSize -= 1 }
-    @objc private func toggleWrap() { Settings.wrapLines.toggle() }
-    @objc private func reset() { Settings.resetEditor() }
+    @objc private func updateClicked() {
+        guard let window else { return }
+        AppUpdate.shared.present(in: window)
+    }
+
+    @objc private func pluginsClicked() {
+        Popups.show("plugins", title: "プラグイン", over: window) { PluginManagerView() }
+    }
+
+    @objc private func themeClicked(_ sender: NSMenuItem) { Settings.applyTheme(sender.representedObject as? Int ?? 0) }
+
+    @objc private func toggleAutosave() { Settings.autosaveEnabled.toggle() }
+
+    @objc private func preferencesClicked() {
+        Popups.show("preferences", title: "設定", over: window) { PreferencesView() }
+    }
+}
+
+final class LayoutPreview: NSView {
+    var selected: Surface = .editor { didSet { needsDisplay = true } }
+    var onSelect: ((Surface) -> Void)?
+
+    override var isFlipped: Bool { true }
+
+    private func regions() -> [(Surface, NSRect)] {
+        let b = bounds.insetBy(dx: 1, dy: 1)
+        let top: CGFloat = 20, strip: CGFloat = 18, bar: CGFloat = 13
+        let body = NSRect(x: b.minX + strip, y: b.minY + top, width: b.width - strip, height: b.height - top)
+        let leftW = body.width * 0.3
+        let editorH = (body.height - bar) * 0.66
+        let rightX = body.minX + leftW + 1
+        let rightW = body.maxX - rightX
+        return [
+            (.bigTab, NSRect(x: b.minX, y: b.minY, width: b.width, height: top)),
+            (.bigTab, NSRect(x: b.minX, y: b.minY + top, width: strip, height: b.height - top)),
+            (.midTab, NSRect(x: body.minX, y: body.minY, width: leftW, height: bar)),
+            (.feed, NSRect(x: body.minX, y: body.minY + bar, width: leftW, height: body.height - bar)),
+            (.midTab, NSRect(x: rightX, y: body.minY, width: rightW, height: bar)),
+            (.editor, NSRect(x: rightX, y: body.minY + bar, width: rightW, height: editorH)),
+            (.midTab, NSRect(x: rightX, y: body.minY + bar + editorH + 1, width: rightW, height: bar)),
+            (.feed, NSRect(x: rightX, y: body.minY + bar * 2 + editorH + 1, width: rightW, height: body.maxY - (body.minY + bar * 2 + editorH + 1))),
+        ]
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let outline = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 8, yRadius: 8)
+        NSGraphicsContext.saveGraphicsState()
+        outline.addClip()
+        NSColor.separatorColor.setFill()
+        bounds.fill()
+        for (surface, rect) in regions() {
+            let color = Settings.surfaceColor(surface) ?? surface.systemColor
+            color.setFill()
+            rect.fill()
+            let ink = (color.usingColorSpace(.sRGB).map { $0.isDark } ?? false) ? NSColor(white: 1, alpha: 0.35) : NSColor(white: 0, alpha: 0.25)
+            ink.setFill()
+            switch surface {
+            case .bigTab where rect.height < rect.width:
+                for i in 0..<3 { NSBezierPath(ovalIn: NSRect(x: rect.minX + 8 + CGFloat(i) * 10, y: rect.midY - 3, width: 6, height: 6)).fill() }
+                NSRect(x: rect.minX + 50, y: rect.midY - 2, width: 60, height: 4).fill()
+            case .bigTab:
+                for i in 0..<3 { NSRect(x: rect.midX - 4, y: rect.minY + 8 + CGFloat(i) * 14, width: 8, height: 8).fill() }
+            case .midTab:
+                NSBezierPath(roundedRect: NSRect(x: rect.minX + 4, y: rect.minY + 3, width: min(42, rect.width - 8), height: rect.height - 6), xRadius: 2, yRadius: 2).fill()
+            case .feed:
+                var y = rect.minY + 7
+                while y < rect.maxY - 6 {
+                    NSRect(x: rect.minX + 8, y: y, width: min(rect.width * 0.55, 70), height: 3).fill()
+                    y += 9
+                }
+            case .editor:
+                let fg = Settings.surfaceColor(.editor) == nil ? NSColor.textColor : Settings.foreground
+                let widths: [CGFloat] = [0.5, 0.7, 0.35, 0.6, 0.45, 0.8, 0.3, 0.55]
+                var y = rect.minY + 8
+                for (i, w) in widths.enumerated() where y < rect.maxY - 6 {
+                    (i % 3 == 0 ? NSColor.systemPink : fg).withAlphaComponent(0.75).setFill()
+                    NSRect(x: rect.minX + 10 + CGFloat(i % 2) * 10, y: y, width: (rect.width - 30) * w, height: 3).fill()
+                    y += 10
+                }
+            }
+        }
+        NSGraphicsContext.restoreGraphicsState()
+        NSColor.controlAccentColor.setStroke()
+        for (surface, rect) in regions() where surface == selected {
+            let path = NSBezierPath(rect: rect.insetBy(dx: 1, dy: 1))
+            path.lineWidth = 2
+            path.stroke()
+        }
+        NSColor.separatorColor.setStroke()
+        outline.stroke()
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        guard let hit = regions().first(where: { $0.1.contains(point) })?.0 else { return }
+        selected = hit
+        onSelect?(hit)
+    }
+}
+
+final class PreferencesView: NSView {
+    private let preview = LayoutPreview()
+    private let surfacePopup = NSPopUpButton()
+    private let surfaceDetail = NSTextField(wrappingLabelWithString: "")
+    private let well = NSColorWell()
+    private let hexField = NSTextField()
+    private let sliders = (0..<3).map { _ in NSSlider(value: 0, minValue: 0, maxValue: 255, target: nil, action: nil) }
+    private let sliderValues = (0..<3).map { _ in NSTextField(labelWithString: "0") }
+    private let systemButton = NSButton(title: "システム既定に戻す", target: nil, action: nil)
+    private let fontPopup = NSPopUpButton()
+    private let sizeField = NSTextField()
+    private let sizeStepper = NSStepper()
+    private let foregroundPopup = NSPopUpButton()
+    private let spacingPopup = NSPopUpButton()
+    private let wrap = NSButton(checkboxWithTitle: "行を折り返す", target: nil, action: nil)
+    private let durationSlider = NSSlider(value: 5, minValue: 2, maxValue: 30, target: nil, action: nil)
+    private let durationLabel = NSTextField(labelWithString: "")
+    private let sizeControl = NSSegmentedControl(labels: ToastSize.allCases.map(\.title), trackingMode: .selectOne, target: nil, action: nil)
+    private var loading = false
+
+    init() {
+        super.init(frame: NSRect(x: 0, y: 0, width: 660, height: 430))
+        let tabs = NSTabView()
+        tabs.translatesAutoresizingMaskIntoConstraints = false
+        for (title, view) in [("背景色", colorPane()), ("フォント", fontPane()), ("通知", toastPane())] {
+            let item = NSTabViewItem()
+            item.label = title
+            item.view = view
+            tabs.addTabViewItem(item)
+        }
+        let reset = NSButton(title: "すべて初期値に戻す", target: self, action: #selector(resetClicked))
+        reset.bezelStyle = .rounded
+        reset.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(tabs)
+        addSubview(reset)
+        NSLayoutConstraint.activate([
+            widthAnchor.constraint(equalToConstant: 660),
+            heightAnchor.constraint(equalToConstant: 430),
+            tabs.topAnchor.constraint(equalTo: topAnchor, constant: 12),
+            tabs.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
+            tabs.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
+            reset.topAnchor.constraint(equalTo: tabs.bottomAnchor, constant: 8),
+            reset.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -18),
+            reset.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -14),
+        ])
+        NotificationCenter.default.addObserver(self, selector: #selector(load), name: .settingsChanged, object: nil)
+        load()
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    private static func label(_ text: String) -> NSTextField {
+        let label = NSTextField(labelWithString: text)
+        label.alignment = .right
+        return label
+    }
+
+    private static func grid(_ rows: [[NSView]]) -> NSGridView {
+        let grid = NSGridView(views: rows)
+        grid.rowSpacing = 12
+        grid.columnSpacing = 10
+        grid.column(at: 0).xPlacement = .trailing
+        grid.rowAlignment = .firstBaseline
+        grid.translatesAutoresizingMaskIntoConstraints = false
+        return grid
+    }
+
+    private static func pane(_ content: NSView, top: CGFloat = 16) -> NSView {
+        let pane = NSView()
+        pane.addSubview(content)
+        NSLayoutConstraint.activate([
+            content.topAnchor.constraint(equalTo: pane.topAnchor, constant: top),
+            content.leadingAnchor.constraint(equalTo: pane.leadingAnchor, constant: 16),
+            content.trailingAnchor.constraint(lessThanOrEqualTo: pane.trailingAnchor, constant: -16),
+        ])
+        return pane
+    }
+
+    private func colorPane() -> NSView {
+        preview.translatesAutoresizingMaskIntoConstraints = false
+        preview.onSelect = { [weak self] _ in self?.loadColor() }
+        surfacePopup.addItems(withTitles: Surface.allCases.map(\.title))
+        surfacePopup.target = self
+        surfacePopup.action = #selector(surfaceChanged)
+        surfaceDetail.font = .systemFont(ofSize: 11)
+        surfaceDetail.textColor = .secondaryLabelColor
+        surfaceDetail.preferredMaxLayoutWidth = 250
+        well.target = self
+        well.action = #selector(wellChanged)
+        hexField.placeholderString = "#RRGGBB"
+        hexField.target = self
+        hexField.action = #selector(hexChanged)
+        hexField.widthAnchor.constraint(equalToConstant: 90).isActive = true
+        systemButton.bezelStyle = .rounded
+        systemButton.target = self
+        systemButton.action = #selector(systemClicked)
+        var rows: [[NSView]] = [
+            [Self.label("場所"), surfacePopup],
+            [NSGridCell.emptyContentView, surfaceDetail],
+            [Self.label("色"), NSStackView(views: [well, hexField])],
+        ]
+        for (i, name) in ["R", "G", "B"].enumerated() {
+            sliders[i].target = self
+            sliders[i].action = #selector(sliderChanged)
+            sliders[i].isContinuous = true
+            sliders[i].widthAnchor.constraint(equalToConstant: 150).isActive = true
+            sliderValues[i].font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
+            sliderValues[i].widthAnchor.constraint(equalToConstant: 28).isActive = true
+            rows.append([Self.label(name), NSStackView(views: [sliders[i], sliderValues[i]])])
+        }
+        rows.append([NSGridCell.emptyContentView, systemButton])
+        let grid = Self.grid(rows)
+        let hint = NSTextField(wrappingLabelWithString: "プレビューの場所をクリックして選べます")
+        hint.font = .systemFont(ofSize: 11)
+        hint.textColor = .secondaryLabelColor
+        hint.translatesAutoresizingMaskIntoConstraints = false
+        let pane = NSView()
+        [preview, hint, grid].forEach(pane.addSubview)
+        NSLayoutConstraint.activate([
+            preview.topAnchor.constraint(equalTo: pane.topAnchor, constant: 16),
+            preview.leadingAnchor.constraint(equalTo: pane.leadingAnchor, constant: 16),
+            preview.widthAnchor.constraint(equalToConstant: 280),
+            preview.heightAnchor.constraint(equalToConstant: 210),
+            hint.topAnchor.constraint(equalTo: preview.bottomAnchor, constant: 6),
+            hint.leadingAnchor.constraint(equalTo: preview.leadingAnchor),
+            hint.widthAnchor.constraint(equalTo: preview.widthAnchor),
+            grid.topAnchor.constraint(equalTo: preview.topAnchor),
+            grid.leadingAnchor.constraint(equalTo: preview.trailingAnchor, constant: 20),
+            grid.trailingAnchor.constraint(lessThanOrEqualTo: pane.trailingAnchor, constant: -12),
+        ])
+        return pane
+    }
+
+    private func fontPane() -> NSView {
+        fontPopup.target = self
+        fontPopup.action = #selector(fontChanged)
+        for entry in Settings.fontNames {
+            fontPopup.addItem(withTitle: entry.name)
+            fontPopup.lastItem?.representedObject = entry.postScript
+            fontPopup.lastItem?.attributedTitle = NSAttributedString(string: entry.name, attributes: [
+                .font: NSFont(name: entry.postScript, size: 13) ?? .monospacedSystemFont(ofSize: 13, weight: .regular)])
+        }
+        sizeField.formatter = {
+            let f = NumberFormatter()
+            f.minimum = 8
+            f.maximum = 40
+            f.maximumFractionDigits = 0
+            return f
+        }()
+        sizeField.target = self
+        sizeField.action = #selector(sizeFieldChanged)
+        sizeField.widthAnchor.constraint(equalToConstant: 50).isActive = true
+        sizeStepper.minValue = 8
+        sizeStepper.maxValue = 40
+        sizeStepper.increment = 1
+        sizeStepper.target = self
+        sizeStepper.action = #selector(stepperChanged)
+        for entry in Settings.foregrounds {
+            foregroundPopup.addItem(withTitle: entry.name)
+            foregroundPopup.lastItem?.image = entry.hex.isEmpty ? nil : NSColor.swatch([entry.hex])
+        }
+        foregroundPopup.target = self
+        foregroundPopup.action = #selector(foregroundChanged)
+        spacingPopup.addItems(withTitles: Settings.lineSpacings.map(\.name))
+        spacingPopup.target = self
+        spacingPopup.action = #selector(spacingChanged)
+        wrap.target = self
+        wrap.action = #selector(wrapChanged)
+        return Self.pane(Self.grid([
+            [Self.label("フォント"), fontPopup],
+            [Self.label("フォントサイズ"), NSStackView(views: [sizeField, sizeStepper, NSTextField(labelWithString: "pt")])],
+            [Self.label("文字色"), foregroundPopup],
+            [Self.label("行間"), spacingPopup],
+            [NSGridCell.emptyContentView, wrap],
+        ]))
+    }
+
+    private func toastPane() -> NSView {
+        durationSlider.target = self
+        durationSlider.action = #selector(durationChanged)
+        durationSlider.numberOfTickMarks = 29
+        durationSlider.allowsTickMarkValuesOnly = true
+        durationSlider.widthAnchor.constraint(equalToConstant: 220).isActive = true
+        durationLabel.font = .monospacedDigitSystemFont(ofSize: 12, weight: .regular)
+        sizeControl.target = self
+        sizeControl.action = #selector(toastSizeChanged)
+        let test = NSButton(title: "テスト通知を表示", target: self, action: #selector(testClicked))
+        test.bezelStyle = .rounded
+        let note = NSTextField(wrappingLabelWithString: "通知は右下に表示されます。× で閉じられ、下のバーが消えるまでの残り時間を表します（マウスを重ねている間は止まります）。")
+        note.font = .systemFont(ofSize: 11)
+        note.textColor = .secondaryLabelColor
+        note.preferredMaxLayoutWidth = 360
+        return Self.pane(Self.grid([
+            [Self.label("表示時間"), NSStackView(views: [durationSlider, durationLabel])],
+            [Self.label("大きさ"), sizeControl],
+            [NSGridCell.emptyContentView, test],
+            [NSGridCell.emptyContentView, note],
+        ]))
+    }
+
+    private var surface: Surface { preview.selected }
+
+    @objc private func load() {
+        loading = true
+        defer { loading = false }
+        preview.needsDisplay = true
+        loadColor()
+        let fonts = Settings.fontNames
+        fontPopup.selectItem(at: fonts.firstIndex { $0.postScript == Settings.fontName } ?? 0)
+        sizeField.integerValue = Int(Settings.fontSize)
+        sizeStepper.integerValue = Int(Settings.fontSize)
+        foregroundPopup.selectItem(at: Settings.foregrounds.firstIndex { $0.hex == Settings.foregroundHex } ?? 0)
+        spacingPopup.selectItem(at: Settings.lineSpacings.firstIndex { $0.value == Settings.lineSpacing } ?? 0)
+        wrap.state = Settings.wrapLines ? .on : .off
+        durationSlider.doubleValue = Settings.toastDuration
+        durationLabel.stringValue = "\(Int(Settings.toastDuration)) 秒"
+        sizeControl.selectedSegment = ToastSize.allCases.firstIndex(of: Settings.toastSize) ?? 1
+    }
+
+    private func loadColor() {
+        let wasLoading = loading
+        loading = true
+        defer { loading = wasLoading }
+        surfacePopup.selectItem(at: Surface.allCases.firstIndex(of: surface) ?? 0)
+        surfaceDetail.stringValue = surface.detail
+        let custom = Settings.surfaceColor(surface)
+        var color = custom ?? surface.systemColor
+        effectiveAppearance.performAsCurrentDrawingAppearance { color = color.usingColorSpace(.sRGB) ?? color }
+        well.color = color
+        hexField.stringValue = custom == nil ? "" : Settings.surfaceHex(surface)
+        hexField.placeholderString = custom == nil ? "システム既定" : "#RRGGBB"
+        for (i, value) in [color.redComponent, color.greenComponent, color.blueComponent].enumerated() {
+            sliders[i].doubleValue = Double(value * 255).rounded()
+            sliderValues[i].stringValue = "\(Int(sliders[i].doubleValue))"
+        }
+        systemButton.isEnabled = custom != nil
+    }
+
+    private func setColor(_ hex: String) {
+        guard !loading else { return }
+        Settings.setSurfaceHex(hex, for: surface)
+    }
+
+    @objc private func surfaceChanged() {
+        preview.selected = Surface.allCases[max(surfacePopup.indexOfSelectedItem, 0)]
+        loadColor()
+    }
+
+    @objc private func wellChanged() { setColor(well.color.hexString) }
+
+    @objc private func hexChanged() {
+        let text = hexField.stringValue.trimmingCharacters(in: .whitespaces)
+        guard let color = NSColor(hex: text) else { return loadColor() }
+        setColor(color.hexString)
+    }
+
+    @objc private func sliderChanged() {
+        let c = sliders.map { Int($0.doubleValue.rounded()) }
+        setColor(String(format: "#%02X%02X%02X", c[0], c[1], c[2]))
+    }
+
+    @objc private func systemClicked() { setColor("") }
+
+    @objc private func fontChanged() { Settings.fontName = fontPopup.selectedItem?.representedObject as? String ?? "" }
+    @objc private func sizeFieldChanged() { Settings.fontSize = CGFloat(sizeField.integerValue) }
+    @objc private func stepperChanged() { Settings.fontSize = CGFloat(sizeStepper.integerValue) }
+    @objc private func foregroundChanged() { Settings.foregroundHex = Settings.foregrounds[max(foregroundPopup.indexOfSelectedItem, 0)].hex }
+    @objc private func spacingChanged() { Settings.lineSpacing = Settings.lineSpacings[max(spacingPopup.indexOfSelectedItem, 0)].value }
+    @objc private func wrapChanged() { Settings.wrapLines = wrap.state == .on }
+    @objc private func durationChanged() { Settings.toastDuration = durationSlider.doubleValue.rounded() }
+    @objc private func toastSizeChanged() { Settings.toastSize = ToastSize.allCases[max(sizeControl.selectedSegment, 0)] }
+
+    @objc private func testClicked() {
+        Toasts.post("テスト通知", message: "\(Int(Settings.toastDuration)) 秒で消えます（大きさ: \(Settings.toastSize.title)）",
+                    actions: [("OK", {})])
+    }
+
+    @objc private func resetClicked() { Settings.resetEditor() }
 }
 
 final class BaseSettingsView: NSView {
