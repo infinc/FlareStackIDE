@@ -1,217 +1,12 @@
 import AppKit
 
-let appName = "FlareStackIDE"
-let releasesURL = URL(string: "https://api.github.com/repos/infinc/FlareStackIDE/releases/latest")!
-
-struct Release: Decodable {
-    struct Asset: Decodable {
-        let name: String
-        let browser_download_url: URL
-    }
-    let tag_name: String
-    let body: String?
-    let assets: [Asset]
-
-    var dmg: Asset? { assets.first { $0.name.hasSuffix(".dmg") } }
-}
-
-func versionParts(_ s: String) -> [Int] {
-    guard let range = s.range(of: #"\d+(\.\d+)*"#, options: .regularExpression) else { return [] }
-    return s[range].split(separator: ".").map { Int($0) ?? 0 }
-}
-
-func isNewer(_ remote: String, than local: String) -> Bool {
-    let r = versionParts(remote), l = versionParts(local)
-    for i in 0..<max(r.count, l.count) {
-        let a = i < r.count ? r[i] : 0, b = i < l.count ? l[i] : 0
-        if a != b { return a > b }
-    }
-    return false
-}
-
-func renderInlineMarkdown(_ line: String, font base: NSFont) -> NSAttributedString {
-    let options = AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
-    guard let parsed = try? AttributedString(markdown: line, options: options) else {
-        return NSAttributedString(string: line, attributes: [.font: base, .foregroundColor: NSColor.labelColor])
-    }
-    let result = NSMutableAttributedString()
-    let fm = NSFontManager.shared
-    for run in parsed.runs {
-        var font = base
-        let intent = run.inlinePresentationIntent ?? []
-        if intent.contains(.code) {
-            font = .monospacedSystemFont(ofSize: base.pointSize * 0.95, weight: .regular)
-        } else {
-            if intent.contains(.stronglyEmphasized) { font = fm.convert(font, toHaveTrait: .boldFontMask) }
-            if intent.contains(.emphasized) { font = fm.convert(font, toHaveTrait: .italicFontMask) }
-        }
-        var attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor.labelColor]
-        if intent.contains(.strikethrough) { attrs[.strikethroughStyle] = NSUnderlineStyle.single.rawValue }
-        if intent.contains(.code) { attrs[.backgroundColor] = NSColor.quaternaryLabelColor }
-        if let link = run.link { attrs[.link] = link }
-        result.append(NSAttributedString(string: String(parsed[run.range].characters), attributes: attrs))
-    }
-    return result
-}
-
-func renderMarkdown(_ markdown: String) -> NSAttributedString {
-    let size = NSFont.systemFontSize
-    let body = NSFont.systemFont(ofSize: size)
-    let output = NSMutableAttributedString()
-    var inCode = false
-
-    func paragraph(indent: CGFloat = 0, head: CGFloat = 0, spacing: CGFloat = 4) -> NSParagraphStyle {
-        let style = NSMutableParagraphStyle()
-        style.firstLineHeadIndent = indent
-        style.headIndent = indent + head
-        style.paragraphSpacing = spacing
-        return style
-    }
-
-    func append(_ text: NSAttributedString, _ style: NSParagraphStyle) {
-        let line = NSMutableAttributedString(attributedString: text)
-        line.append(NSAttributedString(string: "\n"))
-        line.addAttribute(.paragraphStyle, value: style, range: NSRange(location: 0, length: line.length))
-        output.append(line)
-    }
-
-    let lines = markdown.replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: "\n")
-    for raw in lines {
-        let trimmed = raw.trimmingCharacters(in: .whitespaces)
-        if trimmed.hasPrefix("```") { inCode.toggle(); continue }
-        if inCode {
-            let mono = NSFont.monospacedSystemFont(ofSize: size * 0.95, weight: .regular)
-            append(NSAttributedString(string: raw, attributes: [.font: mono, .foregroundColor: NSColor.labelColor,
-                                                                .backgroundColor: NSColor.quaternaryLabelColor]),
-                   paragraph(indent: 8, spacing: 0))
-            continue
-        }
-        if trimmed.isEmpty { continue }
-
-        let depth = CGFloat(raw.prefix { $0 == " " || $0 == "\t" }.count / 2) * 16
-
-        if let m = trimmed.range(of: #"^#{1,6}\s+"#, options: .regularExpression) {
-            let level = trimmed[m].filter { $0 == "#" }.count
-            let font = NSFont.boldSystemFont(ofSize: size + CGFloat(max(0, 4 - level)) * 2)
-            append(renderInlineMarkdown(String(trimmed[m.upperBound...]), font: font), paragraph(spacing: 6))
-        } else if trimmed.range(of: #"^([-*_]\s*){3,}$"#, options: .regularExpression) != nil {
-            append(NSAttributedString(string: String(repeating: "─", count: 30),
-                                      attributes: [.font: body, .foregroundColor: NSColor.separatorColor]), paragraph())
-        } else if let m = trimmed.range(of: #"^[-*+]\s+(\[[ xX]\]\s+)?"#, options: .regularExpression) {
-            let marker = trimmed[m]
-            let bullet = marker.contains("[x]") || marker.contains("[X]") ? "☑︎ " : marker.contains("[ ]") ? "☐ " : "• "
-            let line = NSMutableAttributedString(string: bullet, attributes: [.font: body, .foregroundColor: NSColor.labelColor])
-            line.append(renderInlineMarkdown(String(trimmed[m.upperBound...]), font: body))
-            append(line, paragraph(indent: depth + 8, head: 12))
-        } else if let m = trimmed.range(of: #"^\d+[.)]\s+"#, options: .regularExpression) {
-            let number = trimmed[m].trimmingCharacters(in: .whitespaces)
-            let line = NSMutableAttributedString(string: number + " ", attributes: [.font: body, .foregroundColor: NSColor.labelColor])
-            line.append(renderInlineMarkdown(String(trimmed[m.upperBound...]), font: body))
-            append(line, paragraph(indent: depth + 8, head: 18))
-        } else if let m = trimmed.range(of: #"^>\s?"#, options: .regularExpression) {
-            let line = NSMutableAttributedString(attributedString: renderInlineMarkdown(String(trimmed[m.upperBound...]), font: body))
-            line.addAttribute(.foregroundColor, value: NSColor.secondaryLabelColor, range: NSRange(location: 0, length: line.length))
-            append(line, paragraph(indent: 12))
-        } else {
-            append(renderInlineMarkdown(trimmed, font: body), paragraph())
-        }
-    }
-    return output
-}
-
-@discardableResult
-func run(_ path: String, _ args: [String]) throws -> String {
-    let p = Process()
-    p.executableURL = URL(fileURLWithPath: path)
-    p.arguments = args
-    let out = Pipe()
-    p.standardOutput = out
-    p.standardError = out
-    try p.run()
-    let data = out.fileHandleForReading.readDataToEndOfFile()
-    p.waitUntilExit()
-    let text = String(data: data, encoding: .utf8) ?? ""
-    if p.terminationStatus != 0 {
-        throw NSError(domain: appName, code: Int(p.terminationStatus),
-                      userInfo: [NSLocalizedDescriptionKey: "\(path) \(args.joined(separator: " "))\n\(text)"])
-    }
-    return text
-}
-
-final class Updater {
-    let currentVersion: String
-
-    init(currentVersion: String) {
-        self.currentVersion = currentVersion
-    }
-
-    func checkLatest(_ completion: @escaping (Release?) -> Void) {
-        var request = URLRequest(url: releasesURL)
-        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
-        URLSession.shared.dataTask(with: request) { [currentVersion] data, response, _ in
-            var result: Release?
-            if let data, (response as? HTTPURLResponse)?.statusCode == 200,
-               let release = try? JSONDecoder().decode(Release.self, from: data),
-               isNewer(release.tag_name, than: currentVersion) {
-                result = release
-            }
-            DispatchQueue.main.async { completion(result) }
-        }.resume()
-    }
-
-    func install(_ release: Release, completion: @escaping (Error?) -> Void) {
-        guard let asset = release.dmg else {
-            completion(NSError(domain: appName, code: 1,
-                               userInfo: [NSLocalizedDescriptionKey: "リリースに .dmg が見つかりません"]))
-            return
-        }
-        URLSession.shared.downloadTask(with: asset.browser_download_url) { location, _, error in
-            var failure = error
-            if let location, failure == nil {
-                do { try Self.replaceApp(fromDMG: location) } catch { failure = error }
-            }
-            DispatchQueue.main.async { completion(failure) }
-        }.resume()
-    }
-
-    private static func replaceApp(fromDMG dmg: URL) throws {
-        let fm = FileManager.default
-        let work = fm.temporaryDirectory.appendingPathComponent("\(appName)-update-\(UUID().uuidString)")
-        let mount = work.appendingPathComponent("mnt")
-        try fm.createDirectory(at: mount, withIntermediateDirectories: true)
-        defer { try? fm.removeItem(at: work) }
-
-        try run("/usr/bin/hdiutil", ["attach", dmg.path, "-nobrowse", "-readonly", "-mountpoint", mount.path])
-        defer { _ = try? run("/usr/bin/hdiutil", ["detach", mount.path, "-force"]) }
-
-        let source = mount.appendingPathComponent("\(appName).app")
-        guard fm.fileExists(atPath: source.path) else {
-            throw NSError(domain: appName, code: 2,
-                          userInfo: [NSLocalizedDescriptionKey: "dmg 内に \(appName).app が見つかりません"])
-        }
-        let target = Bundle.main.bundleURL
-        let staged = target.deletingLastPathComponent().appendingPathComponent(".\(appName)-update.app")
-        try? fm.removeItem(at: staged)
-        defer { try? fm.removeItem(at: staged) }
-        try run("/usr/bin/ditto", [source.path, staged.path])
-        _ = try? run("/usr/bin/xattr", ["-dr", "com.apple.quarantine", staged.path])
-        _ = try fm.replaceItemAt(target, withItemAt: staged)
-    }
-
-    static func relaunch() {
-        let path = Bundle.main.bundlePath
-        let p = Process()
-        p.executableURL = URL(fileURLWithPath: "/bin/sh")
-        p.arguments = ["-c", "while kill -0 \(getpid()) 2>/dev/null; do sleep 0.2; done; open \"$0\"", path]
-        try? p.run()
-        NSApp.terminate(nil)
-    }
-}
-
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, WelcomeDelegate {
     private var splash: NSWindow?
     private var mainWindow: NSWindow?
+    private let welcome = WelcomeViewController()
+    private var editors: [EditorWindowController] = []
     private var settingsWindow: NSWindow?
+    private var cloneSheet: CloneWindowController?
     private var updateButton: NSButton?
     private var latestRelease: Release?
     private lazy var updater = Updater(currentVersion: currentVersion)
@@ -231,6 +26,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.splash = nil
             self?.showMainWindow()
         }
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        editors.forEach { $0.saveAll() }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -260,11 +59,117 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                               backing: .buffered, defer: false)
         window.title = "\(appName) v\(currentVersion)"
         window.isReleasedWhenClosed = false
+        window.minSize = NSSize(width: 640, height: 420)
+        welcome.delegate = self
+        window.contentViewController = welcome
+        window.setContentSize(NSSize(width: 900, height: 600))
         window.addTitlebarAccessoryViewController(makeToolbarAccessory())
         window.center()
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
         mainWindow = window
+    }
+
+    @objc func openDocument(_ sender: Any?) {
+        welcomeOpenFile()
+    }
+
+    func welcomeOpenFile() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.message = "編集するファイルまたはフォルダを選択してください"
+        panel.prompt = "開く"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+
+        openEditor(askSaveProject(Project(name: url.lastPathComponent, path: url.path)))
+    }
+
+    private func askSaveProject(_ project: Project) -> Project {
+        if let saved = ProjectStore.all.first(where: { $0.path == project.path }) { return saved }
+        switch Settings.projectAddMode {
+        case .never:
+            return project
+        case .always:
+            ProjectStore.touch(project)
+            welcome.reload()
+            return project
+        case .ask:
+            break
+        }
+        let alert = NSAlert()
+        alert.messageText = "プロジェクトとして保存しますか？"
+        alert.informativeText = "保存すると、次回から初期画面の左側から開けます。\n\(project.path)"
+        alert.addButton(withTitle: "保存する")
+        alert.addButton(withTitle: "保存しない")
+        if alert.runModal() == .alertFirstButtonReturn {
+            ProjectStore.touch(ProjectStore.all.first { $0.path == project.path } ?? project)
+            welcome.reload()
+        }
+        return ProjectStore.all.first { $0.path == project.path } ?? project
+    }
+
+    func welcomeClone() {
+        guard let window = mainWindow, cloneSheet == nil else { return }
+        let sheet = CloneWindowController()
+        sheet.onClone = { [weak self] request in self?.startClone(request) }
+        cloneSheet = sheet
+        window.beginSheet(sheet.window!) { [weak self] _ in self?.cloneSheet = nil }
+    }
+
+    private func startClone(_ request: CloneRequest) {
+        do {
+            try FileManager.default.createDirectory(at: request.destination, withIntermediateDirectories: true)
+        } catch {
+            NSAlert(error: error).runModal()
+            return
+        }
+        openEditor(askSaveProject(Project(name: request.name, path: request.destination.path))).clone(request)
+    }
+
+    func welcomeOpen(_ project: Project) {
+        guard FileManager.default.fileExists(atPath: project.path) else {
+            let alert = NSAlert()
+            alert.messageText = "「\(project.name)」が見つかりません"
+            alert.informativeText = "\(project.path)\n一覧から削除しますか？"
+            alert.addButton(withTitle: "削除")
+            alert.addButton(withTitle: "キャンセル")
+            if alert.runModal() == .alertFirstButtonReturn {
+                ProjectStore.remove(project)
+                welcome.reload()
+            }
+            return
+        }
+        ProjectStore.touch(project)
+        welcome.reload()
+        openEditor(project)
+    }
+
+    @discardableResult
+    private func openEditor(_ project: Project) -> EditorWindowController {
+        if let existing = editors.first(where: { $0.project.path == project.path }) {
+            existing.window?.makeKeyAndOrderFront(nil)
+            mainWindow?.orderOut(nil)
+            return existing
+        }
+        let editor = EditorWindowController(project: project)
+        editor.onClose = { [weak self, weak editor] in
+            guard let self else { return }
+            self.editors.removeAll { $0 === editor }
+            if self.editors.isEmpty {
+                self.welcome.reload()
+                self.mainWindow?.makeKeyAndOrderFront(nil)
+            }
+        }
+        editor.onBack = { [weak self] in
+            self?.welcome.reload()
+            self?.mainWindow?.makeKeyAndOrderFront(nil)
+        }
+        editors.append(editor)
+        editor.showWindow(nil)
+        mainWindow?.orderOut(nil)
+        return editor
     }
 
     private func makeToolbarAccessory() -> NSTitlebarAccessoryViewController {
@@ -298,16 +203,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func settingsClicked() {
         if settingsWindow == nil {
-            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 420, height: 240),
-                                  styleMask: [.titled, .closable], backing: .buffered, defer: false)
+            let view = BaseSettingsView(version: currentVersion)
+            let window = NSWindow(contentRect: view.frame, styleMask: [.titled, .closable], backing: .buffered, defer: false)
             window.title = "設定"
             window.isReleasedWhenClosed = false
-            let label = NSTextField(labelWithString: "\(appName) v\(currentVersion)")
-            label.frame = NSRect(x: 20, y: 190, width: 380, height: 20)
-            window.contentView?.addSubview(label)
+            window.contentView = view
             window.center()
             settingsWindow = window
         }
+        (settingsWindow?.contentView as? BaseSettingsView)?.load()
         settingsWindow?.makeKeyAndOrderFront(nil)
     }
 
@@ -364,8 +268,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
+func buildMainMenu() -> NSMenu {
+    let main = NSMenu()
+
+    let appMenu = NSMenu()
+    appMenu.addItem(withTitle: "\(appName) について", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+    appMenu.addItem(.separator())
+    appMenu.addItem(withTitle: "\(appName) を隠す", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
+    appMenu.addItem(.separator())
+    appMenu.addItem(withTitle: "\(appName) を終了", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+
+    let fileMenu = NSMenu(title: "ファイル")
+    fileMenu.addItem(withTitle: "開く…", action: #selector(AppDelegate.openDocument(_:)), keyEquivalent: "o")
+    fileMenu.addItem(withTitle: "保存", action: #selector(EditorWindowController.saveDocument(_:)), keyEquivalent: "s")
+    fileMenu.addItem(.separator())
+    fileMenu.addItem(withTitle: "閉じる", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+
+    let editMenu = NSMenu(title: "編集")
+    editMenu.addItem(withTitle: "取り消す", action: Selector(("undo:")), keyEquivalent: "z")
+    let redo = editMenu.addItem(withTitle: "やり直す", action: Selector(("redo:")), keyEquivalent: "z")
+    redo.keyEquivalentModifierMask = [.command, .shift]
+    editMenu.addItem(.separator())
+    editMenu.addItem(withTitle: "カット", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+    editMenu.addItem(withTitle: "コピー", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+    editMenu.addItem(withTitle: "ペースト", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+    editMenu.addItem(withTitle: "すべてを選択", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+    editMenu.addItem(.separator())
+    editMenu.addItem(withTitle: "検索…", action: #selector(NSTextView.performFindPanelAction(_:)), keyEquivalent: "f").tag = Int(NSFindPanelAction.showFindPanel.rawValue)
+
+    for (title, submenu) in [(appName, appMenu), ("ファイル", fileMenu), ("編集", editMenu)] {
+        let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+        item.submenu = submenu
+        main.addItem(item)
+    }
+    return main
+}
+
 let app = NSApplication.shared
 let delegate = AppDelegate()
 app.delegate = delegate
+app.mainMenu = buildMainMenu()
 app.setActivationPolicy(.regular)
 app.run()

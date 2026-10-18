@@ -1,0 +1,10 @@
+{
+  "id": "md-viewer",
+  "name": "MD Viewer",
+  "version": "1.0.0",
+  "author": "FlareStackIDE",
+  "symbol": "doc.richtext",
+  "summary": "Markdown ファイルをリアルタイムでプレビュー",
+  "fileExtensions": ["md", "markdown", "mdown", "mkd"],
+  "files": ["main.js", "README.md"]
+}
