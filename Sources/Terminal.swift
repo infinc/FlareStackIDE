@@ -525,7 +525,7 @@ final class TerminalView: NSView, NSTextInputClient {
 
     override func draw(_ dirtyRect: NSRect) {
         let defaultFg = NSColor.textColor
-        let defaultBg = NSColor.textBackgroundColor
+        let defaultBg = Settings.surfaceColor(.feed) ?? .textBackgroundColor
         defaultBg.setFill()
         dirtyRect.fill()
 
@@ -692,7 +692,6 @@ final class TerminalPane: NSView {
         scroll.hasVerticalScroller = true
         scroll.autohidesScrollers = true
         scroll.drawsBackground = true
-        scroll.backgroundColor = .textBackgroundColor
         scroll.documentView = terminal
         scroll.autoresizingMask = [.width, .height]
         addSubview(scroll)
@@ -701,6 +700,14 @@ final class TerminalPane: NSView {
         terminal.emulator.onReply = { [weak self] in self?.pty.write($0) }
         pty.onOutput = { [weak self] in self?.receive($0) }
         pty.onExit = { [weak self] in self?.onExit?() }
+        NotificationCenter.default.addObserver(self, selector: #selector(applyColors), name: .settingsChanged, object: nil)
+        applyColors()
+    }
+
+    @objc private func applyColors() {
+        paint(.feed)
+        scroll.backgroundColor = Settings.surfaceColor(.feed) ?? .textBackgroundColor
+        terminal.needsDisplay = true
     }
 
     required init?(coder: NSCoder) { fatalError() }

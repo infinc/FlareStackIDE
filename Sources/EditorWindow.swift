@@ -109,6 +109,10 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
     private var barHeight: NSLayoutConstraint!
     private let bodyHost = NSView()
     private var ext: EditorExtension?
+    private var highlighter: Highlighter?
+    private var recolorWork: DispatchWorkItem?
+    private let topBar = NSView()
+    private let strip = NSView()
     private var selectedURL: URL?
     private let gearButton = NSButton()
     private let settingsMenu = EditorSettingsMenu()
@@ -138,6 +142,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
         NotificationCenter.default.addObserver(self, selector: #selector(applySettings), name: .settingsChanged, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(pluginsChanged), name: .pluginsChanged, object: nil)
         applySettings()
+        PluginStore.refreshCatalog()
     }
 
     private var baseDirectory: URL { root.isDirectory ? root.url : root.url.deletingLastPathComponent() }
@@ -147,7 +152,6 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
     private func build() {
         let content = NSView(frame: NSRect(x: 0, y: 0, width: 1100, height: 720))
 
-        let topBar = NSView()
         topBar.translatesAutoresizingMaskIntoConstraints = false
         let back = NSButton(image: NSImage(systemSymbolName: "chevron.left", accessibilityDescription: "初期画面に戻る")!,
                             target: self, action: #selector(backClicked))
@@ -193,7 +197,6 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
         topLine.boxType = .separator
         topLine.translatesAutoresizingMaskIntoConstraints = false
 
-        let strip = NSView()
         strip.translatesAutoresizingMaskIntoConstraints = false
         folderButton = ToolStripButton(symbol: "folder", tip: "ディレクトリ", target: self, action: #selector(toggleTree))
         pluginButton = ToolStripButton(symbol: "puzzlepiece.extension", tip: "プラグイン", target: self, action: #selector(togglePlugins))
@@ -219,6 +222,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
         outline.target = self
         outline.action = #selector(treeClicked)
         outline.columnAutoresizingStyle = .noColumnAutoresizing
+        outline.backgroundColor = .clear
         let menu = NSMenu()
         menu.delegate = self
         outline.menu = menu
@@ -236,6 +240,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
         show(treeFeed, in: leftPane)
         topFeed = treeFeed
 
+        _ = textView.layoutManager
         textView.font = .monospacedSystemFont(ofSize: 13, weight: .regular)
         textView.isRichText = false
         textView.allowsUndo = true
@@ -628,6 +633,8 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
         textView.string = buffer.text
         styleText()
         textView.isEditable = buffer.editable
+        highlighter = buffer.editable ? PluginStore.makeHighlighter(for: url) : nil
+        recolor()
         attachExtension()
         textView.undoManager?.removeAllActions()
         textView.setSelectedRange(NSRange(location: 0, length: 0))
@@ -643,6 +650,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
         let url = PluginStore.pageURL(id)
         selectedURL = url
         addTab(for: url, title: info.name)
+        highlighter = nil
         detachExtension()
         pluginPage.show(id)
         show(pluginPage, in: bodyHost)
@@ -670,6 +678,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
 
     private func showEmpty() {
         selectedURL = nil
+        highlighter = nil
         detachExtension()
         textView.string = ""
         textView.isEditable = false
@@ -681,8 +690,10 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
     @objc private func pluginsChanged() {
         (pluginFeed?.content as? PluginList)?.reload()
         pluginPage.refresh()
-        if current != nil {
+        if let current {
             storeCurrent()
+            highlighter = current.editable ? PluginStore.makeHighlighter(for: current.url) : nil
+            recolor()
             attachExtension()
         }
     }
@@ -695,12 +706,36 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
         textView.typingAttributes = attrs
     }
 
+    private func recolor() {
+        recolorWork?.cancel()
+        recolorWork = nil
+        guard let layout = textView.layoutManager else { return }
+        let text = textView.string
+        layout.removeTemporaryAttribute(.foregroundColor, forCharacterRange: NSRange(location: 0, length: (text as NSString).length))
+        guard let highlighter, let url = current?.url else { return }
+        for span in highlighter.spans(text, file: url) {
+            layout.addTemporaryAttribute(.foregroundColor, value: span.color, forCharacterRange: span.range)
+        }
+    }
+
+    private func scheduleRecolor() {
+        guard highlighter != nil else { return }
+        recolorWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.recolor() }
+        recolorWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12, execute: work)
+    }
+
     @objc private func applySettings() {
+        topBar.paint(.bigTab)
+        strip.paint(.bigTab)
         textView.font = Settings.font
         textView.backgroundColor = Settings.background
+        editorScroll.backgroundColor = Settings.background
         textView.insertionPointColor = Settings.foreground
         textView.defaultParagraphStyle = Settings.paragraphStyle
         styleText()
+        recolor()
         let wrap = Settings.wrapLines
         textView.isHorizontallyResizable = !wrap
         textView.textContainer?.widthTracksTextView = wrap
@@ -780,6 +815,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
 
     func textDidChange(_ notification: Notification) {
         ext?.update(text: textView.string)
+        scheduleRecolor()
         guard let current, !current.dirty else { return }
         current.dirty = true
         updateTitle()
@@ -849,26 +885,20 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
     }
 
     func clone(_ request: CloneRequest) {
-        guard cloning == nil, let content = window?.contentView else { return }
-        let toast = ProgressToast(title: "\(request.name) をクローン中")
-        content.addSubview(toast)
-        NSLayoutConstraint.activate([
-            toast.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -16),
-            toast.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -16),
-        ])
-        cloning = GitClone(request, progress: { status, value in
-            toast.update(status, value)
-        }, completion: { [weak self] error in
+        guard cloning == nil, let toast = Toasts.progress("\(request.name) をクローン中", in: window) else { return }
+        cloning = GitClone(request, progress: { [weak toast] status, value in
+            toast?.update(status, value)
+        }, completion: { [weak self, weak toast] error in
             guard let self else { return }
             self.cloning = nil
             self.reloadTree()
             self.outline.expandItem(self.root)
             self.refreshGit()
             if let error {
-                toast.finish("クローンに失敗しました", failed: true)
+                toast?.finish("クローンに失敗しました", failed: true)
                 self.showError(error)
             } else {
-                toast.finish("クローンが完了しました")
+                toast?.finish("クローンが完了しました")
             }
         })
     }

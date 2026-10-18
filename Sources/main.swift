@@ -8,24 +8,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WelcomeDelegate {
     private var settingsWindow: NSWindow?
     private var cloneSheet: CloneWindowController?
     private var updateButton: NSButton?
-    private var latestRelease: Release?
-    private lazy var updater = Updater(currentVersion: currentVersion)
 
-    private var currentVersion: String {
-        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0"
-    }
+    private var currentVersion: String { AppUpdate.shared.currentVersion }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         showSplash()
-        updater.checkLatest { [weak self] release in
-            self?.latestRelease = release
-            self?.updateButton?.isHidden = release == nil
-        }
+        NotificationCenter.default.addObserver(self, selector: #selector(appUpdateChanged), name: .appUpdateChanged, object: nil)
+        AppUpdate.shared.check()
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
             self?.splash?.orderOut(nil)
             self?.splash = nil
             self?.showMainWindow()
+            PluginStore.refreshCatalog()
         }
+    }
+
+    @objc private func appUpdateChanged() {
+        let update = AppUpdate.shared
+        updateButton?.isHidden = update.latest == nil
+        updateButton?.isEnabled = !update.installing
+        updateButton?.toolTip = update.installing ? "インストール中…" : "アップデート"
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -178,7 +180,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WelcomeDelegate {
         update.bezelStyle = .texturedRounded
         update.isBordered = false
         update.toolTip = "アップデート"
-        update.isHidden = latestRelease == nil
+        update.isHidden = AppUpdate.shared.latest == nil
         updateButton = update
 
         let gear = NSButton(image: NSImage(systemSymbolName: "gearshape", accessibilityDescription: "設定")!,
@@ -216,55 +218,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WelcomeDelegate {
     }
 
     @objc private func updateClicked() {
-        guard let release = latestRelease, let window = mainWindow else { return }
-
-        let text = NSTextView(frame: NSRect(x: 0, y: 0, width: 460, height: 260))
-        text.textStorage?.setAttributedString(renderMarkdown(release.body ?? ""))
-        text.isEditable = false
-        text.textContainerInset = NSSize(width: 6, height: 6)
-        let scroll = NSScrollView(frame: text.frame)
-        scroll.documentView = text
-        scroll.hasVerticalScroller = true
-        scroll.borderType = .bezelBorder
-
-        let alert = NSAlert()
-        alert.messageText = "\(appName) \(release.tag_name) が利用可能です"
-        alert.informativeText = "現在のバージョン: v\(currentVersion)"
-        alert.accessoryView = scroll
-        alert.addButton(withTitle: "アップデートする")
-        alert.addButton(withTitle: "しない")
-        alert.beginSheetModal(for: window) { [weak self] response in
-            if response == .alertFirstButtonReturn { self?.install(release) }
-        }
-    }
-
-    private func install(_ release: Release) {
         guard let window = mainWindow else { return }
-        updateButton?.isEnabled = false
-        updateButton?.toolTip = "インストール中…"
-
-        updater.install(release) { [weak self] error in
-            guard let self else { return }
-            let alert = NSAlert()
-            if let error {
-                self.updateButton?.isEnabled = true
-                self.updateButton?.toolTip = "アップデート"
-                alert.alertStyle = .warning
-                alert.messageText = "アップデートに失敗しました"
-                alert.informativeText = error.localizedDescription
-                alert.addButton(withTitle: "OK")
-                alert.beginSheetModal(for: window)
-                return
-            }
-            self.updateButton?.isHidden = true
-            alert.messageText = "\(release.tag_name) のインストールが完了しました"
-            alert.informativeText = "今すぐ再起動しますか？"
-            alert.addButton(withTitle: "再起動する")
-            alert.addButton(withTitle: "しない")
-            alert.beginSheetModal(for: window) { response in
-                if response == .alertFirstButtonReturn { Updater.relaunch() }
-            }
-        }
+        AppUpdate.shared.present(in: window)
     }
 }
 
