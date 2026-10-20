@@ -1,10 +1,14 @@
 {
   "id": "md-viewer",
   "name": "MD Viewer",
-  "version": "1.1",
+  "version": "1.2",
   "author": "FlareStackIDE",
   "symbol": "doc.richtext",
   "summary": "Markdown ファイルをリアルタイムでプレビュー",
   "fileExtensions": ["md", "markdown", "mdown", "mkd"],
-  "files": ["main.js", "README.md"]
+  "files": ["main.js", "README.md"],
+  "settings": [
+    { "key": "barColor", "title": "タブの背景色", "type": "color" },
+    { "key": "barTransparent", "title": "透明（ボタンだけを表示）", "type": "bool" }
+  ]
 }

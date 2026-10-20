@@ -65,11 +65,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WelcomeDelegate {
         editor.onClose = { [weak self, weak editor] in
             guard let self else { return }
             self.lightEditors.removeAll { $0 === editor }
-            if self.editors.isEmpty, self.lightEditors.isEmpty { self.mainWindow?.makeKeyAndOrderFront(nil) }
+            if self.editors.isEmpty, self.lightEditors.isEmpty { self.showWelcome() }
         }
         lightEditors.append(editor)
         editor.showWindow(nil)
-        mainWindow?.orderOut(nil)
+        closeWelcome()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -108,6 +108,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WelcomeDelegate {
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
         mainWindow = window
+    }
+
+    private func showWelcome() {
+        guard let window = mainWindow else { return showMainWindow() }
+        window.makeKeyAndOrderFront(nil)
+    }
+
+    private func closeWelcome() {
+        guard let window = mainWindow else { return }
+        mainWindow = nil
+        updateButton = nil
+        window.delegate = nil
+        window.orderOut(nil)
+        window.close()
+        window.contentViewController = nil
     }
 
     @objc func openDocument(_ sender: Any?) {
@@ -201,21 +216,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WelcomeDelegate {
     private func openEditor(_ project: Project) -> EditorWindowController {
         if let existing = editors.first(where: { $0.project.path == project.path }) {
             existing.window?.makeKeyAndOrderFront(nil)
-            mainWindow?.orderOut(nil)
+            closeWelcome()
             return existing
         }
         let editor = EditorWindowController(project: project)
         editor.onClose = { [weak self, weak editor] in
             guard let self else { return }
             self.editors.removeAll { $0 === editor }
-            if self.editors.isEmpty {
+            if self.editors.isEmpty, self.lightEditors.isEmpty {
                 self.welcome.reload()
-                self.mainWindow?.makeKeyAndOrderFront(nil)
+                self.showWelcome()
             }
         }
         editor.onBack = { [weak self] in
             self?.welcome.reload()
-            self?.mainWindow?.makeKeyAndOrderFront(nil)
+            self?.showWelcome()
         }
         editor.onProjectRenamed = { [weak self] in self?.welcome.reload() }
         editor.onOpenProject = { [weak self, weak editor] target, newWindow in
@@ -230,7 +245,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WelcomeDelegate {
         }
         editors.append(editor)
         editor.showWindow(nil)
-        mainWindow?.orderOut(nil)
+        closeWelcome()
         return editor
     }
 
@@ -310,6 +325,8 @@ func buildMainMenu() -> NSMenu {
     editMenu.addItem(withTitle: "すべてを選択", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
     editMenu.addItem(.separator())
     editMenu.addItem(withTitle: "検索…", action: #selector(NSTextView.performFindPanelAction(_:)), keyEquivalent: "f").tag = Int(NSFindPanelAction.showFindPanel.rawValue)
+    let projectFind = editMenu.addItem(withTitle: "プロジェクト内を検索…", action: #selector(EditorWindowController.findInProject(_:)), keyEquivalent: "f")
+    projectFind.keyEquivalentModifierMask = [.command, .shift]
 
     for (title, submenu) in [(appName, appMenu), ("ファイル", fileMenu), ("編集", editMenu)] {
         let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")

@@ -1,0 +1,13 @@
+{
+  "id": "interpolate-variable",
+  "name": "Interpolate Variable",
+  "version": "1.0",
+  "author": "FlareStackIDE",
+  "symbol": "text.badge.plus",
+  "summary": "入力中の変数名・モジュール名の候補を表示して補完",
+  "fileExtensions": [],
+  "files": ["README.md"],
+  "settings": [
+    { "key": "acceptKey", "title": "補完するキー", "type": "choice", "options": ["Tab", "Enter"], "default": "Tab" }
+  ]
+}
