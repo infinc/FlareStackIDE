@@ -128,14 +128,15 @@ enum Git {
             else { kind = .modified }
             return GitChange(kind: kind, path: path, staged: code.first != " " && code != "??")
         }
-        info.total = Int(lines(["rev-list", "--count", "HEAD"], in: dir).first ?? "0") ?? 0
-        info.commits = lines(["log", "--date=format:%Y-%m-%d %H:%M", "--format=%h%x1f%ad%x1f%an%x1f%s%x1f%D", "-n", "200"], in: dir)
+        info.total = Int(lines(["rev-list", "--count", "--all"], in: dir).first ?? "0") ?? 0
+        info.commits = lines(["log", "--all", "--date-order", "--date=format:%Y-%m-%d %H:%M", "--format=%H%x1f%P%x1f%h%x1f%ad%x1f%an%x1f%s%x1f%D", "-n", "300"], in: dir)
             .compactMap { line in
                 let f = line.components(separatedBy: "\u{1F}")
-                guard f.count >= 5 else { return nil }
-                let refs = f[4].split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
-                    .map { $0.hasPrefix("HEAD -> ") ? String($0.dropFirst(8)) : $0 }.filter { !$0.isEmpty && $0 != "HEAD" }
-                return GitCommit(hash: f[0], date: f[1], author: f[2], subject: f[3], refs: refs)
+                guard f.count >= 7 else { return nil }
+                let raw = f[6].split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+                let refs = raw.map { $0.hasPrefix("HEAD -> ") ? String($0.dropFirst(8)) : $0 }.filter { !$0.isEmpty && $0 != "HEAD" }
+                return GitCommit(id: f[0], parents: f[1].split(separator: " ").map(String.init), hash: f[2], date: f[3], author: f[4],
+                                 subject: f[5], refs: refs, head: raw.contains { $0 == "HEAD" || $0.hasPrefix("HEAD -> ") })
             }
         return info
     }
@@ -169,11 +170,54 @@ struct GitChange {
 }
 
 struct GitCommit {
+    let id: String
+    let parents: [String]
     let hash: String
     let date: String
     let author: String
     let subject: String
     let refs: [String]
+    let head: Bool
+}
+
+struct GraphRow {
+    var lane = 0
+    var upper: [(Int, Int)] = []
+    var lower: [(Int, Int)] = []
+    var width: Int { ([lane] + upper.flatMap { [$0.0, $0.1] } + lower.flatMap { [$0.0, $0.1] }).max()! + 1 }
+
+    static func layout(_ commits: [GitCommit]) -> [GraphRow] {
+        var lanes: [String?] = []
+        func slot() -> Int {
+            if let i = lanes.firstIndex(where: { $0 == nil }) { return i }
+            lanes.append(nil)
+            return lanes.count - 1
+        }
+        return commits.map { commit in
+            var row = GraphRow()
+            row.lane = lanes.firstIndex(of: commit.id) ?? slot()
+            for (i, l) in lanes.enumerated() where l != nil {
+                row.upper.append((i, l == commit.id ? row.lane : i))
+                if l == commit.id { lanes[i] = nil }
+            }
+            for (i, l) in lanes.enumerated() where l != nil { row.lower.append((i, i)) }
+            if let first = commit.parents.first {
+                lanes[row.lane] = first
+                row.lower.append((row.lane, row.lane))
+            }
+            for parent in commit.parents.dropFirst() {
+                if let j = lanes.firstIndex(of: parent) {
+                    row.lower.append((row.lane, j))
+                } else {
+                    let j = slot()
+                    lanes[j] = parent
+                    row.lower.append((row.lane, j))
+                }
+            }
+            while lanes.last == .some(nil) { lanes.removeLast() }
+            return row
+        }
+    }
 }
 
 struct GitOverview {

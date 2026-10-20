@@ -1,0 +1,10 @@
+{
+  "id": "file-tab-cleaner",
+  "name": "File Tab Cleaner",
+  "version": "1.0",
+  "author": "FlareStackIDE",
+  "symbol": "xmark.circle",
+  "summary": "ファイルのタブをボタン1つですべて閉じる",
+  "fileExtensions": [],
+  "files": ["README.md"]
+}

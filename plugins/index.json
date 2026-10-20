@@ -79,5 +79,14 @@
     "symbol": "text.badge.plus",
     "summary": "入力中の変数名・モジュール名の候補を表示して補完",
     "fileExtensions": []
+  },
+  {
+    "id": "file-tab-cleaner",
+    "name": "File Tab Cleaner",
+    "version": "1.0",
+    "author": "FlareStackIDE",
+    "symbol": "xmark.circle",
+    "summary": "ファイルのタブをボタン1つですべて閉じる",
+    "fileExtensions": []
   }
 ]

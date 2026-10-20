@@ -37,19 +37,36 @@ final class Pill: NSView {
 }
 
 private final class TimelineCell: NSTableCellView {
-    var first = false
-    var last = false
+    static let spacing: CGFloat = 14
+    static let colors: [NSColor] = [.systemBlue, .systemGreen, .systemOrange, .systemPurple, .systemPink, .systemTeal, .systemYellow, .systemRed, .systemIndigo, .systemBrown]
+    var graph = GraphRow()
     var head = false
 
+    static func x(_ lane: Int) -> CGFloat { 16 + CGFloat(lane) * spacing }
+
     override func draw(_ dirtyRect: NSRect) {
-        let x: CGFloat = 18
-        NSColor.separatorColor.setFill()
-        let top = first ? bounds.midY : bounds.minY
-        let bottom = last ? bounds.midY : bounds.maxY
-        NSRect(x: x - 1, y: min(top, bottom), width: 2, height: abs(bottom - top)).fill()
+        let mid = bounds.midY
+        func stroke(_ from: Int, _ to: Int, _ y0: CGFloat, _ y1: CGFloat) {
+            let path = NSBezierPath()
+            path.lineWidth = 2
+            path.lineCapStyle = .round
+            let a = NSPoint(x: Self.x(from), y: y0), b = NSPoint(x: Self.x(to), y: y1)
+            path.move(to: a)
+            if from == to { path.line(to: b) }
+            else { path.curve(to: b, controlPoint1: NSPoint(x: a.x, y: (y0 + y1) / 2), controlPoint2: NSPoint(x: b.x, y: (y0 + y1) / 2)) }
+            Self.colors[(from == graph.lane ? to : from) % Self.colors.count].setStroke()
+            path.stroke()
+        }
+        graph.upper.forEach { stroke($0.0, $0.1, bounds.minY, mid) }
+        graph.lower.forEach { stroke($0.0, $0.1, mid, bounds.maxY) }
         let r: CGFloat = head ? 6 : 4.5
-        (head ? NSColor.controlAccentColor : NSColor.secondaryLabelColor).setFill()
-        NSBezierPath(ovalIn: NSRect(x: x - r, y: bounds.midY - r, width: r * 2, height: r * 2)).fill()
+        let dot = NSRect(x: Self.x(graph.lane) - r, y: mid - r, width: r * 2, height: r * 2)
+        Self.colors[graph.lane % Self.colors.count].setFill()
+        NSBezierPath(ovalIn: dot).fill()
+        if head {
+            NSColor.windowBackgroundColor.setFill()
+            NSBezierPath(ovalIn: dot.insetBy(dx: 2.5, dy: 2.5)).fill()
+        }
     }
 
     override var isFlipped: Bool { true }
@@ -63,6 +80,8 @@ final class GitPanel: NSView, NSTableViewDataSource, NSTableViewDelegate {
     private let empty = NSTextField(labelWithString: "")
     private let split = NSSplitView()
     private var commits: [GitCommit] = []
+    private var graph: [GraphRow] = []
+    private var graphWidth = 1
 
     init() {
         super.init(frame: .zero)
@@ -170,6 +189,7 @@ final class GitPanel: NSView, NSTableViewDataSource, NSTableViewDelegate {
             empty.isHidden = false
             empty.stringValue = "このディレクトリはgitで追跡されていません。"
             commits = []
+            graph = []
             table.reloadData()
             return
         }
@@ -178,7 +198,9 @@ final class GitPanel: NSView, NSTableViewDataSource, NSTableViewDelegate {
         buildHeader(info)
         buildSidebar(info)
         commits = info.commits
-        historyTitle.stringValue = "コミット履歴　\(info.total)"
+        graph = GraphRow.layout(commits)
+        graphWidth = min(graph.map(\.width).max() ?? 1, 12)
+        historyTitle.stringValue = "コミット履歴（全ブランチ）　\(info.total)"
         table.reloadData()
         table.scrollRowToVisible(0)
     }
@@ -281,9 +303,8 @@ final class GitPanel: NSView, NSTableViewDataSource, NSTableViewDelegate {
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         let commit = commits[row]
         let cell = TimelineCell()
-        cell.first = row == 0
-        cell.last = row == commits.count - 1
-        cell.head = row == 0
+        cell.graph = graph[row]
+        cell.head = commit.head
         let subject = label(commit.subject, size: 12.5, weight: .medium)
         subject.lineBreakMode = .byTruncatingTail
         let top = NSStackView(views: [subject] + commit.refs.prefix(4).map { ref in
@@ -302,7 +323,7 @@ final class GitPanel: NSView, NSTableViewDataSource, NSTableViewDelegate {
         texts.translatesAutoresizingMaskIntoConstraints = false
         cell.addSubview(texts)
         NSLayoutConstraint.activate([
-            texts.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 36),
+            texts.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: TimelineCell.x(graphWidth - 1) + 18),
             texts.trailingAnchor.constraint(lessThanOrEqualTo: cell.trailingAnchor, constant: -10),
             texts.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
         ])

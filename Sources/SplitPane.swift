@@ -1,0 +1,326 @@
+import AppKit
+
+enum CodeView {
+    static func configure(_ textView: NSTextView, scroll: NSScrollView) {
+        textView.font = .monospacedSystemFont(ofSize: 13, weight: .regular)
+        textView.isRichText = false
+        textView.allowsUndo = true
+        textView.isAutomaticQuoteSubstitutionEnabled = false
+        textView.isAutomaticDashSubstitutionEnabled = false
+        textView.isAutomaticTextReplacementEnabled = false
+        textView.isAutomaticSpellingCorrectionEnabled = false
+        textView.isContinuousSpellCheckingEnabled = false
+        textView.textContainerInset = NSSize(width: 6, height: 6)
+        textView.isEditable = false
+        textView.isHorizontallyResizable = true
+        textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        textView.textContainer?.widthTracksTextView = false
+        textView.textContainer?.containerSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        scroll.hasHorizontalScroller = true
+    }
+
+    static func applySettings(_ textView: NSTextView, scroll: NSScrollView) {
+        textView.font = Settings.font
+        textView.backgroundColor = Settings.background
+        scroll.backgroundColor = Settings.background
+        textView.insertionPointColor = Settings.foreground
+        textView.defaultParagraphStyle = Settings.paragraphStyle
+        style(textView)
+        let wrap = Settings.wrapLines
+        textView.isHorizontallyResizable = !wrap
+        textView.textContainer?.widthTracksTextView = wrap
+        scroll.hasHorizontalScroller = !wrap
+        if wrap {
+            textView.autoresizingMask = [.width]
+            textView.frame.size.width = scroll.contentSize.width
+            textView.textContainer?.containerSize = NSSize(width: scroll.contentSize.width, height: CGFloat.greatestFiniteMagnitude)
+        } else {
+            textView.autoresizingMask = []
+            textView.textContainer?.containerSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        }
+    }
+
+    static func style(_ textView: NSTextView) {
+        guard let storage = textView.textStorage else { return }
+        let attrs: [NSAttributedString.Key: Any] = [.font: Settings.font, .foregroundColor: Settings.foreground,
+                                                    .paragraphStyle: Settings.paragraphStyle]
+        storage.setAttributes(attrs, range: NSRange(location: 0, length: storage.length))
+        textView.typingAttributes = attrs
+    }
+}
+
+enum FileTabCleaner {
+    static let pluginID = "file-tab-cleaner"
+
+    static func button(target: AnyObject, action: Selector) -> NSButton {
+        let button = NSButton(image: NSImage(systemSymbolName: "xmark.circle", accessibilityDescription: "タブをすべて閉じる")!
+            .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 12, weight: .medium))!, target: target, action: action)
+        button.isBordered = false
+        button.toolTip = "タブをすべて閉じる"
+        button.translatesAutoresizingMaskIntoConstraints = false
+        button.widthAnchor.constraint(equalToConstant: 22).isActive = true
+        return button
+    }
+
+    static func attach(_ button: NSButton, to strip: TabStrip) {
+        let on = PluginStore.isInstalled(pluginID)
+        if on, button.superview !== strip.stack { strip.stack.insertArrangedSubview(button, at: 0) }
+        if !on { button.removeFromSuperview() }
+    }
+}
+
+final class SplitPane: NSView, NSTextViewDelegate {
+    var onEmpty: (() -> Void)?
+    var onChange: (() -> Void)?
+    var onMoveLeft: ((URL) -> Void)?
+    private let scroll = NSTextView.scrollableTextView()
+    private var textView: NSTextView { scroll.documentView as! NSTextView }
+    private var strip: TabStrip!
+    private var cleaner: NSButton!
+    private var tabs: [URL: TabItemView] = [:]
+    private(set) var buffers: [URL: Buffer] = [:]
+    private var current: Buffer?
+    private var highlighter: Highlighter?
+    private var recolorWork: DispatchWorkItem?
+    private var interpolateOn = false
+
+    init() {
+        super.init(frame: .zero)
+        let close = FeedView.barButton(symbol: "xmark", tip: "分割を閉じる", target: nil, action: nil)
+        strip = TabStrip(trailing: close)
+        close.target = self
+        close.action = #selector(closeAll)
+        cleaner = FileTabCleaner.button(target: self, action: #selector(closeAll))
+        CodeView.configure(textView, scroll: scroll)
+        textView.delegate = self
+        scroll.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(strip)
+        addSubview(scroll)
+        NSLayoutConstraint.activate([
+            strip.topAnchor.constraint(equalTo: topAnchor),
+            strip.leadingAnchor.constraint(equalTo: leadingAnchor),
+            strip.trailingAnchor.constraint(equalTo: trailingAnchor),
+            scroll.topAnchor.constraint(equalTo: strip.bottomAnchor),
+            scroll.leadingAnchor.constraint(equalTo: leadingAnchor),
+            scroll.trailingAnchor.constraint(equalTo: trailingAnchor),
+            scroll.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+        applyPlugins()
+        applySettings()
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    var urls: [URL] { strip.stack.arrangedSubviews.compactMap { view in tabs.first { $0.value === view }?.key } }
+
+    var dirty: Bool { buffers.values.contains { $0.dirty } }
+
+    func contains(_ url: URL) -> Bool { tabs[url] != nil }
+
+    func open(_ buffer: Buffer) {
+        storeCurrent()
+        let url = buffer.url
+        buffers[url] = buffer
+        if tabs[url] == nil {
+            let tab = TabItemView(title: url.lastPathComponent, closable: true)
+            tab.toolTip = url.path
+            tab.draggable = true
+            tab.onSelect = { [weak self] in
+                guard let self, self.current?.url != url, let buffer = self.buffers[url] else { return }
+                self.open(buffer)
+            }
+            tab.onClose = { [weak self] in self?.close(url) }
+            tab.contextMenu = { [weak self] in self?.menu(for: url) }
+            tabs[url] = tab
+            strip.stack.addArrangedSubview(tab)
+        }
+        tabs.forEach { $0.value.selected = $0.key == url }
+        if let tab = tabs[url] { strip.reveal(tab) }
+        current = buffer
+        textView.string = buffer.text
+        CodeView.style(textView)
+        textView.isEditable = buffer.editable
+        highlighter = buffer.editable ? PluginStore.makeHighlighter(for: url) : nil
+        (scroll.verticalRulerView as? LineNumberRuler)?.textChanged()
+        recolor()
+        textView.undoManager?.removeAllActions()
+        textView.setSelectedRange(NSRange(location: 0, length: 0))
+        textView.scrollToBeginningOfDocument(nil)
+        window?.makeFirstResponder(textView)
+    }
+
+    func select(_ url: URL) {
+        if current?.url != url, let buffer = buffers[url] { open(buffer) }
+        window?.makeFirstResponder(textView)
+    }
+
+    func take(_ url: URL) -> Buffer? {
+        guard let buffer = buffers[url] else { return nil }
+        storeCurrent()
+        remove(url)
+        return buffer
+    }
+
+    private func menu(for url: URL) -> NSMenu {
+        let menu = NSMenu()
+        let left = NSMenuItem(title: "左に開く", action: #selector(moveLeftItem(_:)), keyEquivalent: "")
+        left.target = self
+        left.representedObject = url
+        menu.addItem(left)
+        let close = NSMenuItem(title: "閉じる", action: #selector(closeItem(_:)), keyEquivalent: "")
+        close.target = self
+        close.representedObject = url
+        menu.addItem(close)
+        return menu
+    }
+
+    @objc private func moveLeftItem(_ sender: NSMenuItem) {
+        guard let url = sender.representedObject as? URL else { return }
+        onMoveLeft?(url)
+    }
+
+    @objc private func closeItem(_ sender: NSMenuItem) {
+        guard let url = sender.representedObject as? URL else { return }
+        close(url)
+    }
+
+    private func close(_ url: URL) {
+        if current?.url == url { storeCurrent() }
+        if let buffer = buffers[url], buffer.dirty, buffer.editable {
+            do {
+                try buffer.text.write(to: url, atomically: true, encoding: .utf8)
+            } catch {
+                if let window { NSAlert(error: error).beginSheetModal(for: window) }
+                return
+            }
+        }
+        remove(url)
+        onChange?()
+    }
+
+    private func remove(_ url: URL) {
+        guard let tab = tabs[url] else { return }
+        let order = strip.stack.arrangedSubviews.filter { $0 is TabItemView }
+        let index = order.firstIndex(of: tab) ?? 0
+        tab.removeFromSuperview()
+        tabs[url] = nil
+        buffers[url] = nil
+        guard current?.url == url else { return }
+        current = nil
+        let remaining = strip.stack.arrangedSubviews.filter { $0 is TabItemView }
+        if let next = remaining.isEmpty ? nil : tabs.first(where: { $0.value === remaining[min(index, remaining.count - 1)] })?.key,
+           let buffer = buffers[next] {
+            open(buffer)
+        } else {
+            onEmpty?()
+        }
+    }
+
+    @objc func closeAll() {
+        if let error = saveAll() {
+            if let window { NSAlert(error: error).beginSheetModal(for: window) }
+            return
+        }
+        tabs.values.forEach { $0.removeFromSuperview() }
+        tabs = [:]
+        buffers = [:]
+        current = nil
+        onChange?()
+        onEmpty?()
+    }
+
+    func remap(_ map: (URL) -> URL?) {
+        storeCurrent()
+        let order = urls
+        let selected = current?.url
+        tabs.values.forEach { $0.removeFromSuperview() }
+        tabs = [:]
+        buffers = [:]
+        current = nil
+        let reopened = order.compactMap(map)
+        reopened.forEach { open(Buffer(url: $0)) }
+        if let selected, let target = map(selected), let buffer = buffers[target] { open(buffer) }
+        if reopened.isEmpty { onEmpty?() }
+    }
+
+    private func storeCurrent() {
+        guard let current, current.editable else { return }
+        current.text = textView.string
+    }
+
+    @discardableResult
+    func saveAll() -> Error? {
+        storeCurrent()
+        for buffer in buffers.values where buffer.dirty && buffer.editable {
+            do {
+                try buffer.text.write(to: buffer.url, atomically: true, encoding: .utf8)
+                buffer.dirty = false
+            } catch {
+                return error
+            }
+        }
+        return nil
+    }
+
+    func applySettings() {
+        strip.paint(.midTab)
+        CodeView.applySettings(textView, scroll: scroll)
+        recolor()
+    }
+
+    func applyPlugins() {
+        FileTabCleaner.attach(cleaner, to: strip)
+        scroll.setLineNumbers(PluginStore.isInstalled(LineNumberRuler.pluginID), textView: textView)
+        interpolateOn = PluginStore.isInstalled(CodeInterpolator.pluginID)
+        if let current {
+            highlighter = current.editable ? PluginStore.makeHighlighter(for: current.url) : nil
+            recolor()
+        }
+    }
+
+    private func recolor() {
+        recolorWork?.cancel()
+        recolorWork = nil
+        guard let layout = textView.layoutManager else { return }
+        let text = textView.string
+        layout.removeTemporaryAttribute(.foregroundColor, forCharacterRange: NSRange(location: 0, length: (text as NSString).length))
+        guard let highlighter, let url = current?.url else { return }
+        for span in highlighter.spans(text, file: url) {
+            layout.addTemporaryAttribute(.foregroundColor, value: span.color, forCharacterRange: span.range)
+        }
+    }
+
+    func textView(_ textView: NSTextView, shouldChangeTextIn range: NSRange, replacementString text: String?) -> Bool {
+        guard interpolateOn, let text else { return true }
+        return CodeInterpolator.shouldChange(textView, range: range, text: text)
+    }
+
+    func textView(_ textView: NSTextView, doCommandBy selector: Selector) -> Bool {
+        guard interpolateOn, let current else { return false }
+        switch selector {
+        case #selector(NSResponder.insertNewline(_:)):
+            return CodeInterpolator.newline(textView, ext: current.url.pathExtension.lowercased())
+        case #selector(NSResponder.deleteBackward(_:)):
+            return CodeInterpolator.deleteBackward(textView)
+        default:
+            return false
+        }
+    }
+
+    func textDidChange(_ notification: Notification) {
+        if highlighter != nil {
+            recolorWork?.cancel()
+            let work = DispatchWorkItem { [weak self] in self?.recolor() }
+            recolorWork = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.12, execute: work)
+        }
+        guard let current, current.editable else { return }
+        current.text = textView.string
+        if Settings.autosaveImmediate {
+            current.dirty = (try? current.text.write(to: current.url, atomically: false, encoding: .utf8)) == nil
+        } else {
+            current.dirty = true
+        }
+        onChange?()
+    }
+}

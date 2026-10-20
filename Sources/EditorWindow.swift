@@ -77,6 +77,25 @@ final class ToolStripButton: NSButton {
             .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: Settings.bigTabIconSize, weight: .regular))
     }
 
+    var onReorder: (() -> Void)?
+
+    override func mouseDown(with event: NSEvent) {
+        guard event.modifierFlags.contains(.command), let window,
+              let item = sequence(first: self as NSView, next: { $0.superview }).first(where: { $0.superview is NSStackView }) else {
+            return super.mouseDown(with: event)
+        }
+        var reorder: DragReorder?
+        while let next = window.nextEvent(matching: [.leftMouseDragged, .leftMouseUp]), next.type == .leftMouseDragged {
+            if reorder == nil {
+                guard hypot(next.locationInWindow.x - event.locationInWindow.x, next.locationInWindow.y - event.locationInWindow.y) > 3 else { continue }
+                reorder = DragReorder(view: item, event: event)
+            }
+            reorder?.drag(next)
+        }
+        reorder?.end()
+        if reorder != nil { onReorder?() }
+    }
+
     override func draw(_ dirtyRect: NSRect) {
         if active {
             NSColor.selectedContentBackgroundColor.withAlphaComponent(0.3).setFill()
@@ -136,6 +155,9 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
     private var searchPanel: SearchPanel?
     private let settingsMenu = EditorSettingsMenu()
     private let fileTabs = TabStrip()
+    private let editorSplit = NSSplitView()
+    private var splitPane: SplitPane?
+    private lazy var cleanerButton = FileTabCleaner.button(target: self, action: #selector(closeAllTabs))
     private var tabs: [URL: TabItemView] = [:]
     private var buffers: [URL: Buffer] = [:]
     private var current: Buffer?
@@ -270,8 +292,15 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
         runButton = RunButton(target: self, action: #selector(runClicked))
         runButton.onMenu = { [weak self] in self?.showRunMenu($0) }
         folderButton.active = true
-        let upper = Self.buttonColumn([folderButton, pluginButton])
-        let lower = Self.buttonColumn([runButton, webButton, terminalButton, gitButton])
+        let upper = Self.buttonColumn(Self.ordered([("folder", folderButton), ("plugin", pluginButton)], key: "BigTab.Order.Upper"))
+        let lower = Self.buttonColumn(Self.ordered([("run", runButton), ("web", webButton), ("terminal", terminalButton), ("git", gitButton)],
+                                                   key: "BigTab.Order.Lower"))
+        let saveOrder = { [weak upper, weak lower] in
+            for (stack, key) in [(upper, "BigTab.Order.Upper"), (lower, "BigTab.Order.Lower")] {
+                UserDefaults.standard.set(stack?.arrangedSubviews.compactMap { $0.identifier?.rawValue }, forKey: key)
+            }
+        }
+        [folderButton, pluginButton, runButton.play, webButton, terminalButton, gitButton].forEach { $0?.onReorder = saveOrder }
         strip.addSubview(upper)
         strip.addSubview(lower)
         let stripLine = NSBox()
@@ -309,22 +338,8 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
 
         textView.textContainer?.replaceLayoutManager(DiagnosticLayoutManager())
         _ = textView.layoutManager
-        textView.font = .monospacedSystemFont(ofSize: 13, weight: .regular)
-        textView.isRichText = false
-        textView.allowsUndo = true
-        textView.isAutomaticQuoteSubstitutionEnabled = false
-        textView.isAutomaticDashSubstitutionEnabled = false
-        textView.isAutomaticTextReplacementEnabled = false
-        textView.isAutomaticSpellingCorrectionEnabled = false
-        textView.isContinuousSpellCheckingEnabled = false
-        textView.textContainerInset = NSSize(width: 6, height: 6)
+        CodeView.configure(textView, scroll: editorScroll)
         textView.delegate = self
-        textView.isEditable = false
-        textView.isHorizontallyResizable = true
-        textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
-        textView.textContainer?.widthTracksTextView = false
-        textView.textContainer?.containerSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
-        editorScroll.hasHorizontalScroller = true
 
         let editorPane = NSView()
         barHost.translatesAutoresizingMaskIntoConstraints = false
@@ -363,7 +378,10 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
 
         rightSplit.isVertical = false
         rightSplit.dividerStyle = .thin
-        rightSplit.addArrangedSubview(editorPane)
+        editorSplit.isVertical = true
+        editorSplit.dividerStyle = .thin
+        editorSplit.addArrangedSubview(editorPane)
+        rightSplit.addArrangedSubview(editorSplit)
 
         mainSplit.isVertical = true
         mainSplit.dividerStyle = .thin
@@ -446,6 +464,13 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
             width = max(width, outline.indentationPerLevel * CGFloat(outline.level(forRow: row) + 1) + 16 + 5 + text + 24)
         }
         column.width = max(width, treeScroll.contentView.bounds.width - outline.intercellSpacing.width)
+    }
+
+    private static func ordered(_ items: [(String, NSView)], key: String) -> [NSView] {
+        items.forEach { $0.1.identifier = NSUserInterfaceItemIdentifier($0.0) }
+        let saved = UserDefaults.standard.stringArray(forKey: key) ?? []
+        let rank = { (i: Int) in saved.firstIndex(of: items[i].0) ?? saved.count + i }
+        return items.indices.sorted { rank($0) < rank($1) }.map { items[$0].1 }
     }
 
     private static func buttonColumn(_ buttons: [NSView]) -> NSStackView {
@@ -733,6 +758,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
             openPluginPage(id)
             return
         }
+        if let splitPane, splitPane.contains(url) { return splitPane.select(url) }
         storeCurrent()
         let buffer = buffers[url] ?? Buffer(url: url)
         buffers[url] = buffer
@@ -869,6 +895,8 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
         interpolateOn = PluginStore.isInstalled(CodeInterpolator.pluginID)
         completeOn = PluginStore.isInstalled(VariableCompleter.pluginID)
         if completeOn { loadProjectFiles() } else { completer.hide() }
+        FileTabCleaner.attach(cleanerButton, to: fileTabs)
+        splitPane?.applyPlugins()
     }
 
     private func loadProjectFiles() {
@@ -931,13 +959,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
         completer.update(textView, ext: current.url.pathExtension.lowercased())
     }
 
-    private func styleText() {
-        guard let storage = textView.textStorage else { return }
-        let attrs: [NSAttributedString.Key: Any] = [.font: Settings.font, .foregroundColor: Settings.foreground,
-                                                    .paragraphStyle: Settings.paragraphStyle]
-        storage.setAttributes(attrs, range: NSRange(location: 0, length: storage.length))
-        textView.typingAttributes = attrs
-    }
+    private func styleText() { CodeView.style(textView) }
 
     private func recolor() {
         recolorWork?.cancel()
@@ -966,25 +988,9 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
         topHeight.constant = Settings.bigTabHeight
         stripWidth.constant = Settings.bigTabWidth
         [folderButton, pluginButton, runButton.play, webButton, terminalButton, gitButton].forEach { $0?.applySize() }
-        textView.font = Settings.font
-        textView.backgroundColor = Settings.background
-        editorScroll.backgroundColor = Settings.background
-        textView.insertionPointColor = Settings.foreground
-        textView.defaultParagraphStyle = Settings.paragraphStyle
-        styleText()
+        CodeView.applySettings(textView, scroll: editorScroll)
         recolor()
-        let wrap = Settings.wrapLines
-        textView.isHorizontallyResizable = !wrap
-        textView.textContainer?.widthTracksTextView = wrap
-        editorScroll.hasHorizontalScroller = !wrap
-        if wrap {
-            textView.autoresizingMask = [.width]
-            textView.frame.size.width = editorScroll.contentSize.width
-            textView.textContainer?.containerSize = NSSize(width: editorScroll.contentSize.width, height: CGFloat.greatestFiniteMagnitude)
-        } else {
-            textView.autoresizingMask = []
-            textView.textContainer?.containerSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
-        }
+        splitPane?.applySettings()
         if let ext {
             let wasFloating = ext.floating
             ext.applySettings()
@@ -1015,6 +1021,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
                 self.open(url)
             }
             tab.onClose = { [weak self] in self?.closeTab(url) }
+            if url.isFileURL { tab.contextMenu = { [weak self] in self?.tabMenu(url) } }
             tab.draggable = true
             tabs[url] = tab
             fileTabs.stack.addArrangedSubview(tab)
@@ -1025,8 +1032,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
 
     private func closeTab(_ url: URL) {
         guard let tab = tabs[url] else { return }
-        let order = fileTabs.stack.arrangedSubviews
-        let index = order.firstIndex(of: tab) ?? 0
+        let index = fileTabs.stack.arrangedSubviews.filter { $0 is TabItemView }.firstIndex(of: tab) ?? 0
         if selectedURL == url { storeCurrent() }
         if let buffer = buffers[url], buffer.dirty, buffer.editable {
             do {
@@ -1042,7 +1048,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
         diagnostics[url] = nil
         guard selectedURL == url else { updateTitle(); return }
         current = nil
-        let remaining = fileTabs.stack.arrangedSubviews
+        let remaining = fileTabs.stack.arrangedSubviews.filter { $0 is TabItemView }
         if !remaining.isEmpty,
            let next = tabs.first(where: { $0.value === remaining[min(index, remaining.count - 1)] })?.key {
             open(next)
@@ -1096,7 +1102,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
     }
 
     private func updateCloud() {
-        let dirty = buffers.values.contains { $0.dirty }
+        let dirty = buffers.values.contains { $0.dirty } || splitPane?.dirty == true
         cloudButton.image = Self.cloudImage(dirty ? "icloud.and.arrow.up" : "checkmark.icloud")
         cloudButton.toolTip = !dirty ? (Settings.autosaveEnabled ? "自動保存済み" : "保存済み")
             : Settings.autosaveEnabled ? "保存中…" : "未保存（クリックで保存）"
@@ -1106,8 +1112,15 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
     @discardableResult
     func saveAll() -> Error? {
         storeCurrent()
+        if let error = splitPane?.saveAll() {
+            updateTitle()
+            return error
+        }
         let dirty = buffers.values.filter { $0.dirty && $0.editable }
-        guard !dirty.isEmpty else { return nil }
+        guard !dirty.isEmpty else {
+            updateTitle()
+            return nil
+        }
         defer { refreshGit() }
         for buffer in dirty {
             do {
@@ -1199,6 +1212,8 @@ extension EditorWindowController {
             add("フォルダ名を変更…", #selector(renameItem(_:)), enabled: !isRoot)
             add("新規ファイル…", #selector(newFileItem(_:)))
         } else {
+            add("右に開く", #selector(openRightItem(_:)))
+            menu.addItem(.separator())
             add("ファイル名を変更…", #selector(renameItem(_:)), enabled: !isRoot)
             add("ファイルをコピー…", #selector(copyFileItem(_:)))
         }
@@ -1274,6 +1289,7 @@ extension EditorWindowController {
         tabs = [:]
         buffers = [:]
         current = nil
+        splitPane?.remap(map)
         let reopened = order.compactMap(map)
         reopened.forEach { open($0) }
         if let selected, let target = map(selected) {
@@ -1281,6 +1297,11 @@ extension EditorWindowController {
         } else if reopened.isEmpty {
             showEmpty()
         }
+    }
+
+    @objc private func openRightItem(_ sender: Any?) {
+        guard let node = node(of: sender), !node.isDirectory else { return }
+        openRight(node.url)
     }
 
     private static func moved(_ url: URL, from old: URL, to new: URL) -> URL? {
@@ -1667,5 +1688,98 @@ extension EditorWindowController {
         textView.setSelectedRange(item.range)
         textView.scrollRangeToVisible(item.range)
         textView.showFindIndicator(for: item.range)
+    }
+}
+
+extension EditorWindowController {
+    private func tabMenu(_ url: URL) -> NSMenu {
+        let menu = NSMenu()
+        menu.addItem(menuItem("右に開く", #selector(openRightTab(_:)), url))
+        menu.addItem(menuItem("閉じる", #selector(closeTabItem(_:)), url))
+        return menu
+    }
+
+    @objc private func openRightTab(_ sender: NSMenuItem) {
+        if let url = sender.representedObject as? URL { openRight(url) }
+    }
+
+    @objc private func closeTabItem(_ sender: NSMenuItem) {
+        if let url = sender.representedObject as? URL { closeTab(url) }
+    }
+
+    private func openRight(_ url: URL) {
+        let pane = splitPane ?? makeSplitPane()
+        if pane.contains(url) { return pane.select(url) }
+        let buffer: Buffer
+        if let existing = buffers[url] {
+            if selectedURL == url { storeCurrent() }
+            buffer = existing
+            detachTab(url)
+        } else {
+            buffer = Buffer(url: url)
+        }
+        pane.open(buffer)
+        updateCloud()
+    }
+
+    private func makeSplitPane() -> SplitPane {
+        let pane = SplitPane()
+        pane.onChange = { [weak self] in self?.updateCloud() }
+        pane.onEmpty = { [weak self] in self?.closeSplit() }
+        pane.onMoveLeft = { [weak self] url in
+            guard let self, let buffer = self.splitPane?.take(url) else { return }
+            self.storeCurrent()
+            self.buffers[url] = buffer
+            self.open(url)
+        }
+        splitPane = pane
+        editorSplit.addArrangedSubview(pane)
+        editorSplit.layoutSubtreeIfNeeded()
+        editorSplit.setPosition(editorSplit.bounds.width / 2, ofDividerAt: 0)
+        return pane
+    }
+
+    private func closeSplit() {
+        guard let pane = splitPane else { return }
+        splitPane = nil
+        pane.removeFromSuperview()
+        editorSplit.adjustSubviews()
+        updateCloud()
+        window?.makeFirstResponder(textView)
+    }
+
+    private func detachTab(_ url: URL) {
+        guard let tab = tabs[url] else { return }
+        let index = fileTabs.stack.arrangedSubviews.filter { $0 is TabItemView }.firstIndex(of: tab) ?? 0
+        tab.removeFromSuperview()
+        tabs[url] = nil
+        buffers[url] = nil
+        diagnostics[url] = nil
+        guard selectedURL == url else { return applyDiagnostics() }
+        current = nil
+        let remaining = fileTabs.stack.arrangedSubviews.filter { $0 is TabItemView }
+        if !remaining.isEmpty, let next = tabs.first(where: { $0.value === remaining[min(index, remaining.count - 1)] })?.key {
+            return open(next)
+        }
+        showEmpty()
+    }
+
+    @objc private func closeAllTabs() {
+        storeCurrent()
+        let dirty = buffers.values.filter { $0.dirty && $0.editable }
+        for buffer in dirty {
+            do {
+                try buffer.text.write(to: buffer.url, atomically: true, encoding: .utf8)
+                buffer.dirty = false
+            } catch {
+                return showError(error)
+            }
+        }
+        tabs.values.forEach { $0.removeFromSuperview() }
+        tabs = [:]
+        buffers = [:]
+        diagnostics = [:]
+        current = nil
+        showEmpty()
     }
 }

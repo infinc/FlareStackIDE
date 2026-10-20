@@ -1,4 +1,130 @@
 import AppKit
+import QuartzCore
+
+private final class DragOverlay: NSView {
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+}
+
+final class DragReorder {
+    private let view: NSView
+    private let stack: NSStackView
+    private let movable: (NSView) -> Bool
+    private let vertical: Bool
+    private let overlay = DragOverlay()
+    private let lifted = CALayer()
+    private let start: NSPoint
+    private let origin: CGPoint
+    private var last: NSPoint
+    private(set) var moved = false
+
+    init?(view: NSView, event: NSEvent, movable: @escaping (NSView) -> Bool = { _ in true }) {
+        guard let stack = view.superview as? NSStackView, let content = view.window?.contentView,
+              let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return nil }
+        view.cacheDisplay(in: view.bounds, to: rep)
+        let image = NSImage(size: view.bounds.size)
+        image.addRepresentation(rep)
+        self.view = view
+        self.stack = stack
+        self.movable = movable
+        vertical = stack.orientation == .vertical
+        overlay.frame = content.bounds
+        overlay.autoresizingMask = [.width, .height]
+        overlay.wantsLayer = true
+        content.addSubview(overlay, positioned: .above, relativeTo: nil)
+        let frame = view.convert(view.bounds, to: overlay)
+        lifted.frame = frame
+        lifted.contents = image
+        lifted.contentsScale = view.window?.backingScaleFactor ?? 2
+        lifted.shadowColor = NSColor.black.cgColor
+        lifted.shadowRadius = 10
+        lifted.shadowOffset = CGSize(width: 0, height: -6)
+        lifted.shadowOpacity = 0
+        overlay.layer?.addSublayer(lifted)
+        origin = lifted.position
+        start = overlay.convert(event.locationInWindow, from: nil)
+        last = start
+        stack.wantsLayer = true
+        view.alphaValue = 0
+        CATransaction.begin()
+        CATransaction.setAnimationDuration(0.16)
+        CATransaction.setAnimationTimingFunction(CAMediaTimingFunction(name: .easeOut))
+        lifted.transform = Self.lift(tilt: 0, vertical: vertical)
+        lifted.shadowOpacity = 0.35
+        CATransaction.commit()
+    }
+
+    private static func lift(tilt: CGFloat, vertical: Bool) -> CATransform3D {
+        var t = CATransform3DIdentity
+        t.m34 = -1 / 400
+        t = CATransform3DTranslate(t, 0, 0, 30)
+        t = CATransform3DScale(t, 1.08, 1.08, 1)
+        return vertical ? CATransform3DRotate(t, tilt, 1, 0, 0) : CATransform3DRotate(t, tilt, 0, 1, 0)
+    }
+
+    private func axis(_ p: NSPoint) -> CGFloat { vertical ? p.y : p.x }
+
+    func drag(_ event: NSEvent) {
+        let p = overlay.convert(event.locationInWindow, from: nil)
+        let velocity = axis(p) - axis(last)
+        last = p
+        moved = true
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        lifted.position = vertical ? CGPoint(x: origin.x, y: origin.y + p.y - start.y) : CGPoint(x: origin.x + p.x - start.x, y: origin.y)
+        CATransaction.commit()
+        CATransaction.begin()
+        CATransaction.setAnimationDuration(0.12)
+        let tilt = max(-0.4, min(0.4, velocity * (vertical ? -0.04 : 0.04)))
+        lifted.transform = Self.lift(tilt: tilt, vertical: vertical)
+        CATransaction.commit()
+        reorder(at: stack.convert(event.locationInWindow, from: nil))
+    }
+
+    private func reorder(at point: NSPoint) {
+        let items = stack.arrangedSubviews.filter { !$0.isHidden && movable($0) }
+        guard let mine = items.firstIndex(of: view) else { return }
+        let here = axis(NSPoint(x: view.frame.midX, y: view.frame.midY))
+        for neighbor in [mine - 1, mine + 1] where items.indices.contains(neighbor) {
+            let other = items[neighbor]
+            let there = axis(NSPoint(x: other.frame.midX, y: other.frame.midY))
+            guard (axis(point) - there) * (there - here) > 0 else { continue }
+            guard let index = stack.arrangedSubviews.firstIndex(of: other) else { return }
+            stack.removeArrangedSubview(view)
+            stack.insertArrangedSubview(view, at: index)
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.18
+                context.allowsImplicitAnimation = true
+                stack.layoutSubtreeIfNeeded()
+            }
+            return
+        }
+    }
+
+    func end(_ done: (() -> Void)? = nil) {
+        stack.layoutSubtreeIfNeeded()
+        let frame = view.convert(view.bounds, to: overlay)
+        let target = CGPoint(x: frame.midX, y: frame.midY)
+        let spring = CASpringAnimation(keyPath: "position")
+        spring.fromValue = NSValue(point: lifted.presentation()?.position ?? lifted.position)
+        spring.toValue = NSValue(point: target)
+        spring.damping = 18
+        spring.stiffness = 260
+        spring.duration = spring.settlingDuration
+        CATransaction.begin()
+        CATransaction.setAnimationDuration(0.22)
+        CATransaction.setAnimationTimingFunction(CAMediaTimingFunction(controlPoints: 0.2, 0.9, 0.3, 1))
+        CATransaction.setCompletionBlock { [view, overlay] in
+            view.alphaValue = 1
+            overlay.removeFromSuperview()
+            done?()
+        }
+        lifted.add(spring, forKey: "drop")
+        lifted.position = target
+        lifted.transform = CATransform3DIdentity
+        lifted.shadowOpacity = 0
+        CATransaction.commit()
+    }
+}
 
 final class TabItemView: NSView, NSTextFieldDelegate {
     var onSelect: (() -> Void)?
@@ -6,8 +132,9 @@ final class TabItemView: NSView, NSTextFieldDelegate {
     var onRename: ((String) -> Void)?
     var onMove: (() -> Void)?
     var draggable = false
-    private var dragStart: CGFloat?
-    private var dragged = false
+    var contextMenu: (() -> NSMenu?)?
+    private var dragStart: NSEvent?
+    private var reorder: DragReorder?
     private var oldTitle = ""
     var selected = false { didSet { updateColor() } }
     var plain = false { didSet { needsDisplay = true } }
@@ -59,41 +186,29 @@ final class TabItemView: NSView, NSTextFieldDelegate {
             beginRename()
             return
         }
-        dragStart = event.locationInWindow.x
-        dragged = false
+        dragStart = event
         onSelect?()
     }
 
     override func mouseDragged(with event: NSEvent) {
-        guard draggable, let start = dragStart, let stack = superview as? NSStackView else { return }
-        let dx = event.locationInWindow.x - start
-        guard dragged || abs(dx) > 4 else { return }
-        dragged = true
-        let tabs = stack.arrangedSubviews.filter { $0 is TabItemView }
-        guard let mine = tabs.firstIndex(of: self) else { return }
-        let x = stack.convert(event.locationInWindow, from: nil).x
-        if mine + 1 < tabs.count, x > tabs[mine + 1].frame.midX {
-            move(in: stack, after: tabs[mine + 1])
-            dragStart = event.locationInWindow.x
-        } else if mine > 0, x < tabs[mine - 1].frame.midX {
-            move(in: stack, before: tabs[mine - 1])
-            dragStart = event.locationInWindow.x
+        guard draggable, let start = dragStart else { return }
+        if reorder == nil {
+            guard abs(event.locationInWindow.x - start.locationInWindow.x) > 4 else { return }
+            reorder = DragReorder(view: self, event: start) { $0 is TabItemView }
         }
+        reorder?.drag(event)
     }
 
     override func mouseUp(with event: NSEvent) {
-        if dragged { onMove?() }
+        if let reorder {
+            reorder.end()
+            onMove?()
+        }
+        reorder = nil
         dragStart = nil
-        dragged = false
     }
 
-    private func move(in stack: NSStackView, after: NSView? = nil, before: NSView? = nil) {
-        stack.removeArrangedSubview(self)
-        let anchor = (after ?? before)!
-        guard let index = stack.arrangedSubviews.firstIndex(of: anchor) else { return }
-        stack.insertArrangedSubview(self, at: after != nil ? index + 1 : index)
-        stack.layoutSubtreeIfNeeded()
-    }
+    override func menu(for event: NSEvent) -> NSMenu? { contextMenu?() }
 
     private func beginRename() {
         oldTitle = label.stringValue
