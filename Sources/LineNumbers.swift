@@ -49,6 +49,14 @@ final class LineNumberRuler: NSRulerView {
         .monospacedDigitSystemFont(ofSize: max(Settings.fontSize - 2, 9), weight: .regular)
     }
 
+    override var isOpaque: Bool { true }
+
+    override func draw(_ dirtyRect: NSRect) {
+        Self.backgroundColor.setFill()
+        bounds.fill()
+        drawHashMarksAndLabels(in: dirtyRect)
+    }
+
     override func drawHashMarksAndLabels(in rect: NSRect) {
         guard let textView, let layout = textView.layoutManager, let container = textView.textContainer else { return }
         Self.backgroundColor.setFill()
@@ -101,6 +109,7 @@ extension NSScrollView {
     func setLineNumbers(_ on: Bool, textView: NSTextView) {
         if on {
             if !(verticalRulerView is LineNumberRuler) { verticalRulerView = LineNumberRuler(textView: textView, scroll: self) }
+            textView.clipsToBounds = true
             hasVerticalRuler = true
             rulersVisible = true
             verticalRulerView?.needsDisplay = true

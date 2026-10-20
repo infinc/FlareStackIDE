@@ -1,0 +1,10 @@
+{
+  "id": "interpolate-code",
+  "name": "Interpolate Code",
+  "version": "1.0",
+  "author": "FlareStackIDE",
+  "symbol": "curlybraces",
+  "summary": "カッコ・引用符・リスト記号・インデントを自動で補完",
+  "fileExtensions": [],
+  "files": ["README.md"]
+}

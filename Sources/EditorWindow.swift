@@ -105,10 +105,12 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
     private var folderButton: ToolStripButton!
     private var pluginButton: ToolStripButton!
     private var terminalButton: ToolStripButton!
+    private var webButton: ToolStripButton!
+    private var webFeed: WebFeed?
     private var gitButton: ToolStripButton!
     private var terminalFeed: TerminalFeed?
     private var gitFeed: FeedView?
-    private let gitText = NSTextView()
+    private let gitPanel = GitPanel()
     private let branchView = NSStackView()
     private let branchLabel = NSTextField(labelWithString: "")
     private var git: GitSnapshot?
@@ -121,6 +123,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
     private let pluginPage = PluginPage()
     private let barHost = NSView()
     private var barHeight: NSLayoutConstraint!
+    private var floatConstraints: [NSLayoutConstraint] = []
     private let bodyHost = NSView()
     private var ext: EditorExtension?
     private var highlighter: Highlighter?
@@ -129,6 +132,8 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
     private let strip = NSView()
     private var selectedURL: URL?
     private let gearButton = NSButton()
+    private let searchButton = NSButton()
+    private var searchPanel: SearchPanel?
     private let settingsMenu = EditorSettingsMenu()
     private let fileTabs = TabStrip()
     private var tabs: [URL: TabItemView] = [:]
@@ -154,6 +159,12 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
     private let badge = ProblemBadge()
     private let problemsView = ProblemsView()
     private var problemsFeed: FeedView?
+    private let completer = VariableCompleter()
+    private var interpolateOn = false
+    private var completeOn = false
+    private var lastTyped: String?
+    private var projectFiles: [URL] = []
+    private var filesLoading = false
 
     init(project: Project) {
         self.project = project
@@ -171,6 +182,9 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
         window.setFrameAutosaveName("Editor:\(project.path)")
         NotificationCenter.default.addObserver(self, selector: #selector(applySettings), name: .settingsChanged, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(pluginsChanged), name: .pluginsChanged, object: nil)
+        completer.extraWords = { [weak self] in self?.completionWords() ?? [] }
+        NotificationCenter.default.addObserver(self, selector: #selector(hideCompletion), name: NSView.boundsDidChangeNotification,
+                                               object: editorScroll.contentView)
         applyPlugins()
         if !root.isDirectory { open(root.url) }
         applySettings()
@@ -229,6 +243,13 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
         cloudButton.action = #selector(autosave)
         cloudButton.translatesAutoresizingMaskIntoConstraints = false
         topBar.addSubview(cloudButton)
+        searchButton.image = Self.cloudImage("magnifyingglass")
+        searchButton.isBordered = false
+        searchButton.toolTip = "プロジェクト内を検索"
+        searchButton.target = self
+        searchButton.action = #selector(searchClicked)
+        searchButton.translatesAutoresizingMaskIntoConstraints = false
+        topBar.addSubview(searchButton)
         gearButton.image = Self.cloudImage("gearshape")
         gearButton.isBordered = false
         gearButton.toolTip = "エディタ設定"
@@ -245,11 +266,12 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
         pluginButton = ToolStripButton(symbol: "puzzlepiece.extension", tip: "プラグイン", target: self, action: #selector(togglePlugins))
         terminalButton = ToolStripButton(symbol: "terminal", tip: "ターミナル", target: self, action: #selector(toggleTerminal))
         gitButton = ToolStripButton(symbol: "arrow.triangle.branch", tip: "Git", target: self, action: #selector(toggleGit))
+        webButton = ToolStripButton(symbol: "magnifyingglass", tip: "Web Feed", target: self, action: #selector(toggleWeb))
         runButton = RunButton(target: self, action: #selector(runClicked))
         runButton.onMenu = { [weak self] in self?.showRunMenu($0) }
         folderButton.active = true
         let upper = Self.buttonColumn([folderButton, pluginButton])
-        let lower = Self.buttonColumn([runButton, terminalButton, gitButton])
+        let lower = Self.buttonColumn([runButton, webButton, terminalButton, gitButton])
         strip.addSubview(upper)
         strip.addSubview(lower)
         let stripLine = NSBox()
@@ -336,7 +358,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
             placeholder.centerXAnchor.constraint(equalTo: bodyHost.centerXAnchor),
             placeholder.centerYAnchor.constraint(equalTo: bodyHost.centerYAnchor),
             badge.topAnchor.constraint(equalTo: bodyHost.topAnchor, constant: 4),
-            badge.trailingAnchor.constraint(equalTo: bodyHost.trailingAnchor, constant: -20),
+            badge.trailingAnchor.constraint(equalTo: bodyHost.trailingAnchor, constant: -4),
         ])
 
         rightSplit.isVertical = false
@@ -364,7 +386,9 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
             titleStack.leadingAnchor.constraint(equalTo: back.trailingAnchor, constant: 6),
             titleStack.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
             titleStack.trailingAnchor.constraint(lessThanOrEqualTo: cloudButton.leadingAnchor, constant: -12),
-            cloudButton.trailingAnchor.constraint(equalTo: gearButton.leadingAnchor, constant: -8),
+            cloudButton.trailingAnchor.constraint(equalTo: searchButton.leadingAnchor, constant: -8),
+            searchButton.trailingAnchor.constraint(equalTo: gearButton.leadingAnchor, constant: -8),
+            searchButton.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
             gearButton.trailingAnchor.constraint(equalTo: topBar.trailingAnchor, constant: -12),
             gearButton.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
             cloudButton.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
@@ -488,9 +512,41 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
 
     @objc private func gearClicked() { settingsMenu.popUp(from: gearButton) }
 
+    @objc private func searchClicked() {
+        guard let window else { return }
+        if let panel = searchPanel, panel.isVisible { return panel.close() }
+        let panel = searchPanel ?? SearchPanel(base: baseDirectory)
+        panel.onOpen = { [weak self] in self?.openHit($0, line: $1, query: $2) }
+        searchPanel = panel
+        panel.show(over: window)
+    }
+
+    @objc func findInProject(_ sender: Any?) { searchClicked() }
+
+    private func openHit(_ url: URL, line: Int?, query: String) {
+        if selectedURL != url { open(url) }
+        window?.makeKeyAndOrderFront(nil)
+        guard let line, current?.url == url else { return }
+        let text = textView.string as NSString
+        var start = 0
+        for _ in 1..<line {
+            let next = text.range(of: "\n", options: .literal, range: NSRange(location: start, length: text.length - start))
+            if next.location == NSNotFound { break }
+            start = next.location + 1
+        }
+        let lineRange = text.lineRange(for: NSRange(location: min(start, text.length), length: 0))
+        let found = text.range(of: query, options: .caseInsensitive, range: lineRange)
+        let target = found.location == NSNotFound ? NSRange(location: lineRange.location, length: 0) : found
+        window?.makeFirstResponder(textView)
+        textView.setSelectedRange(target)
+        textView.scrollRangeToVisible(target)
+        if target.length > 0 { textView.showFindIndicator(for: target) }
+    }
+
     private func showBottom(_ view: NSView) {
-        for feed in [terminalFeed, gitFeed, runFeed, problemsFeed].compactMap({ $0 }) where feed !== view { feed.isHidden = true }
+        for feed in [terminalFeed, gitFeed, runFeed, problemsFeed, webFeed].compactMap({ $0 as NSView? }) where feed !== view { feed.isHidden = true }
         terminalButton.active = view === terminalFeed
+        webButton.active = view === webFeed
         gitButton.active = view === gitFeed
         runButton.play.active = view === runFeed
         view.isHidden = false
@@ -531,6 +587,25 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
         DispatchQueue.main.async { feed.focus() }
     }
 
+    @objc private func toggleWeb() {
+        if let feed = webFeed, !feed.isHidden {
+            hideBottom(feed)
+            webButton.active = false
+            return
+        }
+        let feed: WebFeed
+        if let existing = webFeed {
+            feed = existing
+        } else {
+            feed = WebFeed()
+            feed.onRemove = { [weak self] in self?.toggleWeb() }
+            webFeed = feed
+            rightSplit.addArrangedSubview(feed)
+        }
+        showBottom(feed)
+        DispatchQueue.main.async { feed.focus() }
+    }
+
     @objc private func toggleGit() {
         if let feed = gitFeed, !feed.isHidden {
             hideBottom(feed)
@@ -541,21 +616,8 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
         if let existing = gitFeed {
             feed = existing
         } else {
-            gitText.isEditable = false
-            gitText.isRichText = true
-            gitText.textContainerInset = NSSize(width: 6, height: 6)
-            gitText.isHorizontallyResizable = true
-            gitText.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
-            gitText.textContainer?.widthTracksTextView = false
-            gitText.textContainer?.containerSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
-            gitText.autoresizingMask = [.width]
-            let scroll = NSScrollView()
-            scroll.documentView = gitText
-            scroll.hasVerticalScroller = true
-            scroll.hasHorizontalScroller = true
-            scroll.autohidesScrollers = true
             let reload = FeedView.barButton(symbol: "arrow.clockwise", tip: "再読み込み", target: self, action: #selector(reloadGitReport))
-            feed = FeedView(title: "Git", content: scroll, extras: [reload])
+            feed = FeedView(title: "Git", content: gitPanel, extras: [reload])
             feed.onRemove = { [weak self] in self?.toggleGit() }
             gitFeed = feed
             rightSplit.addArrangedSubview(feed)
@@ -568,11 +630,8 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
     @objc private func reloadGitReport() {
         let dir = baseDirectory
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let report = Git.report(for: dir)
-            DispatchQueue.main.async {
-                self?.gitText.textStorage?.setAttributedString(report)
-                self?.gitText.scrollToBeginningOfDocument(nil)
-            }
+            let overview = Git.overview(for: dir)
+            DispatchQueue.main.async { self?.gitPanel.show(overview) }
         }
     }
 
@@ -669,6 +728,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
     }
 
     private func open(_ url: URL) {
+        completer.hide()
         if let id = PluginStore.id(from: url) {
             openPluginPage(id)
             return
@@ -717,13 +777,39 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
         guard let current else { return detachExtension() }
         ext = current.editable ? PluginStore.makeExtension(for: current.url, code: editorScroll) : nil
         guard let ext else { return detachExtension() }
-        show(ext.bar, in: barHost)
-        barHeight.constant = 30
         show(ext.body, in: bodyHost)
+        layoutExtensionBar()
         ext.update(text: textView.string)
     }
 
+    private func layoutExtensionBar() {
+        guard let ext else { return }
+        let bar = ext.bar
+        NSLayoutConstraint.deactivate(floatConstraints)
+        floatConstraints = []
+        bar.removeFromSuperview()
+        barHost.subviews.forEach { $0.removeFromSuperview() }
+        if ext.floating {
+            barHeight.constant = 0
+            bar.translatesAutoresizingMaskIntoConstraints = false
+            bodyHost.addSubview(bar)
+            floatConstraints = [
+                bar.bottomAnchor.constraint(equalTo: bodyHost.bottomAnchor, constant: -14),
+                bar.trailingAnchor.constraint(equalTo: bodyHost.trailingAnchor, constant: -18),
+                bar.widthAnchor.constraint(equalToConstant: 100),
+                bar.heightAnchor.constraint(equalToConstant: 28),
+            ]
+            NSLayoutConstraint.activate(floatConstraints)
+        } else {
+            show(bar, in: barHost)
+            barHeight.constant = 30
+        }
+    }
+
     private func detachExtension() {
+        NSLayoutConstraint.deactivate(floatConstraints)
+        floatConstraints = []
+        ext?.bar.removeFromSuperview()
         ext = nil
         barHost.subviews.forEach { $0.removeFromSuperview() }
         barHeight.constant = 0
@@ -763,6 +849,14 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
             runButton.play.active = false
         }
         updateRunTip()
+        let webOn = PluginStore.isInstalled(WebFeed.pluginID)
+        webButton.isHidden = !webOn
+        if !webOn, let feed = webFeed {
+            if !feed.isHidden { hideBottom(feed) }
+            feed.removeFromSuperview()
+            webFeed = nil
+            webButton.active = false
+        }
         let scannerOn = PluginStore.isInstalled(CodeScanner.pluginID)
         if scannerOn != (scanner != nil) {
             scanner = CodeScanner.make()
@@ -772,6 +866,69 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
             scheduleScan(delay: 0)
         }
         editorScroll.setLineNumbers(PluginStore.isInstalled(LineNumberRuler.pluginID), textView: textView)
+        interpolateOn = PluginStore.isInstalled(CodeInterpolator.pluginID)
+        completeOn = PluginStore.isInstalled(VariableCompleter.pluginID)
+        if completeOn { loadProjectFiles() } else { completer.hide() }
+    }
+
+    private func loadProjectFiles() {
+        guard root.isDirectory, !filesLoading else { return }
+        filesLoading = true
+        let base = baseDirectory
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let files = ProjectSearch.files(in: base)
+            DispatchQueue.main.async {
+                self?.projectFiles = files
+                self?.filesLoading = false
+            }
+        }
+    }
+
+    private func completionWords() -> [String] {
+        guard let current else { return [] }
+        let ext = current.url.pathExtension.lowercased()
+        var words = Set(projectFiles.filter { $0.pathExtension.lowercased() == ext && !ext.isEmpty }
+            .map { $0.deletingPathExtension().lastPathComponent }
+            .filter { $0.range(of: #"^[A-Za-z_$][A-Za-z0-9_$]*$"#, options: .regularExpression) != nil })
+        for buffer in buffers.values where buffer !== current && buffer.editable && buffer.url.pathExtension.lowercased() == ext {
+            words.formUnion(VariableCompleter.words(in: buffer.text).keys)
+        }
+        return Array(words)
+    }
+
+    @objc private func hideCompletion() { completer.hide() }
+
+    func textView(_ textView: NSTextView, shouldChangeTextIn range: NSRange, replacementString text: String?) -> Bool {
+        lastTyped = text
+        guard interpolateOn, let text, textView === self.textView else { return true }
+        return CodeInterpolator.shouldChange(textView, range: range, text: text)
+    }
+
+    func textView(_ textView: NSTextView, doCommandBy selector: Selector) -> Bool {
+        guard textView === self.textView else { return false }
+        if completeOn, completer.handle(selector) { return true }
+        guard interpolateOn, let current else { return false }
+        switch selector {
+        case #selector(NSResponder.insertNewline(_:)):
+            return CodeInterpolator.newline(textView, ext: current.url.pathExtension.lowercased())
+        case #selector(NSResponder.deleteBackward(_:)):
+            return CodeInterpolator.deleteBackward(textView)
+        default:
+            return false
+        }
+    }
+
+    func textViewDidChangeSelection(_ notification: Notification) {
+        if lastTyped == nil { completer.hide() }
+    }
+
+    private func updateCompletion() {
+        defer { lastTyped = nil }
+        guard completeOn, let current, current.editable, let typed = lastTyped else { return completer.hide() }
+        let wordish = typed.isEmpty ? completer.isVisible
+            : typed.utf16.count == 1 && typed.range(of: #"^[A-Za-z0-9_$]$"#, options: .regularExpression) != nil
+        guard wordish else { return completer.hide() }
+        completer.update(textView, ext: current.url.pathExtension.lowercased())
     }
 
     private func styleText() {
@@ -808,7 +965,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
         strip.paint(.bigTab)
         topHeight.constant = Settings.bigTabHeight
         stripWidth.constant = Settings.bigTabWidth
-        [folderButton, pluginButton, runButton.play, terminalButton, gitButton].forEach { $0?.applySize() }
+        [folderButton, pluginButton, runButton.play, webButton, terminalButton, gitButton].forEach { $0?.applySize() }
         textView.font = Settings.font
         textView.backgroundColor = Settings.background
         editorScroll.backgroundColor = Settings.background
@@ -828,7 +985,11 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
             textView.autoresizingMask = []
             textView.textContainer?.containerSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         }
-        ext?.applySettings()
+        if let ext {
+            let wasFloating = ext.floating
+            ext.applySettings()
+            if wasFloating != ext.floating { layoutExtensionBar() }
+        }
 
         autosaveTimer?.invalidate()
         autosaveTimer = Settings.autosaveEnabled && !Settings.autosaveImmediate
@@ -896,6 +1057,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
     }
 
     func textDidChange(_ notification: Notification) {
+        updateCompletion()
         ext?.update(text: textView.string)
         scheduleRecolor()
         scheduleScan(delay: 0.5)
@@ -1006,7 +1168,11 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
         })
     }
 
+    func windowDidResignKey(_ notification: Notification) { completer.hide() }
+
     func windowWillClose(_ notification: Notification) {
+        completer.hide()
+        searchPanel?.close()
         watcher?.stop()
         runPane?.stop()
         cloning?.cancel()
@@ -1095,6 +1261,7 @@ extension EditorWindowController {
     }
 
     func reloadTree() {
+        if completeOn { loadProjectFiles() }
         root.refresh()
         outline.reloadData()
         fitTreeColumn()

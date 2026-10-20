@@ -23,13 +23,15 @@ struct PluginSetting: Codable {
     let title: String
     let type: String
     let defaultValue: String?
+    var options: [String]?
 
-    enum CodingKeys: String, CodingKey { case key, title, type, defaultValue = "default" }
+    enum CodingKeys: String, CodingKey { case key, title, type, options, defaultValue = "default" }
 }
 
 protocol EditorExtension: AnyObject {
     var bar: NSView { get }
     var body: NSView { get }
+    var floating: Bool { get }
     func update(text: String)
     func applySettings()
 }
@@ -361,7 +363,10 @@ final class PluginRow: NSView {
         button.setContentHuggingPriority(.required, for: .horizontal)
         button.setContentCompressionResistancePriority(.required, for: .horizontal)
 
-        let stack = NSStackView(views: [icon, texts, button])
+        let spacer = NSView()
+        spacer.setContentHuggingPriority(.init(1), for: .horizontal)
+        let stack = NSStackView(views: [icon, texts, spacer, button])
+        stack.distribution = .fill
         stack.spacing = 8
         stack.edgeInsets = NSEdgeInsets(top: 6, left: 10, bottom: 6, right: 8)
         stack.translatesAutoresizingMaskIntoConstraints = false
@@ -781,6 +786,10 @@ final class ScriptExtension: NSObject, EditorExtension, WKNavigationDelegate {
     private enum Mode: Int { case code, split, preview }
 
     let bar = NSView()
+    private(set) var floating = false
+    private let id: String
+    private let barLine = NSBox()
+    private let barTitle: NSTextField
     private let modeKey: String
     private let folder: URL
     private let context = JSContext()!
@@ -804,6 +813,8 @@ final class ScriptExtension: NSObject, EditorExtension, WKNavigationDelegate {
         renderer = render
         self.folder = folder
         self.code = code
+        id = info.id
+        barTitle = NSTextField(labelWithString: info.name)
         modeKey = "Plugin.\(info.id).Mode"
         mode = Mode(rawValue: UserDefaults.standard.integer(forKey: modeKey)) ?? .code
 
@@ -824,11 +835,11 @@ final class ScriptExtension: NSObject, EditorExtension, WKNavigationDelegate {
         modes.action = #selector(modeChanged)
         modes.translatesAutoresizingMaskIntoConstraints = false
 
-        let title = NSTextField(labelWithString: info.name)
+        let title = barTitle
         title.font = .systemFont(ofSize: 11, weight: .medium)
         title.textColor = .secondaryLabelColor
         title.translatesAutoresizingMaskIntoConstraints = false
-        let line = NSBox()
+        let line = barLine
         line.boxType = .separator
         line.translatesAutoresizingMaskIntoConstraints = false
         [modes, title, line].forEach(bar.addSubview)
@@ -864,6 +875,13 @@ final class ScriptExtension: NSObject, EditorExtension, WKNavigationDelegate {
 
     func applySettings() {
         preview.underPageBackgroundColor = Settings.background
+        floating = PluginStore.setting(id, "barTransparent") == "true"
+        bar.wantsLayer = true
+        bar.layer?.cornerRadius = floating ? 7 : 0
+        bar.layer?.backgroundColor = floating ? nil : PluginStore.color(id, "barColor")?.cgColor
+        bar.appearance = floating ? nil : PluginStore.color(id, "barColor").map { NSAppearance(named: $0.isDark ? .darkAqua : .aqua)! }
+        barLine.isHidden = floating
+        barTitle.isHidden = floating
         render()
     }
 
@@ -952,9 +970,10 @@ final class ScriptExtension: NSObject, EditorExtension, WKNavigationDelegate {
 
 final class PluginSettingsView: NSView {
     private let id: String
-    private var wells: [(PluginSetting, NSColorWell)] = []
+    private var wells: [(PluginSetting, NSColorWell, NSTextField)] = []
     private var fields: [(PluginSetting, NSTextField)] = []
     private var checks: [(PluginSetting, NSButton)] = []
+    private var popups: [(PluginSetting, NSPopUpButton)] = []
 
     init(id: String) {
         self.id = id
@@ -967,14 +986,28 @@ final class PluginSettingsView: NSView {
             switch setting.type {
             case "color":
                 let well = NSColorWell()
+                well.isContinuous = true
                 well.target = self
-                well.action = #selector(changed)
+                well.action = #selector(wellChanged(_:))
+                well.widthAnchor.constraint(equalToConstant: 44).isActive = true
+                let hex = NSTextField()
+                hex.placeholderString = "#RRGGBB"
+                hex.target = self
+                hex.action = #selector(hexChanged(_:))
+                hex.widthAnchor.constraint(equalToConstant: 80).isActive = true
                 let reset = PluginActionButton(title: "初期値") { [weak self] in
                     Settings.setPluginValue(id, setting.key, nil)
                     self?.load()
                 }
-                wells.append((setting, well))
-                rows.append([label, NSStackView(views: [well, reset])])
+                wells.append((setting, well, hex))
+                rows.append([label, NSStackView(views: [well, hex, reset])])
+            case "choice":
+                let popup = NSPopUpButton()
+                popup.addItems(withTitles: setting.options ?? [])
+                popup.target = self
+                popup.action = #selector(changed)
+                popups.append((setting, popup))
+                rows.append([label, popup])
             case "bool":
                 let check = NSButton(checkboxWithTitle: setting.title, target: self, action: #selector(changed))
                 checks.append((setting, check))
@@ -1016,14 +1049,35 @@ final class PluginSettingsView: NSView {
     required init?(coder: NSCoder) { fatalError() }
 
     private func load() {
-        for (setting, well) in wells { well.color = PluginStore.color(id, setting.key) ?? .textColor }
+        for (setting, well, hex) in wells {
+            let saved = PluginStore.color(id, setting.key)
+            well.color = saved ?? .textColor
+            hex.stringValue = saved?.hexString ?? ""
+        }
         for (setting, field) in fields { field.stringValue = PluginStore.setting(id, setting.key) ?? "" }
         for (setting, check) in checks { check.state = PluginStore.setting(id, setting.key) == "true" ? .on : .off }
+        for (setting, popup) in popups {
+            if let value = PluginStore.setting(id, setting.key) { popup.selectItem(withTitle: value) }
+        }
+    }
+
+    @objc private func wellChanged(_ sender: NSColorWell) {
+        guard let (setting, _, hex) = wells.first(where: { $0.1 === sender }) else { return }
+        hex.stringValue = sender.color.hexString
+        Settings.setPluginValue(id, setting.key, sender.color.hexString)
+    }
+
+    @objc private func hexChanged(_ sender: NSTextField) {
+        guard let (setting, well, _) = wells.first(where: { $0.2 === sender }) else { return }
+        let text = sender.stringValue.trimmingCharacters(in: .whitespaces)
+        guard let color = NSColor(hex: text) else { return load() }
+        well.color = color
+        Settings.setPluginValue(id, setting.key, color.hexString)
     }
 
     @objc private func changed() {
-        for (setting, well) in wells { Settings.setPluginValue(id, setting.key, well.color.hexString) }
         for (setting, field) in fields { Settings.setPluginValue(id, setting.key, field.stringValue) }
         for (setting, check) in checks { Settings.setPluginValue(id, setting.key, check.state == .on ? "true" : "false") }
+        for (setting, popup) in popups { Settings.setPluginValue(id, setting.key, popup.titleOfSelectedItem) }
     }
 }

@@ -101,52 +101,89 @@ enum Git {
         return GitSnapshot(top: topPath, branch: branch(in: dir) ?? "", states: states, untrackedDirs: untrackedDirs)
     }
 
-    static func report(for dir: URL) -> NSAttributedString {
-        let out = NSMutableAttributedString()
-        let font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
-        let bold = NSFont.monospacedSystemFont(ofSize: 12, weight: .bold)
-        func add(_ text: String, header: Bool = false, color: NSColor = .labelColor) {
-            out.append(NSAttributedString(string: text + "\n", attributes: [.font: header ? bold : font, .foregroundColor: color]))
-        }
-        guard run(["rev-parse", "--show-toplevel"], in: dir) != nil else {
-            add("このディレクトリはgitで追跡されていません。", color: .secondaryLabelColor)
-            return out
-        }
-
-        let current = branch(in: dir) ?? "(不明)"
-        var head = "ブランチ: \(current)"
+    static func overview(for dir: URL) -> GitOverview? {
+        guard run(["rev-parse", "--show-toplevel"], in: dir) != nil else { return nil }
+        var info = GitOverview()
+        info.branch = branch(in: dir) ?? "(不明)"
         if let upstream = run(["rev-parse", "--abbrev-ref", "@{u}"], in: dir)?.trimmingCharacters(in: .whitespacesAndNewlines) {
+            info.upstream = upstream
             let counts = (run(["rev-list", "--left-right", "--count", "@{u}...HEAD"], in: dir) ?? "")
-                .split(whereSeparator: \.isWhitespace).map(String.init)
-            let behind = counts.first ?? "0", ahead = counts.count > 1 ? counts[1] : "0"
-            head += "  →  \(upstream)  ↑\(ahead) ↓\(behind)"
-        } else {
-            head += "  (upstreamなし)"
+                .split(whereSeparator: \.isWhitespace).compactMap { Int($0) }
+            info.behind = counts.first ?? 0
+            info.ahead = counts.count > 1 ? counts[1] : 0
         }
-        add(head, header: true)
-        add("")
-
-        let local = lines(["branch", "--format=%(refname:short)"], in: dir)
-        add("ローカルブランチ (\(local.count))", header: true)
-        local.forEach { add(($0 == current ? "  * " : "    ") + $0, color: $0 == current ? .systemGreen : .labelColor) }
-        add("")
-
-        let remote = lines(["branch", "-r", "--format=%(refname:short)"], in: dir)
+        info.local = lines(["branch", "--format=%(refname:short)"], in: dir)
+        info.remote = lines(["branch", "-r", "--format=%(refname:short)"], in: dir)
             .filter { $0.contains("/") && !$0.hasSuffix("/HEAD") }
-        add("リモートブランチ (\(remote.count))", header: true)
-        remote.forEach { add("    " + $0) }
-        add("")
-
-        let status = lines(["status", "--porcelain=v1", "--untracked-files=all"], in: dir)
-        let untracked = status.filter { $0.hasPrefix("??") }.count
-        let added = status.filter { $0.hasPrefix("A") }.count
-        add("変更", header: true)
-        add("    未追跡 \(untracked) / 追加 \(added) / 変更 \(status.count - untracked - added)")
-        add("")
-
-        let log = lines(["log", "--graph", "--date=short", "--format=%h %ad %an  %s%d", "-n", "200"], in: dir)
-        add("コミット履歴 (\(lines(["rev-list", "--count", "HEAD"], in: dir).first ?? "0"))", header: true)
-        log.forEach { add("    " + $0) }
-        return out
+        info.changes = lines(["status", "--porcelain=v1", "--untracked-files=all"], in: dir).compactMap { line in
+            guard line.count > 3 else { return nil }
+            let code = String(line.prefix(2))
+            var path = String(line.dropFirst(3))
+            if let arrow = path.range(of: " -> ") { path = String(path[arrow.upperBound...]) }
+            let kind: GitChange.Kind
+            if code == "??" { kind = .untracked }
+            else if code.contains("D") { kind = .deleted }
+            else if code.first == "R" { kind = .renamed }
+            else if code.first == "A" { kind = .added }
+            else { kind = .modified }
+            return GitChange(kind: kind, path: path, staged: code.first != " " && code != "??")
+        }
+        info.total = Int(lines(["rev-list", "--count", "HEAD"], in: dir).first ?? "0") ?? 0
+        info.commits = lines(["log", "--date=format:%Y-%m-%d %H:%M", "--format=%h%x1f%ad%x1f%an%x1f%s%x1f%D", "-n", "200"], in: dir)
+            .compactMap { line in
+                let f = line.components(separatedBy: "\u{1F}")
+                guard f.count >= 5 else { return nil }
+                let refs = f[4].split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+                    .map { $0.hasPrefix("HEAD -> ") ? String($0.dropFirst(8)) : $0 }.filter { !$0.isEmpty && $0 != "HEAD" }
+                return GitCommit(hash: f[0], date: f[1], author: f[2], subject: f[3], refs: refs)
+            }
+        return info
     }
+}
+
+struct GitChange {
+    enum Kind { case untracked, added, modified, deleted, renamed }
+    let kind: Kind
+    let path: String
+    let staged: Bool
+
+    var letter: String {
+        switch kind {
+        case .untracked: return "U"
+        case .added: return "A"
+        case .modified: return "M"
+        case .deleted: return "D"
+        case .renamed: return "R"
+        }
+    }
+
+    var color: NSColor {
+        switch kind {
+        case .untracked: return .systemOrange
+        case .added: return .systemGreen
+        case .modified: return .systemCyan
+        case .deleted: return .systemRed
+        case .renamed: return .systemPurple
+        }
+    }
+}
+
+struct GitCommit {
+    let hash: String
+    let date: String
+    let author: String
+    let subject: String
+    let refs: [String]
+}
+
+struct GitOverview {
+    var branch = ""
+    var upstream: String?
+    var ahead = 0
+    var behind = 0
+    var local: [String] = []
+    var remote: [String] = []
+    var changes: [GitChange] = []
+    var commits: [GitCommit] = []
+    var total = 0
 }

@@ -2,7 +2,7 @@
   {
     "id": "md-viewer",
     "name": "MD Viewer",
-    "version": "1.1",
+    "version": "1.2",
     "author": "FlareStackIDE",
     "symbol": "doc.richtext",
     "summary": "Markdown ファイルをリアルタイムでプレビュー",
@@ -51,6 +51,33 @@
     "author": "FlareStackIDE",
     "symbol": "doc.text",
     "summary": "ファイルだけを開く軽量エディタ",
+    "fileExtensions": []
+  },
+  {
+    "id": "web-feed",
+    "name": "Web Feed",
+    "version": "1.0",
+    "author": "FlareStackIDE",
+    "symbol": "globe",
+    "summary": "下のフィードで Google などの Web ページを開く",
+    "fileExtensions": []
+  },
+  {
+    "id": "interpolate-code",
+    "name": "Interpolate Code",
+    "version": "1.0",
+    "author": "FlareStackIDE",
+    "symbol": "curlybraces",
+    "summary": "カッコ・引用符・リスト記号・インデントを自動で補完",
+    "fileExtensions": []
+  },
+  {
+    "id": "interpolate-variable",
+    "name": "Interpolate Variable",
+    "version": "1.0",
+    "author": "FlareStackIDE",
+    "symbol": "text.badge.plus",
+    "summary": "入力中の変数名・モジュール名の候補を表示して補完",
     "fileExtensions": []
   }
 ]
