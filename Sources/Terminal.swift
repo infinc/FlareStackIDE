@@ -8,7 +8,7 @@ final class PTY {
     var onOutput: ((String) -> Void)?
     var onExit: (() -> Void)?
 
-    func start(cwd: String, cols: Int, rows: Int) -> Bool {
+    func start(cwd: String, cols: Int, rows: Int, command: String? = nil) -> Bool {
         let shell = ProcessInfo.processInfo.environment["SHELL"].flatMap { $0.isEmpty ? nil : $0 } ?? "/bin/zsh"
         var env = ProcessInfo.processInfo.environment
         env["TERM"] = "xterm-256color"
@@ -23,7 +23,8 @@ final class PTY {
 
         let shellC = strdup(shell)
         let cwdC = strdup(cwd)
-        let argv: [UnsafeMutablePointer<CChar>?] = [strdup("-" + (shell as NSString).lastPathComponent), nil]
+        let login = strdup("-" + (shell as NSString).lastPathComponent)
+        let argv: [UnsafeMutablePointer<CChar>?] = command.map { [login, strdup("-c"), strdup($0), nil] } ?? [login, nil]
         let envp: [UnsafeMutablePointer<CChar>?] = env.map { strdup("\($0.key)=\($0.value)") } + [nil]
         defer {
             free(shellC)
@@ -498,13 +499,39 @@ final class TerminalView: NSView, NSTextInputClient {
     private(set) lazy var cellSize = NSSize(width: ("M" as NSString).size(withAttributes: [.font: font]).width,
                                             height: ceil(font.ascender - font.descender + font.leading) + 2)
     private var marked = ""
+    private var blinkTimer: Timer?
+    private var blinkOn = true
     let padding: CGFloat = 6
 
     override var isFlipped: Bool { true }
     override var acceptsFirstResponder: Bool { true }
 
-    override func becomeFirstResponder() -> Bool { needsDisplay = true; return true }
-    override func resignFirstResponder() -> Bool { needsDisplay = true; return true }
+    override func becomeFirstResponder() -> Bool { resetBlink(); return true }
+    override func resignFirstResponder() -> Bool {
+        blinkTimer?.invalidate()
+        blinkTimer = nil
+        blinkOn = true
+        needsDisplay = true
+        return true
+    }
+
+    func resetBlink() {
+        blinkTimer?.invalidate()
+        blinkTimer = nil
+        blinkOn = true
+        needsDisplay = true
+        guard Settings.terminalCursorBlink else { return }
+        blinkTimer = Timer.scheduledTimer(withTimeInterval: 0.55, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            guard self.window?.firstResponder === self else {
+                self.blinkTimer?.invalidate()
+                self.blinkTimer = nil
+                return
+            }
+            self.blinkOn.toggle()
+            self.setNeedsDisplay(self.cursorRect)
+        }
+    }
 
     override func mouseDown(with event: NSEvent) {
         window?.makeFirstResponder(self)
@@ -588,9 +615,16 @@ final class TerminalView: NSView, NSTextInputClient {
                                                             .underlineStyle: NSUnderlineStyle.single.rawValue,
                                                             .backgroundColor: defaultBg]
                 (marked as NSString).draw(at: NSPoint(x: rect.minX, y: rect.minY + 1), withAttributes: attrs)
+            } else if Settings.terminalCursorBar {
+                if window?.firstResponder !== self || blinkOn {
+                    NSColor.textColor.withAlphaComponent(window?.firstResponder === self ? 0.85 : 0.4).setFill()
+                    NSRect(x: rect.minX, y: rect.minY + 1, width: 2, height: rect.height - 2).fill()
+                }
             } else if window?.firstResponder === self {
-                NSColor.textColor.withAlphaComponent(0.5).setFill()
-                rect.fill()
+                if blinkOn {
+                    NSColor.textColor.withAlphaComponent(0.5).setFill()
+                    rect.fill()
+                }
             } else {
                 NSColor.textColor.withAlphaComponent(0.5).setStroke()
                 NSBezierPath(rect: rect.insetBy(dx: 0.5, dy: 0.5)).stroke()
@@ -599,6 +633,7 @@ final class TerminalView: NSView, NSTextInputClient {
     }
 
     override func keyDown(with event: NSEvent) {
+        if Settings.terminalCursorBlink { resetBlink() }
         if !marked.isEmpty {
             interpretKeyEvents([event])
             return
@@ -683,11 +718,13 @@ final class TerminalPane: NSView {
     private let scroll = NSScrollView()
     private let pty = PTY()
     private let cwd: String
+    private let command: String?
     private var started = false
     var onExit: (() -> Void)?
 
-    init(cwd: String) {
+    init(cwd: String, command: String? = nil) {
         self.cwd = cwd
+        self.command = command
         super.init(frame: .zero)
         scroll.hasVerticalScroller = true
         scroll.autohidesScrollers = true
@@ -699,7 +736,10 @@ final class TerminalPane: NSView {
         terminal.onInput = { [weak self] in self?.pty.write($0) }
         terminal.emulator.onReply = { [weak self] in self?.pty.write($0) }
         pty.onOutput = { [weak self] in self?.receive($0) }
-        pty.onExit = { [weak self] in self?.onExit?() }
+        pty.onExit = { [weak self] in
+            self?.exited = true
+            self?.onExit?()
+        }
         NotificationCenter.default.addObserver(self, selector: #selector(applyColors), name: .settingsChanged, object: nil)
         applyColors()
     }
@@ -707,7 +747,7 @@ final class TerminalPane: NSView {
     @objc private func applyColors() {
         paint(.feed)
         scroll.backgroundColor = Settings.surfaceColor(.feed) ?? .textBackgroundColor
-        terminal.needsDisplay = true
+        if window?.firstResponder === terminal { terminal.resetBlink() } else { terminal.needsDisplay = true }
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -715,6 +755,15 @@ final class TerminalPane: NSView {
     deinit { pty.terminate() }
 
     func stop() { pty.terminate() }
+
+    var running: Bool { pty.pid > 0 && started && !exited }
+    private var exited = false
+
+    func show(_ text: String) {
+        terminal.emulator.feed(text)
+        updateDocumentSize(stickToBottom: true)
+        terminal.needsDisplay = true
+    }
 
     func focus() { window?.makeFirstResponder(terminal) }
 
@@ -727,7 +776,7 @@ final class TerminalPane: NSView {
         if size.height > 0, !started {
             started = true
             terminal.emulator.resize(cols: cols, rows: rows)
-            if !pty.start(cwd: cwd, cols: cols, rows: rows) {
+            if !pty.start(cwd: cwd, cols: cols, rows: rows, command: command) {
                 terminal.emulator.feed("シェルを起動できませんでした\r\n")
             }
         } else if cols != terminal.emulator.cols || rows != terminal.emulator.rows {
@@ -800,6 +849,8 @@ final class TerminalFeed: NSView {
         let tab = TabItemView(title: counter == 1 ? "ターミナル" : "ターミナル \(counter)", closable: true)
         tab.onSelect = { [weak self, weak pane] in if let pane { self?.select(pane) } }
         tab.onClose = { [weak self, weak pane] in if let pane { self?.close(pane) } }
+        tab.onRename = { [weak tab] in tab?.title = $0 }
+        tab.draggable = true
         pane.onExit = { [weak self, weak pane] in if let pane { self?.close(pane) } }
         pane.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(pane)
@@ -826,6 +877,8 @@ final class TerminalFeed: NSView {
 
     private func close(_ pane: TerminalPane) {
         guard let index = sessions.firstIndex(where: { $0.pane === pane }) else { return }
+        let order = bar.stack.arrangedSubviews.compactMap { view in sessions.first { $0.tab === view } }
+        let position = order.firstIndex { $0.pane === pane } ?? index
         let session = sessions.remove(at: index)
         session.pane.onExit = nil
         session.pane.stop()
@@ -835,7 +888,8 @@ final class TerminalFeed: NSView {
             selected = nil
             onEmpty?()
         } else if selected === pane {
-            select(sessions[min(index, sessions.count - 1)].pane)
+            let rest = order.filter { $0.pane !== pane }
+            select(rest[min(position, rest.count - 1)].pane)
         }
     }
 

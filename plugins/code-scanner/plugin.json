@@ -1,0 +1,10 @@
+{
+  "id": "code-scanner",
+  "name": "Code Scanner",
+  "version": "1.0",
+  "author": "FlareStackIDE",
+  "symbol": "exclamationmark.triangle",
+  "summary": "コードのエラーと警告をリアルタイムで表示",
+  "fileExtensions": [],
+  "files": ["main.js", "README.md"]
+}

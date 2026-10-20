@@ -66,16 +66,19 @@ enum Git {
             if (states[key]?.rawValue ?? -1) < state.rawValue { states[key] = state }
         }
 
-        let unpushed: [String]
+        let range: [String]?
         if hasUpstream(dir) {
-            unpushed = lines(["log", "@{u}..HEAD", "--name-only", "--format="], in: dir)
+            range = ["@{u}..HEAD"]
         } else if !lines(["remote"], in: dir).isEmpty {
-            unpushed = lines(["log", "HEAD", "--not", "--remotes", "--name-only", "--format="], in: dir)
+            range = ["HEAD", "--not", "--remotes"]
         } else {
-            unpushed = []
+            range = nil
         }
-        unpushed.forEach { mark($0, .modified) }
-        lines(["log", "--since=24.hours", "--diff-filter=A", "--name-only", "--format="], in: dir).forEach { mark($0, .added) }
+        if let range {
+            lines(["log"] + range + ["--name-only", "--format="], in: dir).forEach { mark($0, .modified) }
+        }
+        lines(["log"] + (range ?? ["HEAD"]) + ["--since=24.hours", "--diff-filter=A", "--name-only", "--format="], in: dir)
+            .forEach { mark($0, .added) }
 
         let entries = (run(["status", "--porcelain=v1", "-z", "--untracked-files=normal", "--ignored=matching"], in: dir) ?? "")
             .split(separator: "\0", omittingEmptySubsequences: true).map(String.init)

@@ -66,7 +66,9 @@ enum Settings {
         ("グリーン", "#7FD28A"), ("アンバー", "#F0B35A"), ("シアン", "#6CC8E0"),
     ]
     static let lineSpacings: [(name: String, value: CGFloat)] = [("標準", 0), ("やや広め", 3), ("広め", 6), ("とても広め", 10)]
-    static let autosaveIntervals: [TimeInterval] = [3, 10, 30, 60]
+    static let autosaveIntervals: [TimeInterval] = [0, 3, 10, 30, 60]
+
+    static func intervalTitle(_ value: TimeInterval) -> String { value == 0 ? "即時" : "\(Int(value)) 秒ごと" }
 
     static var fontNames: [(name: String, postScript: String)] {
         let candidates = [("SF Mono", ""), ("Menlo", "Menlo-Regular"), ("Monaco", "Monaco"), ("Courier New", "CourierNewPSMT"),
@@ -170,8 +172,40 @@ enum Settings {
         set { set(newValue, "Base.AutosaveInterval") }
     }
 
+    static var autosaveImmediate: Bool { autosaveEnabled && autosaveInterval == 0 }
+
+    static var terminalCursorBlink: Bool {
+        get { value("Terminal.CursorBlink", true) }
+        set { set(newValue, "Terminal.CursorBlink") }
+    }
+
+    static var terminalCursorBar: Bool {
+        get { value("Terminal.CursorBar", false) }
+        set { set(newValue, "Terminal.CursorBar") }
+    }
+
+    static let bigTabHeightRange: ClosedRange<Double> = 24...56
+    static let bigTabWidthRange: ClosedRange<Double> = 32...64
+
+    static var bigTabHeight: CGFloat {
+        get { CGFloat(value("BigTab.Height", 32.0)) }
+        set { set(min(max(Double(newValue), bigTabHeightRange.lowerBound), bigTabHeightRange.upperBound), "BigTab.Height") }
+    }
+
+    static var bigTabWidth: CGFloat {
+        get { CGFloat(value("BigTab.Width", 40.0)) }
+        set { set(min(max(Double(newValue), bigTabWidthRange.lowerBound), bigTabWidthRange.upperBound), "BigTab.Width") }
+    }
+
+    static var bigTabIconSize: CGFloat { max(11, min(bigTabWidth * 0.38, 22)) }
+
+    static func pluginValue(_ id: String, _ key: String) -> String? { defaults.string(forKey: "Plugin.\(id).\(key)") }
+
+    static func setPluginValue(_ id: String, _ key: String, _ value: String?) { set(value, "Plugin.\(id).\(key)") }
+
     static func resetEditor() {
-        (["Editor.Foreground", "Editor.Font", "Editor.FontSize", "Editor.LineSpacing", "Editor.Wrap", "Toast.Duration", "Toast.Size"]
+        (["Editor.Foreground", "Editor.Font", "Editor.FontSize", "Editor.LineSpacing", "Editor.Wrap", "Toast.Duration", "Toast.Size",
+          "Terminal.CursorBlink", "Terminal.CursorBar", "BigTab.Height", "BigTab.Width"]
             + Surface.allCases.map(\.key)).forEach { defaults.removeObject(forKey: $0) }
         changed()
     }
@@ -303,8 +337,18 @@ final class EditorSettingsMenu: NSObject {
         }
         theme.submenu = themes
         menu.addItem(theme)
-        menu.addItem(item("自動保存: \(Settings.autosaveEnabled ? "オン" : "オフ")", #selector(toggleAutosave),
-                          symbol: Settings.autosaveEnabled ? "checkmark.icloud" : "icloud.slash"))
+        let autosave = NSMenuItem(title: "自動保存: \(Settings.autosaveEnabled ? Settings.intervalTitle(Settings.autosaveInterval) : "オフ")",
+                                  action: nil, keyEquivalent: "")
+        autosave.image = NSImage(systemSymbolName: Settings.autosaveEnabled ? "checkmark.icloud" : "icloud.slash", accessibilityDescription: nil)
+        let intervals = NSMenu()
+        intervals.addItem(item("オフ", #selector(autosaveClicked(_:)), -1.0, checked: !Settings.autosaveEnabled))
+        intervals.addItem(.separator())
+        for value in Settings.autosaveIntervals {
+            intervals.addItem(item(Settings.intervalTitle(value), #selector(autosaveClicked(_:)), value,
+                                   checked: Settings.autosaveEnabled && Settings.autosaveInterval == value))
+        }
+        autosave.submenu = intervals
+        menu.addItem(autosave)
         menu.addItem(.separator())
         menu.addItem(item("設定…", #selector(preferencesClicked), symbol: "gearshape"))
     }
@@ -320,7 +364,15 @@ final class EditorSettingsMenu: NSObject {
 
     @objc private func themeClicked(_ sender: NSMenuItem) { Settings.applyTheme(sender.representedObject as? Int ?? 0) }
 
-    @objc private func toggleAutosave() { Settings.autosaveEnabled.toggle() }
+    @objc private func autosaveClicked(_ sender: NSMenuItem) {
+        guard let value = sender.representedObject as? Double else { return }
+        if value < 0 {
+            Settings.autosaveEnabled = false
+        } else {
+            Settings.autosaveInterval = value
+            Settings.autosaveEnabled = true
+        }
+    }
 
     @objc private func preferencesClicked() {
         Popups.show("preferences", title: "設定", over: window) { PreferencesView() }
@@ -427,13 +479,19 @@ final class PreferencesView: NSView {
     private let durationSlider = NSSlider(value: 5, minValue: 2, maxValue: 30, target: nil, action: nil)
     private let durationLabel = NSTextField(labelWithString: "")
     private let sizeControl = NSSegmentedControl(labels: ToastSize.allCases.map(\.title), trackingMode: .selectOne, target: nil, action: nil)
+    private let cursorBlink = NSButton(checkboxWithTitle: "カーソルを点滅させる", target: nil, action: nil)
+    private let cursorShape = NSSegmentedControl(labels: ["四角", "棒線"], trackingMode: .selectOne, target: nil, action: nil)
+    private let heightSlider = NSSlider(value: 32, minValue: Settings.bigTabHeightRange.lowerBound, maxValue: Settings.bigTabHeightRange.upperBound, target: nil, action: nil)
+    private let heightLabel = NSTextField(labelWithString: "")
+    private let widthSlider = NSSlider(value: 40, minValue: Settings.bigTabWidthRange.lowerBound, maxValue: Settings.bigTabWidthRange.upperBound, target: nil, action: nil)
+    private let widthLabel = NSTextField(labelWithString: "")
     private var loading = false
 
     init() {
         super.init(frame: NSRect(x: 0, y: 0, width: 660, height: 430))
         let tabs = NSTabView()
         tabs.translatesAutoresizingMaskIntoConstraints = false
-        for (title, view) in [("背景色", colorPane()), ("フォント", fontPane()), ("通知", toastPane())] {
+        for (title, view) in [("背景色", colorPane()), ("フォント", fontPane()), ("通知", toastPane()), ("ターミナル", terminalPane()), ("大タブ", bigTabPane())] {
             let item = NSTabViewItem()
             item.label = title
             item.view = view
@@ -609,6 +667,36 @@ final class PreferencesView: NSView {
         ]))
     }
 
+    private func terminalPane() -> NSView {
+        cursorBlink.target = self
+        cursorBlink.action = #selector(terminalChanged)
+        cursorShape.target = self
+        cursorShape.action = #selector(terminalChanged)
+        return Self.pane(Self.grid([
+            [Self.label("カーソルの形"), cursorShape],
+            [NSGridCell.emptyContentView, cursorBlink],
+        ]))
+    }
+
+    private func bigTabPane() -> NSView {
+        for (slider, label) in [(heightSlider, heightLabel), (widthSlider, widthLabel)] {
+            slider.target = self
+            slider.action = #selector(bigTabChanged)
+            slider.isContinuous = true
+            slider.widthAnchor.constraint(equalToConstant: 220).isActive = true
+            label.font = .monospacedDigitSystemFont(ofSize: 12, weight: .regular)
+        }
+        let note = NSTextField(wrappingLabelWithString: "大タブは一番上のバー（太さ）と一番左のアイコン列（幅）です。アイコンの大きさは幅に合わせて変わります。")
+        note.font = .systemFont(ofSize: 11)
+        note.textColor = .secondaryLabelColor
+        note.preferredMaxLayoutWidth = 360
+        return Self.pane(Self.grid([
+            [Self.label("上のバーの太さ"), NSStackView(views: [heightSlider, heightLabel])],
+            [Self.label("左のアイコン列の幅"), NSStackView(views: [widthSlider, widthLabel])],
+            [NSGridCell.emptyContentView, note],
+        ]))
+    }
+
     private var surface: Surface { preview.selected }
 
     @objc private func load() {
@@ -626,6 +714,12 @@ final class PreferencesView: NSView {
         durationSlider.doubleValue = Settings.toastDuration
         durationLabel.stringValue = "\(Int(Settings.toastDuration)) 秒"
         sizeControl.selectedSegment = ToastSize.allCases.firstIndex(of: Settings.toastSize) ?? 1
+        cursorBlink.state = Settings.terminalCursorBlink ? .on : .off
+        cursorShape.selectedSegment = Settings.terminalCursorBar ? 1 : 0
+        heightSlider.doubleValue = Double(Settings.bigTabHeight)
+        heightLabel.stringValue = "\(Int(Settings.bigTabHeight)) pt"
+        widthSlider.doubleValue = Double(Settings.bigTabWidth)
+        widthLabel.stringValue = "\(Int(Settings.bigTabWidth)) pt"
     }
 
     private func loadColor() {
@@ -681,6 +775,18 @@ final class PreferencesView: NSView {
     @objc private func durationChanged() { Settings.toastDuration = durationSlider.doubleValue.rounded() }
     @objc private func toastSizeChanged() { Settings.toastSize = ToastSize.allCases[max(sizeControl.selectedSegment, 0)] }
 
+    @objc private func terminalChanged() {
+        guard !loading else { return }
+        Settings.terminalCursorBlink = cursorBlink.state == .on
+        Settings.terminalCursorBar = cursorShape.selectedSegment == 1
+    }
+
+    @objc private func bigTabChanged() {
+        guard !loading else { return }
+        Settings.bigTabHeight = CGFloat(heightSlider.doubleValue.rounded())
+        Settings.bigTabWidth = CGFloat(widthSlider.doubleValue.rounded())
+    }
+
     @objc private func testClicked() {
         Toasts.post("テスト通知", message: "\(Int(Settings.toastDuration)) 秒で消えます（大きさ: \(Settings.toastSize.title)）",
                     actions: [("OK", {})])
@@ -706,7 +812,7 @@ final class BaseSettingsView: NSView {
         projectAdd.action = #selector(changed)
         autosave.target = self
         autosave.action = #selector(changed)
-        interval.addItems(withTitles: Settings.autosaveIntervals.map { "\(Int($0)) 秒ごと" })
+        interval.addItems(withTitles: Settings.autosaveIntervals.map(Settings.intervalTitle))
         interval.target = self
         interval.action = #selector(changed)
         account.textColor = .secondaryLabelColor
@@ -756,7 +862,7 @@ final class BaseSettingsView: NSView {
         git.state = Settings.gitEnabled ? .on : .off
         projectAdd.selectItem(at: ProjectAddMode.allCases.firstIndex(of: Settings.projectAddMode) ?? 0)
         autosave.state = Settings.autosaveEnabled ? .on : .off
-        interval.selectItem(at: Settings.autosaveIntervals.firstIndex(of: Settings.autosaveInterval) ?? 1)
+        interval.selectItem(at: Settings.autosaveIntervals.firstIndex(of: Settings.autosaveInterval) ?? 2)
         interval.isEnabled = Settings.autosaveEnabled
         loadAccount()
     }

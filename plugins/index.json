@@ -16,5 +16,41 @@
     "symbol": "paintbrush.pointed",
     "summary": "主要なプログラミング言語のコードに色をつける",
     "fileExtensions": ["html", "htm", "xhtml", "vue", "svelte", "xml", "svg", "plist", "xsd", "xsl", "rss", "atom", "storyboard", "xib", "css", "scss", "less", "sass", "js", "mjs", "cjs", "jsx", "javascript", "ts", "tsx", "mts", "cts", "typescript", "json", "jsonc", "json5", "geojson", ".babelrc", ".prettierrc", ".eslintrc", "py", "pyw", "pyi", "python", "java", "kt", "kts", "kotlin", "swift", "c", "h", "cpp", "cc", "cxx", "hpp", "hh", "hxx", "ino", "c++", "m", "mm", "objc", "objective-c", "cs", "csharp", "go", "golang", "rs", "rust", "dart", "rb", "rake", "gemspec", "ruby", "gemfile", "rakefile", "podfile", "php", "lua", "sh", "bash", "zsh", "ksh", "shell", "console", ".bashrc", ".zshrc", ".profile", ".bash_profile", ".zprofile", "sql", "yaml", "yml", "toml", "ini", "cfg", "conf", "properties", "env", ".env", ".gitconfig", ".editorconfig", "md", "markdown", "mdown", "mkd", "dockerfile", "docker", "makefile", "mk", "make"]
+  },
+  {
+    "id": "runner",
+    "name": "Runner",
+    "version": "1.0",
+    "author": "FlareStackIDE",
+    "symbol": "play.circle",
+    "summary": "起動構成を作ってプログラムを実行",
+    "fileExtensions": []
+  },
+  {
+    "id": "code-scanner",
+    "name": "Code Scanner",
+    "version": "1.0",
+    "author": "FlareStackIDE",
+    "symbol": "exclamationmark.triangle",
+    "summary": "コードのエラーと警告をリアルタイムで表示",
+    "fileExtensions": []
+  },
+  {
+    "id": "lines",
+    "name": "lines",
+    "version": "1.0",
+    "author": "FlareStackIDE",
+    "symbol": "list.number",
+    "summary": "ファイル編集画面の左側に行数を表示",
+    "fileExtensions": []
+  },
+  {
+    "id": "light-editor",
+    "name": "Light Editer",
+    "version": "1.0",
+    "author": "FlareStackIDE",
+    "symbol": "doc.text",
+    "summary": "ファイルだけを開く軽量エディタ",
+    "fileExtensions": []
   }
 ]

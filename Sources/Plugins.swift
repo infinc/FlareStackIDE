@@ -15,6 +15,16 @@ struct PluginInfo: Codable {
     let summary: String
     let fileExtensions: [String]
     var files: [String]?
+    var settings: [PluginSetting]?
+}
+
+struct PluginSetting: Codable {
+    let key: String
+    let title: String
+    let type: String
+    let defaultValue: String?
+
+    enum CodingKeys: String, CodingKey { case key, title, type, defaultValue = "default" }
 }
 
 protocol EditorExtension: AnyObject {
@@ -288,6 +298,13 @@ enum PluginStore {
             .compactMap { ScriptExtension(info: $0, folder: folder($0.id), code: code) }
             .first
     }
+
+    static func setting(_ id: String, _ key: String) -> String? {
+        if let saved = Settings.pluginValue(id, key), !saved.isEmpty { return saved }
+        return installed(id)?.settings?.first { $0.key == key }?.defaultValue
+    }
+
+    static func color(_ id: String, _ key: String) -> NSColor? { setting(id, key).flatMap { NSColor(hex: $0) } }
 
     static func pageURL(_ id: String) -> URL { URL(string: "\(scheme)://\(id)")! }
 
@@ -700,6 +717,10 @@ final class PluginManagerView: NSView {
             update.keyEquivalent = ""
             views.append(update)
         }
+        let settings = PluginActionButton(title: "設定") { [weak self] in
+            Popups.show("plugin-settings-\(info.id)", title: "\(info.name) の設定", over: self?.window) { PluginSettingsView(id: info.id) }
+        }
+        views.append(settings)
         let remove = PluginActionButton(title: "削除") { [weak self] in
             do { try PluginStore.uninstall(info.id) } catch { if let window = self?.window { NSAlert(error: error).beginSheetModal(for: window) } }
         }
@@ -926,5 +947,83 @@ final class ScriptExtension: NSObject, EditorExtension, WKNavigationDelegate {
             }
         }
         if next != .preview { code.window?.makeFirstResponder((code as? NSScrollView)?.documentView) }
+    }
+}
+
+final class PluginSettingsView: NSView {
+    private let id: String
+    private var wells: [(PluginSetting, NSColorWell)] = []
+    private var fields: [(PluginSetting, NSTextField)] = []
+    private var checks: [(PluginSetting, NSButton)] = []
+
+    init(id: String) {
+        self.id = id
+        super.init(frame: NSRect(x: 0, y: 0, width: 380, height: 160))
+        let items = PluginStore.installed(id)?.settings ?? []
+        var rows: [[NSView]] = []
+        for setting in items {
+            let label = NSTextField(labelWithString: setting.title)
+            label.alignment = .right
+            switch setting.type {
+            case "color":
+                let well = NSColorWell()
+                well.target = self
+                well.action = #selector(changed)
+                let reset = PluginActionButton(title: "初期値") { [weak self] in
+                    Settings.setPluginValue(id, setting.key, nil)
+                    self?.load()
+                }
+                wells.append((setting, well))
+                rows.append([label, NSStackView(views: [well, reset])])
+            case "bool":
+                let check = NSButton(checkboxWithTitle: setting.title, target: self, action: #selector(changed))
+                checks.append((setting, check))
+                rows.append([NSGridCell.emptyContentView, check])
+            default:
+                let field = NSTextField()
+                field.target = self
+                field.action = #selector(changed)
+                field.widthAnchor.constraint(equalToConstant: 200).isActive = true
+                fields.append((setting, field))
+                rows.append([label, field])
+            }
+        }
+        let content: NSView
+        if rows.isEmpty {
+            let empty = NSTextField(wrappingLabelWithString: "このプラグインには設定項目がありません。")
+            empty.textColor = .secondaryLabelColor
+            content = empty
+        } else {
+            let grid = NSGridView(views: rows)
+            grid.rowSpacing = 12
+            grid.columnSpacing = 10
+            grid.column(at: 0).xPlacement = .trailing
+            grid.rowAlignment = .firstBaseline
+            content = grid
+        }
+        content.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(content)
+        NSLayoutConstraint.activate([
+            widthAnchor.constraint(greaterThanOrEqualToConstant: 340),
+            content.topAnchor.constraint(equalTo: topAnchor, constant: 20),
+            content.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 24),
+            content.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -24),
+            content.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -20),
+        ])
+        load()
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    private func load() {
+        for (setting, well) in wells { well.color = PluginStore.color(id, setting.key) ?? .textColor }
+        for (setting, field) in fields { field.stringValue = PluginStore.setting(id, setting.key) ?? "" }
+        for (setting, check) in checks { check.state = PluginStore.setting(id, setting.key) == "true" ? .on : .off }
+    }
+
+    @objc private func changed() {
+        for (setting, well) in wells { Settings.setPluginValue(id, setting.key, well.color.hexString) }
+        for (setting, field) in fields { Settings.setPluginValue(id, setting.key, field.stringValue) }
+        for (setting, check) in checks { Settings.setPluginValue(id, setting.key, check.state == .on ? "true" : "false") }
     }
 }
