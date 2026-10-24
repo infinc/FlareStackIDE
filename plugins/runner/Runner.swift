@@ -1,4 +1,5 @@
 import AppKit
+@testable import FlareStackIDE
 
 struct RunConfig: Codable, Equatable {
     var id = UUID().uuidString

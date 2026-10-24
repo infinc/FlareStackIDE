@@ -95,11 +95,12 @@ final class ProjectRow: NSView {
 final class WelcomeViewController: NSViewController {
     weak var delegate: WelcomeDelegate?
     private let list = NSStackView()
+    private let sidebar = NSVisualEffectView()
+    private let sidebarBack = NSView()
 
     override func loadView() {
         let root = NSView(frame: NSRect(x: 0, y: 0, width: 900, height: 600))
 
-        let sidebar = NSVisualEffectView()
         sidebar.material = .sidebar
         sidebar.blendingMode = .behindWindow
         sidebar.translatesAutoresizingMaskIntoConstraints = false
@@ -122,6 +123,8 @@ final class WelcomeViewController: NSViewController {
         scroll.documentView = clip
         scroll.translatesAutoresizingMaskIntoConstraints = false
 
+        sidebarBack.translatesAutoresizingMaskIntoConstraints = false
+        sidebar.addSubview(sidebarBack)
         sidebar.addSubview(header)
         sidebar.addSubview(scroll)
 
@@ -155,6 +158,10 @@ final class WelcomeViewController: NSViewController {
             sidebar.topAnchor.constraint(equalTo: root.topAnchor),
             sidebar.bottomAnchor.constraint(equalTo: root.bottomAnchor),
             sidebar.widthAnchor.constraint(equalToConstant: 260),
+            sidebarBack.leadingAnchor.constraint(equalTo: sidebar.leadingAnchor),
+            sidebarBack.trailingAnchor.constraint(equalTo: sidebar.trailingAnchor),
+            sidebarBack.topAnchor.constraint(equalTo: sidebar.topAnchor),
+            sidebarBack.bottomAnchor.constraint(equalTo: sidebar.bottomAnchor),
             separator.leadingAnchor.constraint(equalTo: sidebar.trailingAnchor),
             separator.topAnchor.constraint(equalTo: root.topAnchor),
             separator.bottomAnchor.constraint(equalTo: root.bottomAnchor),
@@ -179,6 +186,20 @@ final class WelcomeViewController: NSViewController {
 
         view = root
         reload()
+        applyColors()
+        NotificationCenter.default.addObserver(self, selector: #selector(applyColors), name: .settingsChanged, object: nil)
+    }
+
+    override func viewWillAppear() {
+        super.viewWillAppear()
+        applyColors()
+    }
+
+    @objc private func applyColors() {
+        view.window?.paint(.bigTab)
+        view.paint(.editor)
+        sidebarBack.paint(.feed)
+        sidebar.appearance = sidebarBack.appearance ?? view.appearance
     }
 
     func reload() {

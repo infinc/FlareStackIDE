@@ -1,5 +1,6 @@
 import AppKit
 import JavaScriptCore
+import UniformTypeIdentifiers
 import WebKit
 
 extension Notification.Name {
@@ -297,7 +298,7 @@ enum PluginStore {
         return installedIDs.lazy
             .compactMap(installed)
             .filter { $0.fileExtensions.contains(ext) }
-            .compactMap { ScriptExtension(info: $0, folder: folder($0.id), code: code) }
+            .compactMap { ScriptExtension(info: $0, folder: folder($0.id), file: url, code: code) }
             .first
     }
 
@@ -791,7 +792,7 @@ final class ScriptExtension: NSObject, EditorExtension, WKNavigationDelegate {
     private let barLine = NSBox()
     private let barTitle: NSTextField
     private let modeKey: String
-    private let folder: URL
+    private let base: URL
     private let context = JSContext()!
     private let renderer: JSValue
     private let split = NSSplitView()
@@ -806,12 +807,12 @@ final class ScriptExtension: NSObject, EditorExtension, WKNavigationDelegate {
 
     var body: NSView { split }
 
-    init?(info: PluginInfo, folder: URL, code: NSView) {
+    init?(info: PluginInfo, folder: URL, file: URL, code: NSView) {
         guard let script = try? String(contentsOf: folder.appendingPathComponent("main.js"), encoding: .utf8) else { return nil }
         context.evaluateScript(script, withSourceURL: folder.appendingPathComponent("main.js"))
         guard context.exception == nil, let render = context.objectForKeyedSubscript("render"), render.isObject else { return nil }
         renderer = render
-        self.folder = folder
+        base = LocalFileScheme.url(for: file.deletingLastPathComponent())
         self.code = code
         id = info.id
         barTitle = NSTextField(labelWithString: info.name)
@@ -820,6 +821,7 @@ final class ScriptExtension: NSObject, EditorExtension, WKNavigationDelegate {
 
         let config = WKWebViewConfiguration()
         config.defaultWebpagePreferences.allowsContentJavaScript = false
+        config.setURLSchemeHandler(LocalFileScheme(), forURLScheme: LocalFileScheme.scheme)
         preview = WKWebView(frame: .zero, configuration: config)
 
         let images = ["doc.plaintext", "rectangle.split.2x1", "eye"].map { PluginStore.symbol($0, size: 12) }
@@ -919,7 +921,7 @@ final class ScriptExtension: NSObject, EditorExtension, WKNavigationDelegate {
 
     private func show(_ html: String) {
         guard ready else {
-            if queued == nil { preview.loadHTMLString(html, baseURL: folder) }
+            if queued == nil { preview.loadHTMLString(html, baseURL: base) }
             queued = html
             return
         }
@@ -966,6 +968,31 @@ final class ScriptExtension: NSObject, EditorExtension, WKNavigationDelegate {
         }
         if next != .preview { code.window?.makeFirstResponder((code as? NSScrollView)?.documentView) }
     }
+}
+
+final class LocalFileScheme: NSObject, WKURLSchemeHandler {
+    static let scheme = "flarestack-file"
+
+    static func url(for directory: URL) -> URL {
+        var parts = URLComponents()
+        parts.scheme = scheme
+        parts.host = ""
+        parts.path = directory.standardizedFileURL.path + "/"
+        return parts.url ?? directory
+    }
+
+    func webView(_ webView: WKWebView, start task: WKURLSchemeTask) {
+        guard let url = task.request.url, let path = URLComponents(url: url, resolvingAgainstBaseURL: false)?.path,
+              let data = FileManager.default.contents(atPath: path) else {
+            return task.didFailWithError(URLError(.fileDoesNotExist))
+        }
+        let mime = UTType(filenameExtension: (path as NSString).pathExtension)?.preferredMIMEType ?? "application/octet-stream"
+        task.didReceive(URLResponse(url: url, mimeType: mime, expectedContentLength: data.count, textEncodingName: nil))
+        task.didReceive(data)
+        task.didFinish()
+    }
+
+    func webView(_ webView: WKWebView, stop task: WKURLSchemeTask) {}
 }
 
 final class PluginSettingsView: NSView {

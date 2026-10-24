@@ -229,6 +229,9 @@ enum Settings {
 
     static var paragraphStyle: NSParagraphStyle {
         let style = NSMutableParagraphStyle()
+        let height = ceil(NSLayoutManager().defaultLineHeight(for: font))
+        style.minimumLineHeight = height
+        style.maximumLineHeight = height
         style.lineSpacing = lineSpacing
         return style
     }
@@ -277,8 +280,19 @@ extension NSView {
     }
 }
 
+extension NSWindow {
+    func paint(_ surface: Surface) {
+        let color = Settings.surfaceColor(surface)
+        backgroundColor = color ?? .windowBackgroundColor
+        appearance = color.map { NSAppearance(named: $0.isDark ? .darkAqua : .aqua)! }
+    }
+}
+
 enum Popups {
     private static var windows: [String: NSWindow] = [:]
+    private static let observer = NotificationCenter.default.addObserver(forName: .settingsChanged, object: nil, queue: .main) { _ in
+        windows.values.forEach { $0.paint(.feed) }
+    }
 
     static func show(_ key: String, title: String, over parent: NSWindow?, make: () -> NSView) {
         let window = windows[key] ?? {
@@ -290,8 +304,10 @@ enum Popups {
             panel.hidesOnDeactivate = false
             panel.contentView = view
             windows[key] = panel
+            _ = observer
             return panel
         }()
+        window.paint(.feed)
         if !window.isVisible, let parent {
             let frame = parent.frame
             window.setFrameOrigin(NSPoint(x: frame.midX - window.frame.width / 2, y: frame.midY - window.frame.height / 2))
