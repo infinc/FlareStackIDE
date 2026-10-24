@@ -20,7 +20,9 @@ final class CodeScannerAddon: WindowAddon {
     init(editor: EditorWindowController, scanner: CodeScanner) {
         self.editor = editor
         self.scanner = scanner
-        editor.textView.textContainer?.replaceLayoutManager(DiagnosticLayoutManager())
+        let layout = DiagnosticLayoutManager()
+        layout.delegate = CodeView.lineHeights
+        editor.textView.textContainer?.replaceLayoutManager(layout)
         badge.isHidden = true
         badge.onClick = { [weak self] in self?.toggleProblems() }
         editor.addOverlay(badge)
@@ -112,7 +114,9 @@ final class CodeScannerAddon: WindowAddon {
         if let storage = editor.textView.textStorage {
             storage.removeAttribute(.toolTip, range: NSRange(location: 0, length: storage.length))
         }
-        editor.textView.textContainer?.replaceLayoutManager(NSLayoutManager())
+        let layout = NSLayoutManager()
+        layout.delegate = CodeView.lineHeights
+        editor.textView.textContainer?.replaceLayoutManager(layout)
         editor.recolor()
     }
 }

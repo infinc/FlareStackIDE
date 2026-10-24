@@ -227,9 +227,21 @@ enum Settings {
         return bg.isDark ? NSColor(white: 0.92, alpha: 1) : NSColor(white: 0.1, alpha: 1)
     }
 
+    private static var lineHeightCache: (font: NSFont, height: CGFloat)?
+
+    static var lineHeight: CGFloat {
+        let font = font
+        if let cache = lineHeightCache, cache.font == font { return cache.height }
+        let layout = NSLayoutManager()
+        let japanese = NSFont(name: "HiraginoSans-W3", size: font.pointSize).map(layout.defaultLineHeight) ?? 0
+        let height = ceil(max(layout.defaultLineHeight(for: font), japanese))
+        lineHeightCache = (font, height)
+        return height
+    }
+
     static var paragraphStyle: NSParagraphStyle {
         let style = NSMutableParagraphStyle()
-        let height = ceil(NSLayoutManager().defaultLineHeight(for: font))
+        let height = lineHeight
         style.minimumLineHeight = height
         style.maximumLineHeight = height
         style.lineSpacing = lineSpacing
