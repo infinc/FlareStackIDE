@@ -8,7 +8,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WelcomeDelegate {
     private var settingsWindow: NSWindow?
     private var cloneSheet: CloneWindowController?
     private var updateButton: NSButton?
-    private var lightEditors: [LightEditorWindowController] = []
+    private var lightEditors: [FileWindow] = []
     private var pendingURLs: [URL] = []
     private var launched = false
 
@@ -57,11 +57,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WelcomeDelegate {
     }
 
     private func openLight(_ url: URL) {
-        if let existing = lightEditors.first(where: { $0.url.standardizedFileURL == url.standardizedFileURL }) {
+        if let existing = lightEditors.first(where: { $0.documentURL.standardizedFileURL == url.standardizedFileURL }) {
             existing.window?.makeKeyAndOrderFront(nil)
             return
         }
-        let editor = LightEditorWindowController(url: url)
+        guard let editor = NativePlugins.fileWindow(for: url) else { return }
         editor.onClose = { [weak self, weak editor] in
             guard let self else { return }
             self.lightEditors.removeAll { $0 === editor }
@@ -159,7 +159,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WelcomeDelegate {
         alert.addButton(withTitle: "保存する")
         alert.addButton(withTitle: "保存しない")
         var isDir: ObjCBool = false
-        let light = allowLight && PluginStore.isInstalled(LightEditorWindowController.pluginID)
+        let light = allowLight && NativePlugins.opensFiles
             && FileManager.default.fileExists(atPath: project.path, isDirectory: &isDir) && !isDir.boolValue
         if light { alert.addButton(withTitle: "Light Editerで開く") }
         let response = alert.runModal()
@@ -237,7 +237,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WelcomeDelegate {
             guard let self, let editor else { return }
             ProjectStore.touch(target)
             self.welcome.reload()
-            let frame = editor.window?.frame
+            let frame = editor.window?.styleMask.contains(.fullScreen) == true ? nil : editor.window?.frame
             let opened = self.openEditor(target)
             guard !newWindow, opened !== editor else { return }
             if let frame { opened.window?.setFrame(frame, display: true) }
@@ -287,7 +287,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WelcomeDelegate {
             window.contentView = view
             window.center()
             settingsWindow = window
+            NotificationCenter.default.addObserver(forName: .settingsChanged, object: nil, queue: .main) { [weak window] _ in
+                window?.paint(.feed)
+            }
         }
+        settingsWindow?.paint(.feed)
         (settingsWindow?.contentView as? BaseSettingsView)?.load()
         settingsWindow?.makeKeyAndOrderFront(nil)
     }

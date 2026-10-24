@@ -7,7 +7,7 @@ VERSION="$(tr -d '[:space:]' < "$ROOT/VERSION")"
 VERSION="${VERSION#v}"
 APP="$ROOT/build/$NAME.app"
 ICONSET="$ROOT/build/AppIcon.iconset"
-STEPS=6
+STEPS=7
 STEP=0
 
 progress() {
@@ -27,7 +27,21 @@ rm -rf "$APP" "$ICONSET"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" "$ICONSET"
 
 progress "コンパイル中 (swiftc)"
-swiftc -target arm64-apple-macos13 -O "$ROOT"/Sources/*.swift -o "$APP/Contents/MacOS/$NAME"
+MODULE="$ROOT/build/module"
+rm -rf "$MODULE"
+mkdir -p "$MODULE"
+swiftc -target arm64-apple-macos13 -O -enable-testing -module-name "$NAME" -emit-executable \
+    -emit-module-path "$MODULE/$NAME.swiftmodule" "$ROOT"/Sources/*.swift \
+    -o "$APP/Contents/MacOS/$NAME" -Xlinker -export_dynamic
+
+progress "プラグインのコンパイル (plugins/*/plugin.dylib)"
+for dir in "$ROOT"/plugins/*/; do
+    sources=("$dir"*.swift)
+    [ -e "${sources[0]}" ] || continue
+    id="$(basename "$dir")"
+    swiftc -target arm64-apple-macos13 -O -emit-library -module-name "FSPlugin_${id//-/_}" -I "$MODULE" \
+        "${sources[@]}" -o "$dir/plugin.dylib" -Xlinker -undefined -Xlinker dynamic_lookup
+done
 
 progress "アイコン生成"
 for s in 16 32 128 256 512; do

@@ -1,12 +1,12 @@
 {
   "id": "lines",
-  "name": "lines",
-  "version": "1.0",
+  "name": "Lines",
+  "version": "1.1",
   "author": "FlareStackIDE",
   "symbol": "list.number",
   "summary": "ファイル編集画面の左側に行数を表示",
   "fileExtensions": [],
-  "files": ["README.md"],
+  "files": ["plugin.dylib", "README.md"],
   "settings": [
     { "key": "textColor", "title": "行数の文字色", "type": "color" },
     { "key": "background", "title": "背景色", "type": "color" }

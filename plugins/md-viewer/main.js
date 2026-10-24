@@ -2,16 +2,36 @@ function escape(text) {
   return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
+const allowedTags = ["img", "br", "a", "p", "div", "center", "span", "b", "i", "u", "strong", "em", "sub", "sup", "small", "picture", "source", "details", "summary", "kbd"];
+const allowedAttrs = ["src", "srcset", "alt", "title", "width", "height", "align", "href", "media", "style"];
+
+function attrs(source) {
+  const out = [];
+  source.replace(/([a-zA-Z-]+)\s*=\s*("([^"]*)"|'([^']*)'|([^\s"'>]+))/g, (_, name, __, d, s, b) => {
+    const key = name.toLowerCase(), value = d ?? s ?? b ?? "";
+    if (!allowedAttrs.includes(key) || /^\s*javascript:/i.test(value)) return "";
+    out.push(` ${key}="${value.replace(/"/g, "&quot;")}"`);
+    return "";
+  });
+  return out.join("");
+}
+
 function inline(text) {
-  const codes = [];
-  let s = escape(text).replace(/`([^`]+)`/g, (_, c) => { codes.push(c); return "\u0000" + (codes.length - 1) + "\u0000"; });
+  const keep = [];
+  const hold = (html) => { keep.push(html); return "\u0000" + (keep.length - 1) + "\u0000"; };
+  let s = text.replace(/`([^`]+)`/g, (_, c) => hold(`<code>${escape(c)}</code>`));
+  s = s.replace(/<(\/?)([a-zA-Z]+)([^>]*?)\/?>/g, (all, close, tag, rest) =>
+    allowedTags.includes(tag.toLowerCase()) ? hold(close ? `</${tag.toLowerCase()}>` : `<${tag.toLowerCase()}${attrs(rest)}>`) : all);
+  s = s.replace(/!\[([^\]]*)\]\(\s*<?([^)\s>]+)>?(?:\s+"([^"]*)")?\s*\)/g, (_, alt, url, title) =>
+    /^\s*javascript:/i.test(url) ? alt : hold(`<img src="${url.replace(/"/g, "%22")}" alt="${escape(alt)}"${title ? ` title="${escape(title)}"` : ""}>`));
+  s = escape(s);
   s = s.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (_, label, url) =>
     /^(https?:|mailto:|#)/.test(url) ? `<a href="${url}">${label}</a>` : label);
   s = s.replace(/(\*\*|__)(.+?)\1/g, "<strong>$2</strong>")
        .replace(/\*(.+?)\*/g, "<em>$1</em>")
        .replace(/(^|\W)_(.+?)_(?=\W|$)/g, "$1<em>$2</em>")
        .replace(/~~(.+?)~~/g, "<del>$1</del>");
-  return s.replace(/\u0000(\d+)\u0000/g, (_, i) => `<code>${codes[i]}</code>`);
+  return s.replace(/\u0000(\d+)\u0000/g, (_, i) => keep[i]);
 }
 
 function cells(line) {
@@ -117,6 +137,7 @@ function render(text, settings) {
     th, td { border: 1px solid ${settings.dark ? "rgba(255,255,255,0.22)" : "rgba(0,0,0,0.18)"}; padding: 5px 12px; }
     th { background: ${subtle}; font-weight: 600; }
     tbody tr:nth-child(even) { background: ${settings.dark ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.025)"}; }
+    img { max-width: 100%; height: auto; vertical-align: middle; }
     a { color: ${settings.dark ? "#6cb6ff" : "#0a62c9"}; }
   `;
   return `<head><meta charset="utf-8"><style>${css}</style></head><body>${body(text)}</body>`;

@@ -1,11 +1,13 @@
 import AppKit
+@testable import FlareStackIDE
 
-final class LightEditorWindowController: NSWindowController, NSWindowDelegate, NSTextViewDelegate {
+final class LightEditorWindowController: NSWindowController, NSWindowDelegate, NSTextViewDelegate, FileWindow, CodeEditing {
     static let pluginID = "light-editor"
     let url: URL
     var onClose: (() -> Void)?
     private let scroll = NSTextView.scrollableTextView()
-    private var textView: NSTextView { scroll.documentView as! NSTextView }
+    var textView: NSTextView { scroll.documentView as! NSTextView }
+    private lazy var addons = TextAddons(code: self, only: ["lines"])
     private let status = NSButton()
     private var dirty = false
     private var timer: Timer?
@@ -46,7 +48,8 @@ final class LightEditorWindowController: NSWindowController, NSWindowDelegate, N
             textView.string = "このファイルは表示できません。"
             textView.isEditable = false
         }
-        scroll.setLineNumbers(true, textView: textView)
+        addons.sync()
+        NotificationCenter.default.addObserver(self, selector: #selector(pluginsChanged), name: .pluginsChanged, object: nil)
 
         status.isBordered = false
         status.target = self
@@ -97,7 +100,10 @@ final class LightEditorWindowController: NSWindowController, NSWindowDelegate, N
         updateStatus()
     }
 
+    @objc private func pluginsChanged() { addons.sync() }
+
     func textDidChange(_ notification: Notification) {
+        addons.each { $0.textChanged() }
         dirty = true
         if Settings.autosaveImmediate { save() } else { updateStatus() }
     }
@@ -127,7 +133,18 @@ final class LightEditorWindowController: NSWindowController, NSWindowDelegate, N
     }
 
     func windowWillClose(_ notification: Notification) {
+        addons.detachAll()
         timer?.invalidate()
         onClose?()
     }
+}
+
+extension LightEditorWindowController {
+    var documentURL: URL { url }
+    var scrollView: NSScrollView { scroll }
+    var fileURL: URL? { url }
+    var tabStrip: TabStrip? { nil }
+    var projectDirectory: URL? { nil }
+    var openTexts: [(url: URL, text: String)] { [] }
+    func closeAllTabs() {}
 }

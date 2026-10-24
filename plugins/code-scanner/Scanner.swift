@@ -1,5 +1,6 @@
 import AppKit
 import JavaScriptCore
+@testable import FlareStackIDE
 
 struct Diagnostic {
     enum Severity { case error, warning }

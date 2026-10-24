@@ -40,6 +40,32 @@ enum CodeView {
         }
     }
 
+    static func replace(_ textView: NSTextView, with text: String) {
+        guard let storage = textView.textStorage else { return }
+        let old = storage.string as NSString, new = text as NSString
+        var head = 0
+        let limit = min(old.length, new.length)
+        while head < limit, old.character(at: head) == new.character(at: head) { head += 1 }
+        var tail = 0
+        while tail < limit - head, old.character(at: old.length - 1 - tail) == new.character(at: new.length - 1 - tail) { tail += 1 }
+        let range = NSRange(location: head, length: old.length - head - tail)
+        let inserted = new.substring(with: NSRange(location: head, length: new.length - head - tail))
+        let selection = textView.selectedRange()
+        let delta = (inserted as NSString).length - range.length
+        let shift = { (i: Int) in i >= NSMaxRange(range) ? i + delta : min(i, head + (inserted as NSString).length) }
+        storage.beginEditing()
+        storage.replaceCharacters(in: range, with: NSAttributedString(string: inserted, attributes: textView.typingAttributes))
+        storage.endEditing()
+        let start = shift(selection.location), end = shift(NSMaxRange(selection))
+        textView.setSelectedRange(NSRange(location: start, length: max(end - start, 0)))
+        textView.undoManager?.removeAllActions()
+    }
+
+    static func diskText(_ url: URL) -> String? {
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
     static func style(_ textView: NSTextView) {
         guard let storage = textView.textStorage else { return }
         let attrs: [NSAttributedString.Key: Any] = [.font: Settings.font, .foregroundColor: Settings.foreground,
@@ -49,40 +75,20 @@ enum CodeView {
     }
 }
 
-enum FileTabCleaner {
-    static let pluginID = "file-tab-cleaner"
-
-    static func button(target: AnyObject, action: Selector) -> NSButton {
-        let button = NSButton(image: NSImage(systemSymbolName: "xmark.circle", accessibilityDescription: "タブをすべて閉じる")!
-            .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 12, weight: .medium))!, target: target, action: action)
-        button.isBordered = false
-        button.toolTip = "タブをすべて閉じる"
-        button.translatesAutoresizingMaskIntoConstraints = false
-        button.widthAnchor.constraint(equalToConstant: 22).isActive = true
-        return button
-    }
-
-    static func attach(_ button: NSButton, to strip: TabStrip) {
-        let on = PluginStore.isInstalled(pluginID)
-        if on, button.superview !== strip.stack { strip.stack.insertArrangedSubview(button, at: 0) }
-        if !on { button.removeFromSuperview() }
-    }
-}
-
 final class SplitPane: NSView, NSTextViewDelegate {
     var onEmpty: (() -> Void)?
     var onChange: (() -> Void)?
     var onMoveLeft: ((URL) -> Void)?
+    var baseDirectory: (() -> URL?)?
     private let scroll = NSTextView.scrollableTextView()
-    private var textView: NSTextView { scroll.documentView as! NSTextView }
+    var textView: NSTextView { scroll.documentView as! NSTextView }
     private var strip: TabStrip!
-    private var cleaner: NSButton!
+    private lazy var addons = TextAddons(code: self)
     private var tabs: [URL: TabItemView] = [:]
     private(set) var buffers: [URL: Buffer] = [:]
     private var current: Buffer?
     private var highlighter: Highlighter?
     private var recolorWork: DispatchWorkItem?
-    private var interpolateOn = false
 
     init() {
         super.init(frame: .zero)
@@ -90,12 +96,12 @@ final class SplitPane: NSView, NSTextViewDelegate {
         strip = TabStrip(trailing: close)
         close.target = self
         close.action = #selector(closeAll)
-        cleaner = FileTabCleaner.button(target: self, action: #selector(closeAll))
         CodeView.configure(textView, scroll: scroll)
         textView.delegate = self
         scroll.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(strip)
+        scroll.clipsToBounds = true
         addSubview(scroll)
+        addSubview(strip)
         NSLayoutConstraint.activate([
             strip.topAnchor.constraint(equalTo: topAnchor),
             strip.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -141,8 +147,8 @@ final class SplitPane: NSView, NSTextViewDelegate {
         CodeView.style(textView)
         textView.isEditable = buffer.editable
         highlighter = buffer.editable ? PluginStore.makeHighlighter(for: url) : nil
-        (scroll.verticalRulerView as? LineNumberRuler)?.textChanged()
         recolor()
+        addons.each { $0.fileOpened() }
         textView.undoManager?.removeAllActions()
         textView.setSelectedRange(NSRange(location: 0, length: 0))
         textView.scrollToBeginningOfDocument(nil)
@@ -248,6 +254,22 @@ final class SplitPane: NSView, NSTextViewDelegate {
         current.text = textView.string
     }
 
+    func reloadExternal(_ changed: (URL) -> Bool) {
+        for (url, buffer) in buffers where buffer.editable && !buffer.dirty && changed(url) {
+            guard let text = CodeView.diskText(url) else { continue }
+            if buffer === current {
+                guard text != textView.string, !textView.hasMarkedText() else { continue }
+                addons.each { $0.dismiss() }
+                CodeView.replace(textView, with: text)
+                buffer.text = text
+                addons.each { $0.textChanged() }
+                recolor()
+            } else {
+                buffer.text = text
+            }
+        }
+    }
+
     @discardableResult
     func saveAll() -> Error? {
         storeCurrent()
@@ -269,9 +291,7 @@ final class SplitPane: NSView, NSTextViewDelegate {
     }
 
     func applyPlugins() {
-        FileTabCleaner.attach(cleaner, to: strip)
-        scroll.setLineNumbers(PluginStore.isInstalled(LineNumberRuler.pluginID), textView: textView)
-        interpolateOn = PluginStore.isInstalled(CodeInterpolator.pluginID)
+        addons.sync()
         if let current {
             highlighter = current.editable ? PluginStore.makeHighlighter(for: current.url) : nil
             recolor()
@@ -290,24 +310,19 @@ final class SplitPane: NSView, NSTextViewDelegate {
         }
     }
 
+    func detachAddons() { addons.detachAll() }
+
     func textView(_ textView: NSTextView, shouldChangeTextIn range: NSRange, replacementString text: String?) -> Bool {
-        guard interpolateOn, let text else { return true }
-        return CodeInterpolator.shouldChange(textView, range: range, text: text)
+        guard let text else { return true }
+        return addons.shouldChange(range, text: text)
     }
 
-    func textView(_ textView: NSTextView, doCommandBy selector: Selector) -> Bool {
-        guard interpolateOn, let current else { return false }
-        switch selector {
-        case #selector(NSResponder.insertNewline(_:)):
-            return CodeInterpolator.newline(textView, ext: current.url.pathExtension.lowercased())
-        case #selector(NSResponder.deleteBackward(_:)):
-            return CodeInterpolator.deleteBackward(textView)
-        default:
-            return false
-        }
-    }
+    func textView(_ textView: NSTextView, doCommandBy selector: Selector) -> Bool { addons.doCommand(selector) }
+
+    func textViewDidChangeSelection(_ notification: Notification) { addons.each { $0.selectionChanged() } }
 
     func textDidChange(_ notification: Notification) {
+        addons.each { $0.textChanged() }
         if highlighter != nil {
             recolorWork?.cancel()
             let work = DispatchWorkItem { [weak self] in self?.recolor() }
@@ -323,4 +338,18 @@ final class SplitPane: NSView, NSTextViewDelegate {
         }
         onChange?()
     }
+}
+
+extension SplitPane: CodeEditing {
+    var scrollView: NSScrollView { scroll }
+    var fileURL: URL? { current?.editable == true ? current?.url : nil }
+    var tabStrip: TabStrip? { strip }
+    var projectDirectory: URL? { baseDirectory?() }
+
+    var openTexts: [(url: URL, text: String)] {
+        storeCurrent()
+        return buffers.values.filter { $0.editable }.map { ($0.url, $0.text) }
+    }
+
+    func closeAllTabs() { closeAll() }
 }

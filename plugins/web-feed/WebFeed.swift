@@ -1,5 +1,6 @@
 import AppKit
 import WebKit
+@testable import FlareStackIDE
 
 private final class WebTab {
     let tab: TabItemView

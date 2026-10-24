@@ -1,4 +1,5 @@
 import AppKit
+@testable import FlareStackIDE
 
 final class LineNumberRuler: NSRulerView {
     static let pluginID = "lines"
@@ -10,6 +11,7 @@ final class LineNumberRuler: NSRulerView {
         self.textView = textView
         super.init(scrollView: scroll, orientation: .verticalRuler)
         clientView = textView
+        clipsToBounds = true
         ruleThickness = 40
         NotificationCenter.default.addObserver(self, selector: #selector(textChanged), name: NSText.didChangeNotification, object: textView)
         NotificationCenter.default.addObserver(self, selector: #selector(redraw), name: .settingsChanged, object: nil)
@@ -65,7 +67,7 @@ final class LineNumberRuler: NSRulerView {
         NSRect(x: bounds.maxX - 1, y: bounds.minY, width: 1, height: bounds.height).fill()
 
         let starts = lineStarts()
-        let digits = max(String(starts.count).count, 2)
+        let digits = max(String(starts.count).count, 4)
         let attrs: [NSAttributedString.Key: Any] = [.font: numberFont, .foregroundColor: Self.textColor]
         let width = ceil(("8" as NSString).size(withAttributes: attrs).width * CGFloat(digits)) + 16
         if abs(ruleThickness - width) > 0.5 {
@@ -83,23 +85,22 @@ final class LineNumberRuler: NSRulerView {
             let mid = (lo + hi + 1) / 2
             if starts[mid] <= chars.location { lo = mid } else { hi = mid - 1 }
         }
+        let lineHeight = Settings.paragraphStyle.maximumLineHeight
         var line = lo
         while line < starts.count, starts[line] <= NSMaxRange(chars) {
             let start = starts[line]
-            let rectY: CGFloat
+            let fragment: NSRect
             if start < length {
-                let glyph = layout.glyphIndexForCharacter(at: start)
-                rectY = layout.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil).minY
+                fragment = layout.lineFragmentRect(forGlyphAt: layout.glyphIndexForCharacter(at: start), effectiveRange: nil)
             } else if layout.extraLineFragmentTextContainer != nil {
-                rectY = layout.extraLineFragmentRect.minY
+                fragment = layout.extraLineFragmentRect
             } else {
                 break
             }
             let label = "\(line + 1)" as NSString
             let size = label.size(withAttributes: attrs)
-            let font = Settings.font
-            let baselineShift = (ceil(font.ascender - font.descender) - size.height) / 2
-            label.draw(at: NSPoint(x: ruleThickness - size.width - 8, y: offset + rectY + max(baselineShift, 0)), withAttributes: attrs)
+            let y = offset + fragment.minY + (lineHeight - size.height) / 2
+            label.draw(at: NSPoint(x: ruleThickness - size.width - 8, y: y), withAttributes: attrs)
             line += 1
         }
     }
@@ -110,6 +111,7 @@ extension NSScrollView {
         if on {
             if !(verticalRulerView is LineNumberRuler) { verticalRulerView = LineNumberRuler(textView: textView, scroll: self) }
             textView.clipsToBounds = true
+            clipsToBounds = true
             hasVerticalRuler = true
             rulersVisible = true
             verticalRulerView?.needsDisplay = true
