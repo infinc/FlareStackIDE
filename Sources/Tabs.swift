@@ -342,6 +342,7 @@ final class FeedView: NSView {
         let stack = NSStackView(views: views)
         stack.orientation = .horizontal
         stack.spacing = 2
+        stack.setHuggingPriority(.required, for: .horizontal)
         return stack
     }
 

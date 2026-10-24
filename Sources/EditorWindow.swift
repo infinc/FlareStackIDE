@@ -159,6 +159,9 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
     private var buffers: [URL: Buffer] = [:]
     private var current: Buffer?
     private let cloudButton = NSButton()
+    private let topButtons = NSStackView()
+    private var shiftMonitor: Any?
+    private var lastShift: TimeInterval?
     private var autosaveTimer: Timer?
     private var cloning: GitClone?
     private let projectButton = NSButton()
@@ -191,6 +194,10 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
         applyPlugins()
         if !root.isDirectory { open(root.url) }
         applySettings()
+        shiftMonitor = NSEvent.addLocalMonitorForEvents(matching: [.flagsChanged, .keyDown]) { [weak self] event in
+            self?.watchShift(event)
+            return event
+        }
         watcher = FileWatcher(path: baseDirectory.path) { [weak self] structural, modified in
             guard let self else { return }
             if !modified.isEmpty { self.reloadExternal(modified) }
@@ -266,6 +273,10 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
         gearButton.action = #selector(gearClicked)
         gearButton.translatesAutoresizingMaskIntoConstraints = false
         topBar.addSubview(gearButton)
+        topButtons.orientation = .horizontal
+        topButtons.spacing = 8
+        topButtons.translatesAutoresizingMaskIntoConstraints = false
+        topBar.addSubview(topButtons)
         let topLine = NSBox()
         topLine.boxType = .separator
         topLine.translatesAutoresizingMaskIntoConstraints = false
@@ -377,7 +388,9 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
             back.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
             titleStack.leadingAnchor.constraint(equalTo: back.trailingAnchor, constant: 6),
             titleStack.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
-            titleStack.trailingAnchor.constraint(lessThanOrEqualTo: cloudButton.leadingAnchor, constant: -12),
+            titleStack.trailingAnchor.constraint(lessThanOrEqualTo: topButtons.leadingAnchor, constant: -12),
+            topButtons.trailingAnchor.constraint(equalTo: cloudButton.leadingAnchor, constant: -8),
+            topButtons.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
             cloudButton.trailingAnchor.constraint(equalTo: searchButton.leadingAnchor, constant: -8),
             searchButton.trailingAnchor.constraint(equalTo: gearButton.leadingAnchor, constant: -8),
             searchButton.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
@@ -510,6 +523,24 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
     }
 
     @objc private func gearClicked() { settingsMenu.popUp(from: gearButton) }
+
+    private func watchShift(_ event: NSEvent) {
+        guard event.type == .flagsChanged, event.window === window, window?.isKeyWindow == true else {
+            lastShift = nil
+            return
+        }
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        guard flags == .shift else {
+            if !flags.isEmpty { lastShift = nil }
+            return
+        }
+        if let last = lastShift, event.timestamp - last < 0.4 {
+            lastShift = nil
+            searchClicked()
+        } else {
+            lastShift = event.timestamp
+        }
+    }
 
     @objc private func searchClicked() {
         guard let window else { return }
@@ -777,12 +808,23 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
             barHeight.constant = 0
             bar.translatesAutoresizingMaskIntoConstraints = false
             bodyHost.addSubview(bar)
+            let corner = ext.corner
+            let ruler = editorScroll.rulersVisible ? editorScroll.verticalRulerView?.ruleThickness ?? 0 : 0
             floatConstraints = [
-                bar.bottomAnchor.constraint(equalTo: bodyHost.bottomAnchor, constant: -14),
-                bar.trailingAnchor.constraint(equalTo: bodyHost.trailingAnchor, constant: -18),
-                bar.widthAnchor.constraint(equalToConstant: 100),
                 bar.heightAnchor.constraint(equalToConstant: 28),
+                corner.right ? bar.trailingAnchor.constraint(equalTo: bodyHost.trailingAnchor, constant: -18)
+                    : bar.leadingAnchor.constraint(equalTo: bodyHost.leadingAnchor, constant: 18 + ruler),
             ]
+            if corner.top {
+                let top = bar.topAnchor.constraint(equalTo: bodyHost.topAnchor, constant: 14)
+                top.priority = .defaultHigh
+                floatConstraints.append(top)
+                if corner.right {
+                    floatConstraints += overlays.map { bar.topAnchor.constraint(greaterThanOrEqualTo: $0.bottomAnchor, constant: 8) }
+                }
+            } else {
+                floatConstraints.append(bar.bottomAnchor.constraint(equalTo: bodyHost.bottomAnchor, constant: -14))
+            }
             NSLayoutConstraint.activate(floatConstraints)
         } else {
             show(bar, in: barHost)
@@ -879,7 +921,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
         if let ext {
             let wasFloating = ext.floating
             ext.applySettings()
-            if wasFloating != ext.floating { layoutExtensionBar() }
+            if wasFloating || ext.floating { layoutExtensionBar() }
         }
 
         autosaveTimer?.invalidate()
@@ -1132,6 +1174,8 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
     }
 
     func windowWillClose(_ notification: Notification) {
+        if let shiftMonitor { NSEvent.removeMonitor(shiftMonitor) }
+        shiftMonitor = nil
         textAddons.detachAll()
         windowAddons.detachAll()
         splitPane?.detachAddons()
@@ -1573,14 +1617,35 @@ extension EditorWindowController: CodeEditing {
         textView.showFindIndicator(for: range)
     }
 
+    private static let overlayID = NSUserInterfaceItemIdentifier("editor.overlay")
+
+    private var overlays: [NSView] { bodyHost.superview?.subviews.filter { $0.identifier == Self.overlayID } ?? [] }
+
     func addOverlay(_ view: NSView) {
         view.translatesAutoresizingMaskIntoConstraints = false
+        view.identifier = Self.overlayID
         bodyHost.superview?.addSubview(view)
         NSLayoutConstraint.activate([
             view.topAnchor.constraint(equalTo: bodyHost.topAnchor, constant: 4),
             view.trailingAnchor.constraint(equalTo: bodyHost.trailingAnchor, constant: -4),
         ])
+        if ext?.floating == true { layoutExtensionBar() }
     }
+
+    func addTopButton(_ view: NSView) {
+        guard view.superview == nil else { return }
+        topButtons.addArrangedSubview(view)
+    }
+
+    func pressStripButton(_ id: String) -> Bool {
+        func find(_ view: NSView) -> ToolStripButton? { (view as? ToolStripButton) ?? view.subviews.lazy.compactMap(find).first }
+        guard let view = [upperColumn, lowerColumn].compactMap({ $0 }).flatMap(\.arrangedSubviews)
+            .first(where: { $0.identifier?.rawValue == id }), let button = find(view) else { return false }
+        button.performClick(nil)
+        return true
+    }
+
+    func goBack() { backClicked() }
 
     func addFeed(_ feed: NSView, button: ToolStripButton?) {
         guard !pluginFeeds.contains(where: { $0.feed === feed }) else { return }

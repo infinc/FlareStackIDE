@@ -77,6 +77,13 @@ enum CodeView {
         textView.undoManager?.removeAllActions()
     }
 
+    static func replaceLayoutManager(_ textView: NSTextView, with layout: NSLayoutManager) {
+        let rulers = textView.enclosingScrollView?.rulersVisible
+        layout.delegate = lineHeights
+        textView.textContainer?.replaceLayoutManager(layout)
+        if let rulers { textView.enclosingScrollView?.rulersVisible = rulers }
+    }
+
     static func diskText(_ url: URL) -> String? {
         guard let data = try? Data(contentsOf: url) else { return nil }
         return String(data: data, encoding: .utf8)

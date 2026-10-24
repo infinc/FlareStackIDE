@@ -25,14 +25,24 @@ struct PluginSetting: Codable {
     let type: String
     let defaultValue: String?
     var options: [String]?
+    var min: Double?
+    var max: Double?
 
-    enum CodingKeys: String, CodingKey { case key, title, type, options, defaultValue = "default" }
+    enum CodingKeys: String, CodingKey { case key, title, type, options, min, max, defaultValue = "default" }
+}
+
+enum FloatCorner: String {
+    case topRight = "右上", bottomRight = "右下", topLeft = "左上", bottomLeft = "左下"
+
+    var top: Bool { self == .topRight || self == .topLeft }
+    var right: Bool { self == .topRight || self == .bottomRight }
 }
 
 protocol EditorExtension: AnyObject {
     var bar: NSView { get }
     var body: NSView { get }
     var floating: Bool { get }
+    var corner: FloatCorner { get }
     func update(text: String)
     func applySettings()
 }
@@ -788,6 +798,12 @@ final class ScriptExtension: NSObject, EditorExtension, WKNavigationDelegate {
 
     let bar = NSView()
     private(set) var floating = false
+    private(set) var corner = FloatCorner.bottomRight
+    private var minimize = false
+    private var hovering = false
+    private let images: [NSImage]
+    private let single: NSSegmentedControl
+    private var barWidth: NSLayoutConstraint!
     private let id: String
     private let barLine = NSBox()
     private let barTitle: NSTextField
@@ -824,9 +840,16 @@ final class ScriptExtension: NSObject, EditorExtension, WKNavigationDelegate {
         config.setURLSchemeHandler(LocalFileScheme(), forURLScheme: LocalFileScheme.scheme)
         preview = WKWebView(frame: .zero, configuration: config)
 
-        let images = ["doc.plaintext", "rectangle.split.2x1", "eye"].map { PluginStore.symbol($0, size: 12) }
+        images = ["doc.plaintext", "rectangle.split.2x1", "eye"].map { PluginStore.symbol($0, size: 12) }
         modes = NSSegmentedControl(images: images, trackingMode: .selectOne, target: nil, action: nil)
+        single = NSSegmentedControl(images: [images[0]], trackingMode: .selectOne, target: nil, action: nil)
         super.init()
+        single.controlSize = .small
+        single.setWidth(28, forSegment: 0)
+        single.setImageScaling(.scaleProportionallyDown, forSegment: 0)
+        single.selectedSegment = 0
+        single.isHidden = true
+        single.translatesAutoresizingMaskIntoConstraints = false
         modes.controlSize = .small
         for (i, label) in ["コード", "コード＋プレビュー", "プレビュー"].enumerated() {
             modes.setToolTip(label, forSegment: i)
@@ -844,8 +867,12 @@ final class ScriptExtension: NSObject, EditorExtension, WKNavigationDelegate {
         let line = barLine
         line.boxType = .separator
         line.translatesAutoresizingMaskIntoConstraints = false
-        [modes, title, line].forEach(bar.addSubview)
+        [modes, single, title, line].forEach(bar.addSubview)
+        barWidth = bar.widthAnchor.constraint(equalToConstant: 100)
+        bar.addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeInActiveApp, .inVisibleRect], owner: self))
         NSLayoutConstraint.activate([
+            single.centerXAnchor.constraint(equalTo: bar.centerXAnchor),
+            single.centerYAnchor.constraint(equalTo: modes.centerYAnchor),
             modes.leadingAnchor.constraint(equalTo: bar.leadingAnchor, constant: 8),
             modes.centerYAnchor.constraint(equalTo: bar.centerYAnchor, constant: -1),
             title.trailingAnchor.constraint(equalTo: bar.trailingAnchor, constant: -10),
@@ -878,6 +905,10 @@ final class ScriptExtension: NSObject, EditorExtension, WKNavigationDelegate {
     func applySettings() {
         preview.underPageBackgroundColor = Settings.background
         floating = PluginStore.setting(id, "barTransparent") == "true"
+        minimize = PluginStore.setting(id, "barMinimize") == "true"
+        corner = PluginStore.setting(id, "barPosition").flatMap(FloatCorner.init) ?? .bottomRight
+        barWidth.isActive = floating
+        updateCollapsed()
         bar.wantsLayer = true
         bar.layer?.cornerRadius = floating ? 7 : 0
         bar.layer?.backgroundColor = floating ? nil : PluginStore.color(id, "barColor")?.cgColor
@@ -885,6 +916,24 @@ final class ScriptExtension: NSObject, EditorExtension, WKNavigationDelegate {
         barLine.isHidden = floating
         barTitle.isHidden = floating
         render()
+    }
+
+    @objc func mouseEntered(with event: NSEvent) {
+        hovering = true
+        updateCollapsed()
+    }
+
+    @objc func mouseExited(with event: NSEvent) {
+        hovering = false
+        updateCollapsed()
+    }
+
+    private func updateCollapsed() {
+        let collapsed = floating && minimize && !hovering
+        modes.isHidden = collapsed
+        single.isHidden = !collapsed
+        single.setImage(images[mode.rawValue], forSegment: 0)
+        barWidth.constant = collapsed ? 40 : 100
     }
 
     private static func css(_ color: NSColor) -> String {
@@ -955,6 +1004,7 @@ final class ScriptExtension: NSObject, EditorExtension, WKNavigationDelegate {
     private func apply(_ next: Mode) {
         mode = next
         modes.selectedSegment = next.rawValue
+        updateCollapsed()
         code.isHidden = next == .preview
         preview.isHidden = next == .code
         split.adjustSubviews()
@@ -1001,6 +1051,7 @@ final class PluginSettingsView: NSView {
     private var fields: [(PluginSetting, NSTextField)] = []
     private var checks: [(PluginSetting, NSButton)] = []
     private var popups: [(PluginSetting, NSPopUpButton)] = []
+    private var sliders: [(PluginSetting, NSSlider, NSTextField)] = []
 
     init(id: String) {
         self.id = id
@@ -1035,6 +1086,20 @@ final class PluginSettingsView: NSView {
                 popup.action = #selector(changed)
                 popups.append((setting, popup))
                 rows.append([label, popup])
+            case "number":
+                let slider = NSSlider(value: setting.min ?? 0, minValue: setting.min ?? 0, maxValue: setting.max ?? 100,
+                                      target: self, action: #selector(sliderChanged(_:)))
+                slider.isContinuous = true
+                slider.widthAnchor.constraint(equalToConstant: 160).isActive = true
+                let value = NSTextField(labelWithString: "")
+                value.font = .monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
+                value.widthAnchor.constraint(equalToConstant: 40).isActive = true
+                let reset = PluginActionButton(title: "初期値") { [weak self] in
+                    Settings.setPluginValue(id, setting.key, nil)
+                    self?.load()
+                }
+                sliders.append((setting, slider, value))
+                rows.append([label, NSStackView(views: [slider, value, reset])])
             case "bool":
                 let check = NSButton(checkboxWithTitle: setting.title, target: self, action: #selector(changed))
                 checks.append((setting, check))
@@ -1048,7 +1113,8 @@ final class PluginSettingsView: NSView {
                 rows.append([label, field])
             }
         }
-        let content: NSView
+        let extra = (NativePlugins.plugin(id) as? PluginSettingsProviding)?.settingsView()
+        var content: NSView
         if rows.isEmpty {
             let empty = NSTextField(wrappingLabelWithString: "このプラグインには設定項目がありません。")
             empty.textColor = .secondaryLabelColor
@@ -1060,6 +1126,13 @@ final class PluginSettingsView: NSView {
             grid.column(at: 0).xPlacement = .trailing
             grid.rowAlignment = .firstBaseline
             content = grid
+        }
+        if let extra {
+            let stack = NSStackView(views: rows.isEmpty ? [extra] : [content, extra])
+            stack.orientation = .vertical
+            stack.alignment = .leading
+            stack.spacing = 16
+            content = stack
         }
         content.translatesAutoresizingMaskIntoConstraints = false
         addSubview(content)
@@ -1082,6 +1155,11 @@ final class PluginSettingsView: NSView {
             hex.stringValue = saved?.hexString ?? ""
         }
         for (setting, field) in fields { field.stringValue = PluginStore.setting(id, setting.key) ?? "" }
+        for (setting, slider, value) in sliders {
+            let saved = PluginStore.setting(id, setting.key).flatMap(Double.init)
+            slider.doubleValue = saved ?? slider.minValue
+            value.stringValue = saved.map { "\(Int($0))" } ?? "自動"
+        }
         for (setting, check) in checks { check.state = PluginStore.setting(id, setting.key) == "true" ? .on : .off }
         for (setting, popup) in popups {
             if let value = PluginStore.setting(id, setting.key) { popup.selectItem(withTitle: value) }
@@ -1100,6 +1178,13 @@ final class PluginSettingsView: NSView {
         guard let color = NSColor(hex: text) else { return load() }
         well.color = color
         Settings.setPluginValue(id, setting.key, color.hexString)
+    }
+
+    @objc private func sliderChanged(_ sender: NSSlider) {
+        guard let (setting, _, value) = sliders.first(where: { $0.1 === sender }) else { return }
+        let number = Int(sender.doubleValue.rounded())
+        value.stringValue = "\(number)"
+        Settings.setPluginValue(id, setting.key, "\(number)")
     }
 
     @objc private func changed() {
