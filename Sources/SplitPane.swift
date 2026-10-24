@@ -1,7 +1,23 @@
 import AppKit
 
+final class FixedLineHeights: NSObject, NSLayoutManagerDelegate {
+    func layoutManager(_ layoutManager: NSLayoutManager, shouldSetLineFragmentRect lineFragmentRect: UnsafeMutablePointer<NSRect>,
+                       lineFragmentUsedRect: UnsafeMutablePointer<NSRect>, baselineOffset: UnsafeMutablePointer<CGFloat>,
+                       in textContainer: NSTextContainer, forGlyphRange glyphRange: NSRange) -> Bool {
+        let font = Settings.font
+        let height = Settings.lineHeight
+        lineFragmentRect.pointee.size.height = height + Settings.lineSpacing
+        lineFragmentUsedRect.pointee.size.height = height
+        baselineOffset.pointee = (height - (font.ascender - font.descender)) / 2 + font.ascender
+        return true
+    }
+}
+
 enum CodeView {
+    static let lineHeights = FixedLineHeights()
+
     static func configure(_ textView: NSTextView, scroll: NSScrollView) {
+        textView.layoutManager?.delegate = lineHeights
         textView.font = .monospacedSystemFont(ofSize: 13, weight: .regular)
         textView.isRichText = false
         textView.allowsUndo = true

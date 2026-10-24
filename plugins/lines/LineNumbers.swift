@@ -85,7 +85,7 @@ final class LineNumberRuler: NSRulerView {
             let mid = (lo + hi + 1) / 2
             if starts[mid] <= chars.location { lo = mid } else { hi = mid - 1 }
         }
-        let lineHeight = Settings.paragraphStyle.maximumLineHeight
+        let lineHeight = Settings.lineHeight
         var line = lo
         while line < starts.count, starts[line] <= NSMaxRange(chars) {
             let start = starts[line]

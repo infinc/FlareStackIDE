@@ -32,7 +32,7 @@ final class LightEditorWindowController: NSWindowController, NSWindowDelegate, N
     required init?(coder: NSCoder) { fatalError() }
 
     private func build() {
-        _ = textView.layoutManager
+        textView.layoutManager?.delegate = CodeView.lineHeights
         textView.isRichText = false
         textView.allowsUndo = true
         textView.isAutomaticQuoteSubstitutionEnabled = false
