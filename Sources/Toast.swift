@@ -190,8 +190,42 @@ private final class ToastButton: NSButton {
     @objc private func clicked() { handler?() }
 }
 
+private final class HintLabel: NSTextField {
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+}
+
 enum Toasts {
     private static let containerID = NSUserInterfaceItemIdentifier("FlareStackIDE.toasts")
+    private static weak var hintView: NSView?
+
+    static func hint(_ text: String, under view: NSView) {
+        guard let content = view.window?.contentView else { return }
+        hintView?.removeFromSuperview()
+        let label = HintLabel(labelWithString: "  \(text)  ")
+        label.font = .systemFont(ofSize: 11, weight: .medium)
+        label.textColor = .white
+        label.wantsLayer = true
+        label.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.72).cgColor
+        label.layer?.cornerRadius = 9
+        label.sizeToFit()
+        label.setFrameSize(NSSize(width: label.frame.width, height: 18))
+        let anchor = view.convert(view.bounds, to: content)
+        label.setFrameOrigin(NSPoint(x: min(anchor.midX - label.frame.width / 2, content.bounds.maxX - label.frame.width - 6), y: anchor.minY - 24))
+        label.alphaValue = 0
+        content.addSubview(label, positioned: .above, relativeTo: nil)
+        hintView = label
+        NSAnimationContext.runAnimationGroup({ context in
+            context.duration = 0.12
+            label.animator().alphaValue = 1
+        }) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) {
+                NSAnimationContext.runAnimationGroup({ context in
+                    context.duration = 0.25
+                    label.animator().alphaValue = 0
+                }) { label.removeFromSuperview() }
+            }
+        }
+    }
 
     private static var target: NSWindow? {
         ([NSApp.keyWindow, NSApp.mainWindow] + NSApp.orderedWindows).compactMap { $0 }.first {

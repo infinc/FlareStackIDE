@@ -6,6 +6,7 @@ final class LineNumberRuler: NSRulerView {
     private weak var textView: NSTextView?
     private var starts: [Int] = [0]
     private var startsLength = -1
+    var keepVisible = true
 
     init(textView: NSTextView, scroll: NSScrollView) {
         self.textView = textView
@@ -19,6 +20,16 @@ final class LineNumberRuler: NSRulerView {
     }
 
     required init(coder: NSCoder) { fatalError() }
+
+    override func viewDidMoveToSuperview() {
+        super.viewDidMoveToSuperview()
+        guard superview == nil, keepVisible else { return }
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.keepVisible, let scroll = self.scrollView, scroll.verticalRulerView === self, !scroll.rulersVisible else { return }
+            scroll.rulersVisible = true
+            scroll.tile()
+        }
+    }
 
     static var textColor: NSColor { PluginStore.color(pluginID, "textColor") ?? .secondaryLabelColor }
 
@@ -121,6 +132,7 @@ extension NSScrollView {
             if (verticalRulerView as? LineNumberRuler)?.clientView !== textView {
                 verticalRulerView = LineNumberRuler(textView: textView, scroll: self)
             }
+            (verticalRulerView as? LineNumberRuler)?.keepVisible = true
             textView.clipsToBounds = true
             clipsToBounds = true
             hasVerticalRuler = true
@@ -128,6 +140,7 @@ extension NSScrollView {
             tile()
             verticalRulerView?.needsDisplay = true
         } else {
+            (verticalRulerView as? LineNumberRuler)?.keepVisible = false
             rulersVisible = false
             hasVerticalRuler = false
         }

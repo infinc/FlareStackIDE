@@ -15,6 +15,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WelcomeDelegate {
     private var currentVersion: String { AppUpdate.shared.currentVersion }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        ButtonHover.install()
         showSplash()
         NotificationCenter.default.addObserver(self, selector: #selector(appUpdateChanged), name: .appUpdateChanged, object: nil)
         AppUpdate.shared.check()

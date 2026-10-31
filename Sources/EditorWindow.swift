@@ -113,11 +113,11 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
     var onProjectRenamed: (() -> Void)?
 
     private let root: FileNode
-    private let outline = NSOutlineView()
+    private let outline = TreeOutline()
     private let treeScroll = NSScrollView()
     private let mainSplit = NSSplitView()
     private let rightSplit = NSSplitView()
-    private let editorScroll = NSTextView.scrollableTextView()
+    private let editorScroll = CodeScrollView.make()
     var textView: NSTextView { editorScroll.documentView as! NSTextView }
     private let fileLabel = NSTextField(labelWithString: "")
     private let placeholder = NSTextField(labelWithString: "左のディレクトリからファイルを選択してください")
@@ -141,6 +141,8 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
     private let barHost = NSView()
     private var barHeight: NSLayoutConstraint!
     private var floatConstraints: [NSLayoutConstraint] = []
+    private var overlayInset: CGFloat = 0
+    private var overlayTrailing: [NSLayoutConstraint] = []
     private let bodyHost = NSView()
     private var ext: EditorExtension?
     private var highlighter: Highlighter?
@@ -256,7 +258,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
         cloudButton.isBordered = false
         updateCloud()
         cloudButton.target = self
-        cloudButton.action = #selector(autosave)
+        cloudButton.action = #selector(cloudClicked)
         cloudButton.translatesAutoresizingMaskIntoConstraints = false
         topBar.addSubview(cloudButton)
         searchButton.image = Self.cloudImage("magnifyingglass")
@@ -308,6 +310,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
         outline.style = .sourceList
         outline.target = self
         outline.action = #selector(treeClicked)
+        outline.onMove = { [weak self] in self?.moveNode($0, into: $1) }
         outline.columnAutoresizingStyle = .noColumnAutoresizing
         outline.backgroundColor = .clear
         let menu = NSMenu()
@@ -569,7 +572,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
         let target = found.location == NSNotFound ? NSRange(location: lineRange.location, length: 0) : found
         window?.makeFirstResponder(textView)
         textView.setSelectedRange(target)
-        textView.scrollRangeToVisible(target)
+        CodeView.center(textView, on: target)
         if target.length > 0 { textView.showFindIndicator(for: target) }
     }
 
@@ -812,7 +815,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
             let ruler = editorScroll.rulersVisible ? editorScroll.verticalRulerView?.ruleThickness ?? 0 : 0
             floatConstraints = [
                 bar.heightAnchor.constraint(equalToConstant: 28),
-                corner.right ? bar.trailingAnchor.constraint(equalTo: bodyHost.trailingAnchor, constant: -18)
+                corner.right ? bar.trailingAnchor.constraint(equalTo: bodyHost.trailingAnchor, constant: -18 - overlayInset)
                     : bar.leadingAnchor.constraint(equalTo: bodyHost.leadingAnchor, constant: 18 + ruler),
             ]
             if corner.top {
@@ -1054,8 +1057,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
     private func updateCloud() {
         let dirty = buffers.values.contains { $0.dirty } || splitPane?.dirty == true
         cloudButton.image = Self.cloudImage(dirty ? "icloud.and.arrow.up" : "checkmark.icloud")
-        cloudButton.toolTip = !dirty ? (Settings.autosaveEnabled ? "自動保存済み" : "保存済み")
-            : Settings.autosaveEnabled ? "保存中…" : "未保存（クリックで保存）"
+        cloudButton.toolTip = (!dirty ? (Settings.autosaveEnabled ? "自動保存済み" : "保存済み") : "未保存") + "（クリックで保存）"
         window?.isDocumentEdited = dirty
     }
 
@@ -1095,6 +1097,12 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
             NSAlert(error: error).beginSheetModal(for: window)
         }
         refreshGit()
+    }
+
+    @objc private func cloudClicked() {
+        if let error = saveAll() { return showError(error) }
+        refreshGit()
+        Toasts.hint("保存しました", under: cloudButton)
     }
 
     @objc func saveDocument(_ sender: Any?) {
@@ -1204,6 +1212,7 @@ extension EditorWindowController {
         if node.isDirectory {
             add("フォルダ名を変更…", #selector(renameItem(_:)), enabled: !isRoot)
             add("新規ファイル…", #selector(newFileItem(_:)))
+            add("新規フォルダ…", #selector(newFolderItem(_:)))
         } else {
             add("右に開く", #selector(openRightItem(_:)))
             menu.addItem(.separator())
@@ -1337,6 +1346,49 @@ extension EditorWindowController {
         outline.expandItem(node)
         open(url)
         refreshGit()
+    }
+
+    @objc private func newFolderItem(_ sender: Any?) {
+        guard let node = node(of: sender), node.isDirectory,
+              let answer = askName(title: "新規フォルダ", initial: "", button: "作成"),
+              let url = destination(answer.name, in: node.url) else { return }
+        do {
+            try FileManager.default.createDirectory(at: url, withIntermediateDirectories: false)
+        } catch {
+            showError(error)
+            return
+        }
+        reloadTree()
+        outline.expandItem(node)
+        refreshGit()
+    }
+
+    private func moveNode(_ node: FileNode, into folder: FileNode) {
+        let old = node.url
+        let name = old.lastPathComponent
+        guard let new = destination(name, in: folder.url) else { return }
+        let alert = NSAlert()
+        alert.messageText = "「\(name)」を「\(folder.url.lastPathComponent)」へ移動します"
+        alert.informativeText = "参照している import やパスも新しい場所に合わせて更新（リファクタリング）しますか？"
+        alert.addButton(withTitle: "リファクタリングして移動")
+        alert.addButton(withTitle: "移動のみ")
+        alert.addButton(withTitle: "キャンセル")
+        let response = alert.runModal()
+        guard response != .alertThirdButtonReturn else { return }
+        if let error = saveAll() { showError(error); return }
+        do {
+            try FileManager.default.moveItem(at: old, to: new)
+        } catch {
+            showError(error)
+            return
+        }
+        let changed = response == .alertFirstButtonReturn
+            ? Refactor.move(in: baseDirectory, from: old, to: new, isDirectory: node.isDirectory) : 0
+        reopenTabs { Self.moved($0, from: old, to: new) }
+        reloadTree()
+        outline.expandItem(folder)
+        refreshGit()
+        if changed > 0 { showMessage("\(changed) 件のファイルで参照を更新しました。") }
     }
 
     @objc private func copyFileItem(_ sender: Any?) {
@@ -1621,14 +1673,19 @@ extension EditorWindowController: CodeEditing {
 
     private var overlays: [NSView] { bodyHost.superview?.subviews.filter { $0.identifier == Self.overlayID } ?? [] }
 
+    func setOverlayInset(_ inset: CGFloat) {
+        overlayInset = inset
+        overlayTrailing.forEach { $0.constant = -4 - inset }
+        if ext?.floating == true { layoutExtensionBar() }
+    }
+
     func addOverlay(_ view: NSView) {
         view.translatesAutoresizingMaskIntoConstraints = false
         view.identifier = Self.overlayID
         bodyHost.superview?.addSubview(view)
-        NSLayoutConstraint.activate([
-            view.topAnchor.constraint(equalTo: bodyHost.topAnchor, constant: 4),
-            view.trailingAnchor.constraint(equalTo: bodyHost.trailingAnchor, constant: -4),
-        ])
+        let trailing = view.trailingAnchor.constraint(equalTo: bodyHost.trailingAnchor, constant: -4 - overlayInset)
+        overlayTrailing.append(trailing)
+        NSLayoutConstraint.activate([view.topAnchor.constraint(equalTo: bodyHost.topAnchor, constant: 4), trailing])
         if ext?.floating == true { layoutExtensionBar() }
     }
 

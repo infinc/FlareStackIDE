@@ -1,0 +1,10 @@
+{
+  "id": "scroll-assistant",
+  "name": "Scroll Assistant",
+  "version": "1.0",
+  "author": "FlareStackIDE",
+  "symbol": "sidebar.right",
+  "summary": "編集画面の右にコード全体を小さく表示してスクロール",
+  "fileExtensions": [],
+  "files": ["plugin.dylib", "README.md"]
+}
