@@ -124,7 +124,8 @@ final class GitPanel: NSView, NSTableViewDataSource, NSTableViewDelegate {
         table.intercellSpacing = .zero
         table.style = .plain
         table.backgroundColor = .clear
-        table.selectionHighlightStyle = .regular
+        table.selectionHighlightStyle = .none
+        table.refusesFirstResponder = true
         table.columnAutoresizingStyle = .uniformColumnAutoresizingStyle
         table.dataSource = self
         table.delegate = self
@@ -299,6 +300,8 @@ final class GitPanel: NSView, NSTableViewDataSource, NSTableViewDelegate {
     }
 
     func numberOfRows(in tableView: NSTableView) -> Int { commits.count }
+
+    func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool { false }
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         let commit = commits[row]

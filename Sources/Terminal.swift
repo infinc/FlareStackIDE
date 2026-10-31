@@ -499,6 +499,9 @@ final class TerminalView: NSView, NSTextInputClient {
     private(set) lazy var cellSize = NSSize(width: ("M" as NSString).size(withAttributes: [.font: font]).width,
                                             height: ceil(font.ascender - font.descender + font.leading) + 2)
     private var marked = ""
+    static var onSelect: ((String) -> Void)?
+    private var anchor: (line: Int, col: Int)?
+    private var selection: (start: (line: Int, col: Int), end: (line: Int, col: Int))?
     private var blinkTimer: Timer?
     private var blinkOn = true
     let padding: CGFloat = 6
@@ -535,6 +538,44 @@ final class TerminalView: NSView, NSTextInputClient {
 
     override func mouseDown(with event: NSEvent) {
         window?.makeFirstResponder(self)
+        if selection != nil {
+            selection = nil
+            needsDisplay = true
+        }
+        anchor = Self.onSelect == nil ? nil : position(event)
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard let anchor else { return }
+        let end = position(event)
+        selection = (anchor.line, anchor.col) < (end.line, end.col) ? (anchor, end) : (end, anchor)
+        autoscroll(with: event)
+        needsDisplay = true
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        anchor = nil
+        let text = selectedText
+        if !text.isEmpty { Self.onSelect?(text) }
+    }
+
+    private func position(_ event: NSEvent) -> (line: Int, col: Int) {
+        let point = convert(event.locationInWindow, from: nil)
+        let line = min(max(Int(point.y / cellSize.height), 0), totalLines - 1)
+        let col = min(max(Int(((point.x - padding) / cellSize.width).rounded()), 0), emulator.cols)
+        return (line, col)
+    }
+
+    var selectedText: String {
+        guard let selection, selection.start != selection.end else { return "" }
+        return (selection.start.line...selection.end.line).map { index in
+            let cells = line(index)
+            let from = index == selection.start.line ? selection.start.col : 0
+            let to = min(index == selection.end.line ? selection.end.col : cells.count, cells.count)
+            guard from < to else { return "" }
+            let text = cells[from..<to].filter { $0.width != 0 }.map(\.ch).joined()
+            return String(text.reversed().drop { $0 == " " }.reversed())
+        }.joined(separator: "\n")
     }
 
     var totalLines: Int { emulator.scrollback.count + emulator.rows }
@@ -567,6 +608,13 @@ final class TerminalView: NSView, NSTextInputClient {
             var run = ""
             var runStart = 0
             var runStyle = TermStyle()
+
+            if let selection, selection.start.line <= row, row <= selection.end.line {
+                let from = row == selection.start.line ? selection.start.col : 0
+                let to = row == selection.end.line ? selection.end.col : emulator.cols
+                NSColor.selectedTextBackgroundColor.setFill()
+                NSRect(x: padding + CGFloat(from) * w, y: y, width: CGFloat(max(to - from, 0)) * w, height: h).fill()
+            }
 
             func colors(_ s: TermStyle) -> (NSColor, NSColor?) {
                 let fg = s.fg ?? defaultFg
@@ -633,6 +681,10 @@ final class TerminalView: NSView, NSTextInputClient {
     }
 
     override func keyDown(with event: NSEvent) {
+        if selection != nil {
+            selection = nil
+            needsDisplay = true
+        }
         if Settings.terminalCursorBlink { resetBlink() }
         if !marked.isEmpty {
             interpretKeyEvents([event])

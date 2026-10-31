@@ -2,7 +2,7 @@
   {
     "id": "md-viewer",
     "name": "MD Viewer",
-    "version": "1.3",
+    "version": "1.4",
     "author": "FlareStackIDE",
     "symbol": "doc.richtext",
     "summary": "Markdown ファイルをリアルタイムでプレビュー",
@@ -29,7 +29,7 @@
   {
     "id": "code-scanner",
     "name": "Code Scanner",
-    "version": "1.1",
+    "version": "1.2",
     "author": "FlareStackIDE",
     "symbol": "exclamationmark.triangle",
     "summary": "コードのエラーと警告をリアルタイムで表示",
@@ -38,7 +38,7 @@
   {
     "id": "lines",
     "name": "Lines",
-    "version": "1.1",
+    "version": "1.2",
     "author": "FlareStackIDE",
     "symbol": "list.number",
     "summary": "ファイル編集画面の左側に行数を表示",
@@ -87,6 +87,42 @@
     "author": "FlareStackIDE",
     "symbol": "xmark.circle",
     "summary": "ファイルのタブをボタン1つですべて閉じる",
+    "fileExtensions": []
+  },
+  {
+    "id": "shortcut",
+    "name": "Shortcut",
+    "version": "1.0",
+    "author": "FlareStackIDE",
+    "symbol": "command",
+    "summary": "好きなキーで実行・テーマ切り替え・保存して終了",
+    "fileExtensions": []
+  },
+  {
+    "id": "terminal-copy",
+    "name": "Terminal Copy",
+    "version": "1.0",
+    "author": "FlareStackIDE",
+    "symbol": "doc.on.clipboard",
+    "summary": "ターミナルでドラッグして選んだ文字をすぐにコピー",
+    "fileExtensions": []
+  },
+  {
+    "id": "copy-manager",
+    "name": "Copy Manager",
+    "version": "1.0",
+    "author": "FlareStackIDE",
+    "symbol": "paperclip",
+    "summary": "コピーした履歴を保存して、選んでもう一度コピー",
+    "fileExtensions": []
+  },
+  {
+    "id": "scroll-assistant",
+    "name": "Scroll Assistant",
+    "version": "1.0",
+    "author": "FlareStackIDE",
+    "symbol": "sidebar.right",
+    "summary": "編集画面の右にコード全体を小さく表示してスクロール",
     "fileExtensions": []
   }
 ]

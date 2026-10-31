@@ -17,6 +17,8 @@ struct Diagnostic {
 
 final class CodeScanner {
     static let pluginID = "code-scanner"
+    static let marksChanged = Notification.Name("FlareStackIDE.lineMarks")
+    static let marksRequest = Notification.Name("FlareStackIDE.lineMarksRequest")
     private let context = JSContext()!
     private let checker: JSValue?
     private let diagnose: JSValue?
@@ -26,6 +28,10 @@ final class CodeScanner {
     init?(folder: URL) {
         let file = folder.appendingPathComponent("main.js")
         guard let script = try? String(contentsOf: file, encoding: .utf8) else { return nil }
+        let exists: @convention(block) (String, String) -> Bool = { path, dir in
+            FileManager.default.fileExists(atPath: URL(fileURLWithPath: path, relativeTo: URL(fileURLWithPath: dir, isDirectory: true)).path)
+        }
+        context.setObject(exists, forKeyedSubscript: "fileExists" as NSString)
         context.evaluateScript(script, withSourceURL: file)
         guard context.exception == nil else { return nil }
         let fn = { [context] (name: String) in context.objectForKeyedSubscript(name).flatMap { $0.isObject ? $0 : nil } }
@@ -51,7 +57,7 @@ final class CodeScanner {
         let token = (generation[url] ?? 0) + 1
         generation[url] = token
         context.exception = nil
-        let local = items(diagnose?.call(withArguments: [text, ext, name]))
+        let local = items(diagnose?.call(withArguments: [text, ext, name, url.deletingLastPathComponent().path]))
         let spec = checker?.call(withArguments: [ext, name]).flatMap { $0.isObject ? $0.toDictionary() : nil }
         guard let args = spec?["args"] as? [String], !args.isEmpty else {
             return completion(Self.convert(local, text: text, url: url))

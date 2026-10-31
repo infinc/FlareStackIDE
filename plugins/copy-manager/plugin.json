@@ -1,0 +1,10 @@
+{
+  "id": "copy-manager",
+  "name": "Copy Manager",
+  "version": "1.0",
+  "author": "FlareStackIDE",
+  "symbol": "paperclip",
+  "summary": "コピーした履歴を保存して、選んでもう一度コピー",
+  "fileExtensions": [],
+  "files": ["plugin.dylib", "README.md"]
+}

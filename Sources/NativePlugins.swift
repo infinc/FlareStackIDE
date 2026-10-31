@@ -64,6 +64,10 @@ protocol NativePlugin: AnyObject {
     func fileWindow(for url: URL) -> FileWindow?
 }
 
+protocol PluginSettingsProviding: AnyObject {
+    func settingsView() -> NSView?
+}
+
 extension NativePlugin {
     var opensFiles: Bool { false }
     func textAddon(for code: CodeEditing) -> TextAddon? { nil }

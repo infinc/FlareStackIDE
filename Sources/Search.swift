@@ -85,6 +85,8 @@ final class SearchPanel: NSObject, NSWindowDelegate, NSSearchFieldDelegate, NSTa
     private var generation = 0
     private var pending: DispatchWorkItem?
     private var height: NSLayoutConstraint!
+    private var rowHeights: [CGFloat] = []
+    private static let textWidth: CGFloat = 576
 
     init(base: URL) {
         self.base = base
@@ -179,11 +181,11 @@ final class SearchPanel: NSObject, NSWindowDelegate, NSSearchFieldDelegate, NSTa
     }
 
     private func updateHeight() {
-        let rows = CGFloat(min(hits.count, 9))
+        let rows = rowHeights.prefix(9).reduce(0) { $0 + $1 + 2 }
         let showsStatus = !status.stringValue.isEmpty
         status.isHidden = !showsStatus
         scroll.isHidden = hits.isEmpty
-        let value = 56 + (hits.isEmpty ? 0 : rows * (table.rowHeight + 2) + 8) + (showsStatus ? 18 : 0)
+        let value = 56 + (hits.isEmpty ? 0 : rows + 8) + (showsStatus ? 18 : 0)
         guard abs(height.constant - value) > 0.5 else { return }
         let top = panel.frame.maxY
         height.constant = value
@@ -205,6 +207,7 @@ final class SearchPanel: NSObject, NSWindowDelegate, NSSearchFieldDelegate, NSTa
         let query = field.stringValue.trimmingCharacters(in: .whitespaces)
         guard !query.isEmpty else {
             hits = []
+            rowHeights = []
             status.stringValue = ""
             table.reloadData()
             updateHeight()
@@ -218,6 +221,7 @@ final class SearchPanel: NSObject, NSWindowDelegate, NSSearchFieldDelegate, NSTa
                 DispatchQueue.main.async {
                     guard let self, self.generation == current else { return }
                     self.hits = found
+                    self.rowHeights = found.map(Self.height)
                     let files = found.filter { $0.line == nil }.count
                     self.status.stringValue = found.isEmpty ? "一致するものはありません"
                         : "ファイル名 \(files) 件・コード \(found.count - files) 件" + (found.count >= ProjectSearch.maxHits ? "（上限）" : "")
@@ -265,24 +269,38 @@ final class SearchPanel: NSObject, NSWindowDelegate, NSSearchFieldDelegate, NSTa
 
     func numberOfRows(in tableView: NSTableView) -> Int { hits.count }
 
-    func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
-        let hit = hits[row]
-        let cell = NSTableCellView()
-        let icon = NSImageView(image: hit.line == nil ? NSWorkspace.shared.icon(forFile: hit.url.path)
-                                      : NSImage(systemSymbolName: "text.alignleft", accessibilityDescription: nil)!)
-        icon.contentTintColor = .secondaryLabelColor
-        icon.translatesAutoresizingMaskIntoConstraints = false
+    func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
+        rowHeights.indices.contains(row) ? rowHeights[row] : table.rowHeight
+    }
+
+    private static func height(_ hit: SearchHit) -> CGFloat {
+        let (title, detail) = labels(hit)
+        let size = NSSize(width: textWidth, height: .greatestFiniteMagnitude)
+        return max(ceil(title.sizeThatFits(size).height + detail.sizeThatFits(size).height) + 8, 40)
+    }
+
+    private static func wrapping(_ label: NSTextField, lines: Int) {
+        label.lineBreakMode = .byCharWrapping
+        label.maximumNumberOfLines = lines
+        label.preferredMaxLayoutWidth = textWidth
+        label.cell?.wraps = true
+        label.cell?.isScrollable = false
+        label.cell?.truncatesLastVisibleLine = true
+        label.translatesAutoresizingMaskIntoConstraints = false
+    }
+
+    private static func labels(_ hit: SearchHit) -> (title: NSTextField, detail: NSTextField) {
         let title = NSTextField(labelWithString: "")
-        title.lineBreakMode = .byTruncatingTail
-        title.translatesAutoresizingMaskIntoConstraints = false
         let detail = NSTextField(labelWithString: "")
+        wrapping(title, lines: 3)
+        wrapping(detail, lines: 2)
         detail.font = .systemFont(ofSize: 11)
         detail.textColor = .secondaryLabelColor
-        detail.lineBreakMode = .byTruncatingHead
-        detail.translatesAutoresizingMaskIntoConstraints = false
+        let style = NSMutableParagraphStyle()
+        style.lineBreakMode = .byCharWrapping
         if let line = hit.line {
             let text = NSMutableAttributedString(string: hit.text, attributes: [
-                .font: NSFont.monospacedSystemFont(ofSize: 12, weight: .regular), .foregroundColor: NSColor.labelColor])
+                .font: NSFont.monospacedSystemFont(ofSize: 12, weight: .regular), .foregroundColor: NSColor.labelColor, .paragraphStyle: style])
             if NSMaxRange(hit.match) <= text.length, hit.match.location >= 0 {
                 text.addAttributes([.backgroundColor: NSColor.findHighlightColor.withAlphaComponent(0.55),
                                     .foregroundColor: NSColor.black], range: hit.match)
@@ -291,13 +309,24 @@ final class SearchPanel: NSObject, NSWindowDelegate, NSSearchFieldDelegate, NSTa
             detail.stringValue = "\(hit.url.lastPathComponent) : \(line) 行目　—　\(hit.relative)"
         } else {
             let text = NSMutableAttributedString(string: hit.text, attributes: [
-                .font: NSFont.systemFont(ofSize: 13, weight: .semibold), .foregroundColor: NSColor.labelColor])
+                .font: NSFont.systemFont(ofSize: 13, weight: .semibold), .foregroundColor: NSColor.labelColor, .paragraphStyle: style])
             if NSMaxRange(hit.match) <= text.length {
                 text.addAttribute(.foregroundColor, value: NSColor.controlAccentColor, range: hit.match)
             }
             title.attributedStringValue = text
             detail.stringValue = "ファイル　—　\(hit.relative)"
         }
+        return (title, detail)
+    }
+
+    func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+        let hit = hits[row]
+        let cell = NSTableCellView()
+        let icon = NSImageView(image: hit.line == nil ? NSWorkspace.shared.icon(forFile: hit.url.path)
+                                      : NSImage(systemSymbolName: "text.alignleft", accessibilityDescription: nil)!)
+        icon.contentTintColor = .secondaryLabelColor
+        icon.translatesAutoresizingMaskIntoConstraints = false
+        let (title, detail) = Self.labels(hit)
         [icon, title, detail].forEach(cell.addSubview)
         NSLayoutConstraint.activate([
             icon.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 8),
@@ -305,10 +334,10 @@ final class SearchPanel: NSObject, NSWindowDelegate, NSSearchFieldDelegate, NSTa
             icon.widthAnchor.constraint(equalToConstant: 20),
             icon.heightAnchor.constraint(equalToConstant: 20),
             title.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 8),
-            title.trailingAnchor.constraint(lessThanOrEqualTo: cell.trailingAnchor, constant: -8),
+            title.widthAnchor.constraint(lessThanOrEqualToConstant: Self.textWidth),
             title.topAnchor.constraint(equalTo: cell.topAnchor, constant: 3),
             detail.leadingAnchor.constraint(equalTo: title.leadingAnchor),
-            detail.trailingAnchor.constraint(lessThanOrEqualTo: cell.trailingAnchor, constant: -8),
+            detail.widthAnchor.constraint(lessThanOrEqualToConstant: Self.textWidth),
             detail.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 1),
         ])
         return cell

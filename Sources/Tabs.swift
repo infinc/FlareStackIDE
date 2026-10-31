@@ -5,36 +5,32 @@ private final class DragOverlay: NSView {
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }
 
-final class DragReorder {
-    private let view: NSView
-    private let stack: NSStackView
-    private let movable: (NSView) -> Bool
-    private let vertical: Bool
+final class DragLift {
+    enum Axis { case horizontal, vertical, free }
+
+    private let axis: Axis
     private let overlay = DragOverlay()
     private let lifted = CALayer()
     private let start: NSPoint
     private let origin: CGPoint
     private var last: NSPoint
-    private(set) var moved = false
 
-    init?(view: NSView, event: NSEvent, movable: @escaping (NSView) -> Bool = { _ in true }) {
-        guard let stack = view.superview as? NSStackView, let content = view.window?.contentView,
-              let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return nil }
-        view.cacheDisplay(in: view.bounds, to: rep)
-        let image = NSImage(size: view.bounds.size)
+    init?(view: NSView, rect: NSRect? = nil, event: NSEvent, axis: Axis, background: NSColor? = nil) {
+        let rect = rect ?? view.bounds
+        guard let content = view.window?.contentView, let rep = view.bitmapImageRepForCachingDisplay(in: rect) else { return nil }
+        view.cacheDisplay(in: rect, to: rep)
+        let image = NSImage(size: rect.size)
         image.addRepresentation(rep)
-        self.view = view
-        self.stack = stack
-        self.movable = movable
-        vertical = stack.orientation == .vertical
+        self.axis = axis
         overlay.frame = content.bounds
         overlay.autoresizingMask = [.width, .height]
         overlay.wantsLayer = true
         content.addSubview(overlay, positioned: .above, relativeTo: nil)
-        let frame = view.convert(view.bounds, to: overlay)
-        lifted.frame = frame
+        lifted.frame = view.convert(rect, to: overlay)
         lifted.contents = image
         lifted.contentsScale = view.window?.backingScaleFactor ?? 2
+        lifted.backgroundColor = background?.cgColor
+        lifted.cornerRadius = 5
         lifted.shadowColor = NSColor.black.cgColor
         lifted.shadowRadius = 10
         lifted.shadowOffset = CGSize(width: 0, height: -6)
@@ -43,40 +39,89 @@ final class DragReorder {
         origin = lifted.position
         start = overlay.convert(event.locationInWindow, from: nil)
         last = start
-        stack.wantsLayer = true
-        view.alphaValue = 0
         CATransaction.begin()
         CATransaction.setAnimationDuration(0.16)
         CATransaction.setAnimationTimingFunction(CAMediaTimingFunction(name: .easeOut))
-        lifted.transform = Self.lift(tilt: 0, vertical: vertical)
+        lifted.transform = Self.lift(tiltX: 0, tiltY: 0)
         lifted.shadowOpacity = 0.35
         CATransaction.commit()
     }
 
-    private static func lift(tilt: CGFloat, vertical: Bool) -> CATransform3D {
+    private static func lift(tiltX: CGFloat, tiltY: CGFloat) -> CATransform3D {
         var t = CATransform3DIdentity
         t.m34 = -1 / 400
         t = CATransform3DTranslate(t, 0, 0, 30)
         t = CATransform3DScale(t, 1.08, 1.08, 1)
-        return vertical ? CATransform3DRotate(t, tilt, 1, 0, 0) : CATransform3DRotate(t, tilt, 0, 1, 0)
+        t = CATransform3DRotate(t, tiltX, 0, 1, 0)
+        return CATransform3DRotate(t, tiltY, 1, 0, 0)
+    }
+
+    func move(_ event: NSEvent) {
+        let p = overlay.convert(event.locationInWindow, from: nil)
+        let dx = axis == .vertical ? 0 : p.x - last.x
+        let dy = axis == .horizontal ? 0 : p.y - last.y
+        last = p
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        lifted.position = CGPoint(x: origin.x + (axis == .vertical ? 0 : p.x - start.x),
+                                  y: origin.y + (axis == .horizontal ? 0 : p.y - start.y))
+        CATransaction.commit()
+        CATransaction.begin()
+        CATransaction.setAnimationDuration(0.12)
+        lifted.transform = Self.lift(tiltX: max(-0.4, min(0.4, dx * 0.04)), tiltY: max(-0.4, min(0.4, dy * -0.04)))
+        CATransaction.commit()
+    }
+
+    func land(on view: NSView, rect: NSRect? = nil, absorb: Bool = false, done: @escaping () -> Void) {
+        let frame = view.convert(rect ?? view.bounds, to: overlay)
+        let target = CGPoint(x: frame.midX, y: frame.midY)
+        let spring = CASpringAnimation(keyPath: "position")
+        spring.fromValue = NSValue(point: lifted.presentation()?.position ?? lifted.position)
+        spring.toValue = NSValue(point: target)
+        spring.damping = 18
+        spring.stiffness = 260
+        spring.duration = spring.settlingDuration
+        CATransaction.begin()
+        CATransaction.setAnimationDuration(0.22)
+        CATransaction.setAnimationTimingFunction(CAMediaTimingFunction(controlPoints: 0.2, 0.9, 0.3, 1))
+        CATransaction.setCompletionBlock { [overlay] in
+            overlay.removeFromSuperview()
+            done()
+        }
+        if !absorb { lifted.add(spring, forKey: "drop") }
+        lifted.position = target
+        lifted.transform = absorb ? CATransform3DMakeScale(0.6, 0.6, 1) : CATransform3DIdentity
+        if absorb { lifted.opacity = 0 }
+        lifted.shadowOpacity = 0
+        CATransaction.commit()
+    }
+}
+
+final class DragReorder {
+    private let view: NSView
+    private let stack: NSStackView
+    private let movable: (NSView) -> Bool
+    private let vertical: Bool
+    private let lift: DragLift
+    private(set) var moved = false
+
+    init?(view: NSView, event: NSEvent, movable: @escaping (NSView) -> Bool = { _ in true }) {
+        guard let stack = view.superview as? NSStackView else { return nil }
+        vertical = stack.orientation == .vertical
+        guard let lift = DragLift(view: view, event: event, axis: vertical ? .vertical : .horizontal) else { return nil }
+        self.view = view
+        self.stack = stack
+        self.movable = movable
+        self.lift = lift
+        stack.wantsLayer = true
+        view.alphaValue = 0
     }
 
     private func axis(_ p: NSPoint) -> CGFloat { vertical ? p.y : p.x }
 
     func drag(_ event: NSEvent) {
-        let p = overlay.convert(event.locationInWindow, from: nil)
-        let velocity = axis(p) - axis(last)
-        last = p
         moved = true
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        lifted.position = vertical ? CGPoint(x: origin.x, y: origin.y + p.y - start.y) : CGPoint(x: origin.x + p.x - start.x, y: origin.y)
-        CATransaction.commit()
-        CATransaction.begin()
-        CATransaction.setAnimationDuration(0.12)
-        let tilt = max(-0.4, min(0.4, velocity * (vertical ? -0.04 : 0.04)))
-        lifted.transform = Self.lift(tilt: tilt, vertical: vertical)
-        CATransaction.commit()
+        lift.move(event)
         reorder(at: stack.convert(event.locationInWindow, from: nil))
     }
 
@@ -102,27 +147,10 @@ final class DragReorder {
 
     func end(_ done: (() -> Void)? = nil) {
         stack.layoutSubtreeIfNeeded()
-        let frame = view.convert(view.bounds, to: overlay)
-        let target = CGPoint(x: frame.midX, y: frame.midY)
-        let spring = CASpringAnimation(keyPath: "position")
-        spring.fromValue = NSValue(point: lifted.presentation()?.position ?? lifted.position)
-        spring.toValue = NSValue(point: target)
-        spring.damping = 18
-        spring.stiffness = 260
-        spring.duration = spring.settlingDuration
-        CATransaction.begin()
-        CATransaction.setAnimationDuration(0.22)
-        CATransaction.setAnimationTimingFunction(CAMediaTimingFunction(controlPoints: 0.2, 0.9, 0.3, 1))
-        CATransaction.setCompletionBlock { [view, overlay] in
+        lift.land(on: view) { [view] in
             view.alphaValue = 1
-            overlay.removeFromSuperview()
             done?()
         }
-        lifted.add(spring, forKey: "drop")
-        lifted.position = target
-        lifted.transform = CATransform3DIdentity
-        lifted.shadowOpacity = 0
-        CATransaction.commit()
     }
 }
 
@@ -342,6 +370,7 @@ final class FeedView: NSView {
         let stack = NSStackView(views: views)
         stack.orientation = .horizontal
         stack.spacing = 2
+        stack.setHuggingPriority(.required, for: .horizontal)
         return stack
     }
 

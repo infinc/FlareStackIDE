@@ -13,8 +13,51 @@ final class FixedLineHeights: NSObject, NSLayoutManagerDelegate {
     }
 }
 
+final class CodeScrollView: NSScrollView {
+    var gutter: NSView? {
+        didSet {
+            oldValue?.removeFromSuperview()
+            if let gutter { addSubview(gutter) }
+            tile()
+        }
+    }
+
+    static func make() -> CodeScrollView {
+        let source = NSTextView.scrollableTextView()
+        let scroll = CodeScrollView()
+        let document = source.documentView
+        source.documentView = nil
+        scroll.documentView = document
+        scroll.hasVerticalScroller = source.hasVerticalScroller
+        scroll.autohidesScrollers = source.autohidesScrollers
+        return scroll
+    }
+
+    override func tile() {
+        super.tile()
+        guard let gutter else { return }
+        let width = gutter.frame.width
+        contentView.frame.size.width = max(contentView.frame.width - width, 0)
+        verticalScroller?.frame.origin.x -= width
+        horizontalScroller?.frame.size.width -= width
+        gutter.frame = NSRect(x: bounds.maxX - width, y: 0, width: width, height: bounds.height)
+    }
+}
+
 enum CodeView {
     static let lineHeights = FixedLineHeights()
+
+    static func center(_ textView: NSTextView, on range: NSRange) {
+        guard let layout = textView.layoutManager, let container = textView.textContainer, let scroll = textView.enclosingScrollView else { return }
+        layout.ensureLayout(for: container)
+        textView.sizeToFit()
+        let glyphs = layout.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
+        let rect = layout.boundingRect(forGlyphRange: glyphs, in: container).offsetBy(dx: 0, dy: textView.textContainerOrigin.y)
+        let clip = scroll.contentView
+        let top = max(min(rect.midY - clip.bounds.height / 2, textView.frame.height - clip.bounds.height), 0)
+        clip.scroll(to: NSPoint(x: clip.bounds.minX, y: top))
+        scroll.reflectScrolledClipView(clip)
+    }
 
     static func configure(_ textView: NSTextView, scroll: NSScrollView) {
         textView.layoutManager?.delegate = lineHeights
@@ -48,8 +91,8 @@ enum CodeView {
         scroll.hasHorizontalScroller = !wrap
         if wrap {
             textView.autoresizingMask = [.width]
-            textView.frame.size.width = scroll.contentSize.width
-            textView.textContainer?.containerSize = NSSize(width: scroll.contentSize.width, height: CGFloat.greatestFiniteMagnitude)
+            textView.frame.size.width = scroll.contentView.frame.width
+            textView.textContainer?.containerSize = NSSize(width: scroll.contentView.frame.width, height: CGFloat.greatestFiniteMagnitude)
         } else {
             textView.autoresizingMask = []
             textView.textContainer?.containerSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
@@ -77,6 +120,13 @@ enum CodeView {
         textView.undoManager?.removeAllActions()
     }
 
+    static func replaceLayoutManager(_ textView: NSTextView, with layout: NSLayoutManager) {
+        let rulers = textView.enclosingScrollView?.rulersVisible
+        layout.delegate = lineHeights
+        textView.textContainer?.replaceLayoutManager(layout)
+        if let rulers { textView.enclosingScrollView?.rulersVisible = rulers }
+    }
+
     static func diskText(_ url: URL) -> String? {
         guard let data = try? Data(contentsOf: url) else { return nil }
         return String(data: data, encoding: .utf8)
@@ -96,7 +146,7 @@ final class SplitPane: NSView, NSTextViewDelegate {
     var onChange: (() -> Void)?
     var onMoveLeft: ((URL) -> Void)?
     var baseDirectory: (() -> URL?)?
-    private let scroll = NSTextView.scrollableTextView()
+    private let scroll = CodeScrollView.make()
     var textView: NSTextView { scroll.documentView as! NSTextView }
     private var strip: TabStrip!
     private lazy var addons = TextAddons(code: self)

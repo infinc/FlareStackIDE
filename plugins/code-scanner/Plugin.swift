@@ -20,15 +20,24 @@ final class CodeScannerAddon: WindowAddon {
     init(editor: EditorWindowController, scanner: CodeScanner) {
         self.editor = editor
         self.scanner = scanner
-        let layout = DiagnosticLayoutManager()
-        layout.delegate = CodeView.lineHeights
-        editor.textView.textContainer?.replaceLayoutManager(layout)
+        CodeView.replaceLayoutManager(editor.textView, with: DiagnosticLayoutManager())
         badge.isHidden = true
         badge.onClick = { [weak self] in self?.toggleProblems() }
         editor.addOverlay(badge)
         problemsView.onSelect = { [weak editor] in editor?.reveal($0.url, range: $0.range) }
+        NotificationCenter.default.addObserver(self, selector: #selector(marksRequested), name: CodeScanner.marksRequest, object: editor.textView)
         apply()
         schedule(delay: 0)
+    }
+
+    @objc private func marksRequested() { postMarks() }
+
+    private func postMarks() {
+        guard let textView = editor?.textView else { return }
+        let mine = editor?.fileURL.flatMap { diagnostics[$0] } ?? []
+        let lines = { (severity: Diagnostic.Severity) in Set(mine.filter { $0.severity == severity }.map(\.line)) }
+        NotificationCenter.default.post(name: CodeScanner.marksChanged, object: textView,
+                                        userInfo: ["errors": lines(.error), "warnings": lines(.warning)])
     }
 
     private func toggleProblems() {
@@ -85,6 +94,7 @@ final class CodeScannerAddon: WindowAddon {
         }
         editor.recolor()
         textView.needsDisplay = true
+        postMarks()
     }
 
     func fileOpened() {
@@ -108,15 +118,17 @@ final class CodeScannerAddon: WindowAddon {
 
     func detach() {
         work?.cancel()
+        NotificationCenter.default.removeObserver(self)
+        if let textView = editor?.textView {
+            NotificationCenter.default.post(name: CodeScanner.marksChanged, object: textView, userInfo: ["errors": Set<Int>(), "warnings": Set<Int>()])
+        }
         badge.removeFromSuperview()
         if let feed { editor?.removeFeed(feed) }
         guard let editor else { return }
         if let storage = editor.textView.textStorage {
             storage.removeAttribute(.toolTip, range: NSRange(location: 0, length: storage.length))
         }
-        let layout = NSLayoutManager()
-        layout.delegate = CodeView.lineHeights
-        editor.textView.textContainer?.replaceLayoutManager(layout)
+        CodeView.replaceLayoutManager(editor.textView, with: NSLayoutManager())
         editor.recolor()
     }
 }
