@@ -1,6 +1,53 @@
 import AppKit
 
+private final class HiddenRanges {
+    let ranges: [NSRange]
+    init(_ ranges: [NSRange]) { self.ranges = ranges }
+    func contains(_ index: Int) -> Bool { ranges.contains { NSLocationInRange(index, $0) } }
+}
+
 final class FixedLineHeights: NSObject, NSLayoutManagerDelegate {
+    private let hidden = NSMapTable<NSTextStorage, HiddenRanges>(keyOptions: [.weakMemory, .objectPointerPersonality], valueOptions: .strongMemory)
+
+    func setHidden(_ ranges: [NSRange], for textView: NSTextView, invalidating: Bool = true) {
+        guard let storage = textView.textStorage else { return }
+        let old = hidden.object(forKey: storage)?.ranges ?? []
+        guard old != ranges else { return }
+        if ranges.isEmpty { hidden.removeObject(forKey: storage) } else { hidden.setObject(HiddenRanges(ranges), forKey: storage) }
+        if invalidating { invalidate(old + ranges, in: textView) }
+    }
+
+    func invalidate(_ ranges: [NSRange], in textView: NSTextView) {
+        guard let storage = textView.textStorage, let layout = textView.layoutManager else { return }
+        let whole = NSRange(location: 0, length: storage.length)
+        for range in ranges {
+            let clipped = NSIntersectionRange(NSRange(location: max(range.location - 1, 0), length: range.length + 1), whole)
+            guard clipped.length > 0 else { continue }
+            layout.invalidateGlyphs(forCharacterRange: clipped, changeInLength: 0, actualCharacterRange: nil)
+            layout.invalidateLayout(forCharacterRange: clipped, actualCharacterRange: nil)
+        }
+        textView.needsDisplay = true
+    }
+
+    private func hidden(in layoutManager: NSLayoutManager) -> HiddenRanges? {
+        layoutManager.textStorage.flatMap { hidden.object(forKey: $0) }
+    }
+
+    func layoutManager(_ layoutManager: NSLayoutManager, shouldGenerateGlyphs glyphs: UnsafePointer<CGGlyph>,
+                       properties: UnsafePointer<NSLayoutManager.GlyphProperty>, characterIndexes: UnsafePointer<Int>,
+                       font: NSFont, forGlyphRange glyphRange: NSRange) -> Int {
+        guard let hidden = hidden(in: layoutManager) else { return 0 }
+        var changed = Array(UnsafeBufferPointer(start: properties, count: glyphRange.length))
+        for i in 0..<glyphRange.length where hidden.contains(characterIndexes[i]) { changed[i] = .null }
+        layoutManager.setGlyphs(glyphs, properties: changed, characterIndexes: characterIndexes, font: font, forGlyphRange: glyphRange)
+        return glyphRange.length
+    }
+
+    func layoutManager(_ layoutManager: NSLayoutManager, shouldUse action: NSLayoutManager.ControlCharacterAction,
+                       forControlCharacterAt charIndex: Int) -> NSLayoutManager.ControlCharacterAction {
+        hidden(in: layoutManager)?.contains(charIndex) == true ? .zeroAdvancement : action
+    }
+
     func layoutManager(_ layoutManager: NSLayoutManager, shouldSetLineFragmentRect lineFragmentRect: UnsafeMutablePointer<NSRect>,
                        lineFragmentUsedRect: UnsafeMutablePointer<NSRect>, baselineOffset: UnsafeMutablePointer<CGFloat>,
                        in textContainer: NSTextContainer, forGlyphRange glyphRange: NSRange) -> Bool {

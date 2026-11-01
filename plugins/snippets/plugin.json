@@ -1,0 +1,10 @@
+{
+  "id": "snippets",
+  "name": "Snippets",
+  "version": "1.0",
+  "author": "FlareStackIDE",
+  "symbol": "text.insert",
+  "summary": "トリガーの単語と Tab で定型文を展開",
+  "fileExtensions": [],
+  "files": ["plugin.dylib", "snippets.json", "README.md"]
+}

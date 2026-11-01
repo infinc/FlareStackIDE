@@ -13,6 +13,8 @@ final class Minimap: NSView {
     private static let font = CTFontCreateWithName("Menlo" as CFString, 2.4, nil)
     private static let marksChanged = Notification.Name("FlareStackIDE.lineMarks")
     private static let marksRequest = Notification.Name("FlareStackIDE.lineMarksRequest")
+    private static let bookmarksChanged = Notification.Name("FlareStackIDE.bookmarks")
+    private static let bookmarksRequest = Notification.Name("FlareStackIDE.bookmarksRequest")
 
     private weak var textView: NSTextView?
     private weak var scroll: NSScrollView?
@@ -21,6 +23,7 @@ final class Minimap: NSView {
     private var cache: [Int: CTLine] = [:]
     private var errors: Set<Int> = []
     private var warnings: Set<Int> = []
+    private var bookmarks: Set<Int> = []
     private var hovering = false
     private var dragging = false
     private var grab: CGFloat = 0
@@ -41,8 +44,10 @@ final class Minimap: NSView {
         center.addObserver(self, selector: #selector(positionChanged), name: NSView.frameDidChangeNotification, object: textView)
         center.addObserver(self, selector: #selector(contentChanged), name: .settingsChanged, object: nil)
         center.addObserver(self, selector: #selector(marksChanged(_:)), name: Self.marksChanged, object: textView)
+        center.addObserver(self, selector: #selector(bookmarksChanged(_:)), name: Self.bookmarksChanged, object: textView)
         contentChanged()
         center.post(name: Self.marksRequest, object: textView)
+        center.post(name: Self.bookmarksRequest, object: textView)
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -100,6 +105,11 @@ final class Minimap: NSView {
     @objc private func marksChanged(_ note: Notification) {
         errors = note.userInfo?["errors"] as? Set<Int> ?? []
         warnings = note.userInfo?["warnings"] as? Set<Int> ?? []
+        needsDisplay = true
+    }
+
+    @objc private func bookmarksChanged(_ note: Notification) {
+        bookmarks = note.userInfo?["lines"] as? Set<Int> ?? []
         needsDisplay = true
     }
 
@@ -193,6 +203,8 @@ final class Minimap: NSView {
                 NSColor.systemRed.withAlphaComponent(0.6).setFill()
             } else if warnings.contains(index + 1) {
                 NSColor.systemYellow.withAlphaComponent(0.55).setFill()
+            } else if bookmarks.contains(index + 1) {
+                NSColor.systemBlue.withAlphaComponent(0.6).setFill()
             } else {
                 continue
             }

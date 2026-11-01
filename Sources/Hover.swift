@@ -7,10 +7,13 @@ private final class HoverShade: NSView {
 enum ButtonHover {
     private static let shade = HoverShade()
     private static weak var hovered: NSView?
+    private static var restingTint: NSColor?
 
     static func tint(for view: NSView) -> NSColor {
         view.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? .white : .black
     }
+
+    static func activeFill(for view: NSView) -> NSColor { tint(for: view).withAlphaComponent(0.14) }
 
     static func install() {
         NotificationCenter.default.addObserver(forName: NSWindow.didBecomeKeyNotification, object: nil, queue: .main) { note in
@@ -34,10 +37,20 @@ enum ButtonHover {
         return view is TabItemView
     }
 
+    private static func isIcon(_ button: NSButton) -> Bool { !button.isBordered && button.image?.isTemplate == true }
+
     private static func set(_ view: NSView?) {
         guard view !== hovered else { return }
+        if let button = hovered as? NSButton, isIcon(button) { button.contentTintColor = restingTint }
+        restingTint = nil
         hovered = view
         shade.removeFromSuperview()
+        if let button = view as? NSButton {
+            guard isIcon(button) else { return }
+            restingTint = button.contentTintColor
+            button.contentTintColor = tint(for: button)
+            return
+        }
         guard let view else { return }
         let insets = view.alignmentRectInsets
         shade.frame = NSRect(x: insets.left, y: insets.bottom, width: view.bounds.width - insets.left - insets.right,
@@ -45,7 +58,7 @@ enum ButtonHover {
         shade.autoresizingMask = [.width, .height]
         shade.wantsLayer = true
         shade.layer?.cornerRadius = 5
-        shade.layer?.backgroundColor = tint(for: view).withAlphaComponent(0.14).cgColor
+        shade.layer?.backgroundColor = activeFill(for: view).cgColor
         view.addSubview(shade)
     }
 }
