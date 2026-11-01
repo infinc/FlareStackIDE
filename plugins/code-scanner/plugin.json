@@ -1,7 +1,7 @@
 {
   "id": "code-scanner",
   "name": "Code Scanner",
-  "version": "1.2",
+  "version": "1.3",
   "author": "FlareStackIDE",
   "symbol": "exclamationmark.triangle",
   "summary": "コードのエラーと警告をリアルタイムで表示",

@@ -5,33 +5,54 @@ function escape(text) {
 const allowedTags = ["img", "br", "a", "p", "div", "center", "span", "b", "i", "u", "strong", "em", "sub", "sup", "small", "picture", "source", "details", "summary", "kbd"];
 const allowedAttrs = ["src", "srcset", "alt", "title", "width", "height", "align", "href", "media", "style"];
 
+function unsafe(url) {
+  const plain = url.replace(/&#(x?)([0-9a-f]+);?/gi, (_, hex, n) => String.fromCharCode(parseInt(n, hex ? 16 : 10)))
+    .replace(/&(tab|newline|colon);/gi, (_, n) => n.toLowerCase() === "colon" ? ":" : "")
+    .replace(/[\u0000-\u0020]/g, "");
+  return /^(javascript:|vbscript:|data:text\/html)/i.test(plain);
+}
+
 function attrs(source) {
   const out = [];
   source.replace(/([a-zA-Z-]+)\s*=\s*("([^"]*)"|'([^']*)'|([^\s"'>]+))/g, (_, name, __, d, s, b) => {
     const key = name.toLowerCase(), value = d ?? s ?? b ?? "";
-    if (!allowedAttrs.includes(key) || /^\s*javascript:/i.test(value)) return "";
+    if (!allowedAttrs.includes(key) || unsafe(value)) return "";
     out.push(` ${key}="${value.replace(/"/g, "&quot;")}"`);
     return "";
   });
   return out.join("");
 }
 
+const TARGET = "\\(\\s*(?:<([^>\\n]+)>|((?:[^()\\s]|\\([^()\\s]*\\))+))(?:\\s+\"([^\"]*)\")?\\s*\\)";
+
 function inline(text) {
   const keep = [];
   const hold = (html) => { keep.push(html); return "\u0000" + (keep.length - 1) + "\u0000"; };
-  let s = text.replace(/`([^`]+)`/g, (_, c) => hold(`<code>${escape(c)}</code>`));
+  const open = (url, title) => hold(`<a href="${escape(url)}"${title ? ` title="${escape(title)}"` : ""}>`);
+  const linkable = (url) => /^(https?:|mailto:|#)/i.test(url);
+  let s = text.replace(/(`+)(?!`)(.+?)\1(?!`)|\\([\\`*_{}\[\]()#+\-.!~|<>])/g, (_, ticks, c, mark) =>
+    mark ? hold(escape(mark)) : hold(`<code>${escape(c.replace(/^ (.*) $/, "$1"))}</code>`));
+  s = s.replace(new RegExp("!\\[([^\\]]*)\\]" + TARGET, "g"), (_, alt, wrapped, plain, title) => {
+    const url = wrapped ?? plain;
+    return unsafe(url) ? alt : hold(`<img src="${url.replace(/"/g, "%22")}" alt="${escape(alt)}"${title ? ` title="${escape(title)}"` : ""}>`);
+  });
+  s = s.replace(new RegExp("\\[([^\\]]+)\\]" + TARGET, "g"), (_, label, wrapped, plain, title) => {
+    const url = wrapped ?? plain;
+    return linkable(url) ? open(url, title) + label + hold("</a>") : label;
+  });
+  s = s.replace(/<((?:https?:\/\/|mailto:)[^\s<>]+)>/gi, (_, url) => open(url) + escape(url) + hold("</a>"));
   s = s.replace(/<(\/?)([a-zA-Z]+)([^>]*?)\/?>/g, (all, close, tag, rest) =>
     allowedTags.includes(tag.toLowerCase()) ? hold(close ? `</${tag.toLowerCase()}>` : `<${tag.toLowerCase()}${attrs(rest)}>`) : all);
-  s = s.replace(/!\[([^\]]*)\]\(\s*<?([^)\s>]+)>?(?:\s+"([^"]*)")?\s*\)/g, (_, alt, url, title) =>
-    /^\s*javascript:/i.test(url) ? alt : hold(`<img src="${url.replace(/"/g, "%22")}" alt="${escape(alt)}"${title ? ` title="${escape(title)}"` : ""}>`));
   s = escape(s);
-  s = s.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (_, label, url) =>
-    /^(https?:|mailto:|#)/.test(url) ? `<a href="${url}">${label}</a>` : label);
-  s = s.replace(/(\*\*|__)(.+?)\1/g, "<strong>$2</strong>")
-       .replace(/\*(.+?)\*/g, "<em>$1</em>")
-       .replace(/(^|\W)_(.+?)_(?=\W|$)/g, "$1<em>$2</em>")
+  s = s.replace(/(\*\*|__)(\S(?:.*?\S)?)\1/g, "<strong>$2</strong>")
+       .replace(/\*(\S(?:.*?\S)?)\*/g, "<em>$1</em>")
+       .replace(/(^|\W)_(\S(?:.*?\S)?)_(?=\W|$)/g, "$1<em>$2</em>")
        .replace(/~~(.+?)~~/g, "<del>$1</del>");
   return s.replace(/\u0000(\d+)\u0000/g, (_, i) => keep[i]);
+}
+
+function slug(text) {
+  return escape(text.trim().toLowerCase().replace(/[`*_~\[\]()!"'.,:;?#]/g, "").replace(/\s+/g, "-"));
 }
 
 function cells(line) {
@@ -65,26 +86,44 @@ function table(header, divider, rows) {
 
 function body(markdown) {
   const out = [];
-  let code = null, list = null, para = [];
+  let code = null, fence = null, list = null, para = [], quote = [];
   const flushPara = () => { if (para.length) { out.push(`<p>${para.map(inline).join("<br>")}</p>`); para = []; } };
   const closeList = () => { if (list) { out.push(`</${list}>`); list = null; } };
   const openList = (tag) => { if (list !== tag) { closeList(); out.push(`<${tag}>`); list = tag; } };
+  const flushQuote = () => { if (quote.length) { out.push(`<blockquote>${body(quote.join("\n"))}</blockquote>`); quote = []; } };
 
   const lines = markdown.replace(/\r\n/g, "\n").split("\n");
   for (let n = 0; n < lines.length; n++) {
     const raw = lines[n];
     const line = raw.trim();
-    if (line.startsWith("```")) {
-      flushPara(); closeList();
-      if (code === null) { code = []; } else { out.push(`<pre><code>${escape(code.join("\n"))}</code></pre>`); code = null; }
+    const mark = line.match(/^(`{3,}|~{3,})(.*)$/);
+    if (code !== null) {
+      if (mark && mark[1][0] === fence[0] && mark[1].length >= fence.length && !mark[2].trim()) {
+        out.push(`<pre><code>${escape(code.join("\n"))}</code></pre>`);
+        code = null;
+      } else {
+        code.push(raw);
+      }
       continue;
     }
-    if (code !== null) { code.push(raw); continue; }
+    if (mark && !(mark[1][0] === "`" && mark[2].includes("`"))) {
+      flushPara(); closeList(); flushQuote();
+      code = [];
+      fence = mark[1];
+      continue;
+    }
+    const quoted = raw.match(/^ {0,3}>\s?(.*)$/);
+    if (quoted) { flushPara(); closeList(); quote.push(quoted[1]); continue; }
+    flushQuote();
     if (!line) { flushPara(); closeList(); continue; }
 
     const depth = Math.floor((raw.match(/^[ \t]*/)[0].length) / 2);
     let m;
-    if (line.includes("|") && n + 1 < lines.length && isDivider(lines[n + 1])) {
+    if (para.length && /^(=+|-+)$/.test(line)) {
+      const level = line[0] === "=" ? 1 : 2;
+      out.push(`<h${level} id="${slug(para.join(" "))}">${inline(para.join(" "))}</h${level}>`);
+      para = [];
+    } else if (line.includes("|") && n + 1 < lines.length && isDivider(lines[n + 1]) && cells(line).length === cells(lines[n + 1]).length) {
       flushPara(); closeList();
       const rows = [];
       let k = n + 2;
@@ -93,8 +132,8 @@ function body(markdown) {
       n = k - 1;
     } else if ((m = line.match(/^(#{1,6})\s+(.*)$/))) {
       flushPara(); closeList();
-      out.push(`<h${m[1].length}>${inline(m[2])}</h${m[1].length}>`);
-    } else if (/^([-*_]\s*){3,}$/.test(line)) {
+      out.push(`<h${m[1].length} id="${slug(m[2])}">${inline(m[2])}</h${m[1].length}>`);
+    } else if (/^([-*_])(\s*\1){2,}$/.test(line)) {
       flushPara(); closeList();
       out.push("<hr>");
     } else if ((m = line.match(/^[-*+]\s+(?:\[([ xX])\]\s+)?(.*)$/))) {
@@ -104,16 +143,15 @@ function body(markdown) {
     } else if ((m = line.match(/^(\d+)[.)]\s+(.*)$/))) {
       flushPara(); openList("ol");
       out.push(`<li value="${m[1]}" style="margin-left:${depth * 16}px">${inline(m[2])}</li>`);
-    } else if ((m = line.match(/^>\s?(.*)$/))) {
-      flushPara(); closeList();
-      out.push(`<blockquote>${inline(m[1])}</blockquote>`);
+    } else if (list && !para.length && /^\s/.test(raw)) {
+      out[out.length - 1] = out[out.length - 1].replace(/<\/li>$/, () => `<br>${inline(line)}</li>`);
     } else {
       closeList();
       para.push(line);
     }
   }
   if (code !== null) out.push(`<pre><code>${escape(code.join("\n"))}</code></pre>`);
-  flushPara(); closeList();
+  flushPara(); closeList(); flushQuote();
   return out.join("\n");
 }
 

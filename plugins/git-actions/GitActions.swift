@@ -37,7 +37,7 @@ struct GitState {
     static func load(from dir: URL) -> GitState? {
         guard let root = Git.run(["rev-parse", "--show-toplevel"], in: dir)?.trimmingCharacters(in: .whitespacesAndNewlines), !root.isEmpty else { return nil }
         let top = URL(fileURLWithPath: root)
-        let branches = (Git.run(["branch", "--format=%(refname:short)"], in: top) ?? "").split(separator: "\n").map(String.init)
+        let branches = (Git.run(["branch", "--format=%(refname:short)"], in: top) ?? "").split(separator: "\n").map(String.init).filter { !$0.hasPrefix("(") }
         let upstream = Git.run(["rev-parse", "--abbrev-ref", "@{u}"], in: top)?.trimmingCharacters(in: .whitespacesAndNewlines)
         var state = GitState(top: top, branch: Git.branch(in: top) ?? "", branches: branches, upstream: upstream, staged: [], unstaged: [])
         let entries = (Git.run(["status", "--porcelain=v1", "-z", "--untracked-files=all"], in: top) ?? "")
@@ -49,7 +49,7 @@ struct GitState {
             guard entry.count > 3 else { continue }
             let x = entry.first!, y = entry[entry.index(after: entry.startIndex)]
             let path = String(entry.dropFirst(3))
-            if x == "R" || x == "C" { i += 1 }
+            if x == "R" || x == "C" || y == "R" || y == "C" { i += 1 }
             if x == "?" {
                 state.unstaged.append(GitChange(kind: .untracked, path: path, staged: false))
                 continue
@@ -234,21 +234,34 @@ final class GitActionsView: NSView, NSTableViewDataSource, NSTableViewDelegate {
                 self.reload()
                 self.editor?.refreshGit()
                 self.editor?.reloadGitReport()
+                NotificationCenter.default.post(name: Notification.Name("FlareStackIDE.gitChanged"), object: nil)
             }
         }
     }
 
+    private var saved: Bool {
+        guard let error = editor?.saveAll() else { return true }
+        editor?.showError(error)
+        return false
+    }
+
     @objc private func fetch() { perform(["fetch", "--all"], title: "fetch", done: "fetch しました") }
 
-    @objc private func pull() { perform(["pull", "--ff-only"], title: "pull", done: "pull しました") }
+    @objc private func pull() {
+        if saved { perform(["pull", "--ff-only"], title: "pull", done: "pull しました") }
+    }
 
     @objc private func push() {
         perform(state?.upstream == nil ? ["push", "-u", "origin", "HEAD"] : ["push"], title: "push", done: "push しました")
     }
 
-    @objc private func stash() { perform(["stash", "push", "--include-untracked"], title: "stash", done: "stash しました") }
+    @objc private func stash() {
+        if saved { perform(["stash", "push", "--include-untracked"], title: "stash", done: "stash しました") }
+    }
 
-    @objc private func stashPop() { perform(["stash", "pop"], title: "stash pop", done: "stash を戻しました") }
+    @objc private func stashPop() {
+        if saved { perform(["stash", "pop"], title: "stash pop", done: "stash を戻しました") }
+    }
 
     @objc private func commit() {
         let text = message.string.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -260,15 +273,13 @@ final class GitActionsView: NSView, NSTableViewDataSource, NSTableViewDelegate {
             Toasts.post("コミットメッセージを入力してください", in: window)
             return
         }
-        if let error = editor?.saveAll() {
-            editor?.showError(error)
-            return
-        }
+        guard saved else { return }
         perform(["commit", "-m", text], title: "コミット", done: "コミットしました") { [weak self] in self?.message.string = "" }
     }
 
     @objc private func branchChosen() {
         guard let state, let title = branchMenu.titleOfSelectedItem, title != state.branch else { return }
+        guard saved else { return branchMenu.selectItem(withTitle: state.branch) }
         guard title == "新しいブランチ…" else { return perform(["switch", title], title: "ブランチの切り替え") }
         branchMenu.selectItem(withTitle: state.branch)
         let alert = NSAlert()
@@ -286,13 +297,13 @@ final class GitActionsView: NSView, NSTableViewDataSource, NSTableViewDelegate {
     }
 
     @objc private func stage(_ sender: NSButton) {
-        guard case .file(let change) = rows[sender.tag] else { return }
-        perform(["add", "--", change.path], title: "ステージ")
+        guard rows.indices.contains(sender.tag), case .file(let change) = rows[sender.tag] else { return }
+        perform(["--literal-pathspecs", "add", "--", change.path], title: "ステージ")
     }
 
     @objc private func unstage(_ sender: NSButton) {
-        guard case .file(let change) = rows[sender.tag] else { return }
-        perform(["reset", "-q", "--", change.path], title: "ステージの解除")
+        guard rows.indices.contains(sender.tag), case .file(let change) = rows[sender.tag] else { return }
+        perform(["--literal-pathspecs", "reset", "-q", "--", change.path], title: "ステージの解除")
     }
 
     @objc private func stageAll() { perform(["add", "--all"], title: "ステージ") }
@@ -300,15 +311,15 @@ final class GitActionsView: NSView, NSTableViewDataSource, NSTableViewDelegate {
     @objc private func unstageAll() { perform(["reset", "-q"], title: "ステージの解除") }
 
     @objc private func discard(_ sender: NSButton) {
-        guard case .file(let change) = rows[sender.tag] else { return }
+        guard rows.indices.contains(sender.tag), case .file(let change) = rows[sender.tag] else { return }
         let alert = NSAlert()
         alert.alertStyle = .warning
         alert.messageText = change.kind == .untracked ? "\(change.path) を削除しますか？" : "\(change.path) の変更を破棄しますか？"
         alert.informativeText = "この操作は元に戻せません。"
         alert.addButton(withTitle: change.kind == .untracked ? "削除" : "破棄")
         alert.addButton(withTitle: "キャンセル")
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-        perform(change.kind == .untracked ? ["clean", "-f", "--", change.path] : ["checkout", "--", change.path], title: "変更の破棄")
+        guard alert.runModal() == .alertFirstButtonReturn, saved else { return }
+        perform(["--literal-pathspecs"] + (change.kind == .untracked ? ["clean", "-f", "--", change.path] : ["checkout", "--", change.path]), title: "変更の破棄")
     }
 
     @objc private func rowClicked() {

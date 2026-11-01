@@ -24,6 +24,7 @@ private final class WebTab {
 }
 
 final class WebFeed: NSView, WKNavigationDelegate, WKUIDelegate, NSTextFieldDelegate {
+    private static let local = #"^(localhost|\d{1,3}(\.\d{1,3}){3}|\[[0-9a-fA-F:]+\])(:\d+)?(/.*)?$"#
     static let pluginID = "web-feed"
     private static let storeKey = "WebFeed.Tabs"
     private static let home = URL(string: "https://www.google.com/")!
@@ -231,6 +232,7 @@ final class WebFeed: NSView, WKNavigationDelegate, WKUIDelegate, NSTextFieldDele
         let input = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !input.isEmpty else { return nil }
         if input.range(of: #"^[a-zA-Z][a-zA-Z0-9+.-]*://"#, options: .regularExpression) != nil { return URL(string: input) }
+        if input.range(of: Self.local, options: .regularExpression) != nil, let url = URL(string: "http://" + input) { return url }
         if !input.contains(" "), input.contains("."), let url = URL(string: "https://" + input), url.host != nil { return url }
         var components = URLComponents(string: "https://www.google.com/search")!
         components.queryItems = [URLQueryItem(name: "q", value: input)]
@@ -273,10 +275,18 @@ final class WebFeed: NSView, WKNavigationDelegate, WKUIDelegate, NSTextFieldDele
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction,
                  decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
         if let url = action.request.url, let scheme = url.scheme?.lowercased(), !["http", "https", "about", "data", "blob"].contains(scheme) {
-            NSWorkspace.shared.open(url)
+            if scheme != "file", action.navigationType == .linkActivated { NSWorkspace.shared.open(url) }
             return decisionHandler(.cancel)
         }
         decisionHandler(.allow)
+    }
+
+    func webView(_ webView: WKWebView, runOpenPanelWith parameters: WKOpenPanelParameters, initiatedByFrame frame: WKFrameInfo,
+                 completionHandler: @escaping ([URL]?) -> Void) {
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = parameters.allowsMultipleSelection
+        panel.canChooseDirectories = parameters.allowsDirectories
+        panel.begin { completionHandler($0 == .OK ? panel.urls : nil) }
     }
 
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {

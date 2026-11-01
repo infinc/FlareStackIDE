@@ -64,9 +64,9 @@ final class RunnerStore {
             let q = Self.quote(file.path)
             let out = Self.quote(NSTemporaryDirectory() + "\(appName)-run-\(config.id)")
             switch file.pathExtension.lowercased() {
-            case "py": run = "python3 \(q)"
+            case "py", "pyw": run = "python3 \(q)"
             case "js", "mjs", "cjs": run = "node \(q)"
-            case "ts", "mts": run = "npx --yes tsx \(q)"
+            case "ts", "mts", "cts", "tsx": run = "npx --yes tsx \(q)"
             case "rb": run = "ruby \(q)"
             case "sh", "bash": run = "bash \(q)"
             case "zsh": run = "zsh \(q)"
@@ -84,7 +84,7 @@ final class RunnerStore {
         } else {
             run = script
         }
-        return "cd \(Self.quote(dir.path)) && \(run); code=$?; printf '\\n\\033[2m[プロセスは終了コード %d で終了しました]\\033[0m\\n' $code"
+        return "cd \(Self.quote(dir.path)) && \(run)\ncode=$?; printf '\\n\\033[2m[プロセスは終了コード %d で終了しました]\\033[0m\\n' $code"
     }
 
     static func edit(_ config: RunConfig?, base: URL, title: String) -> RunConfig? {

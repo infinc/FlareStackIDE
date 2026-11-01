@@ -94,6 +94,10 @@ final class RunnerAddon: NSObject, WindowAddon {
 
     private func run(_ config: RunConfig) {
         guard let editor else { return }
+        if config.script.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            Toasts.post("スクリプトが空です", message: "「\(config.name)」を編集して、実行するファイルかコマンドを指定してください", in: editor.window)
+            return
+        }
         if let error = editor.saveAll() { return editor.showError(error) }
         let feed = self.feed ?? {
             let stop = FeedView.barButton(symbol: "stop.fill", tip: "停止", target: self, action: #selector(stopRun))

@@ -989,6 +989,7 @@ final class ScriptExtension: NSObject, EditorExtension, WKNavigationDelegate {
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction,
                  decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
         if action.navigationType == .linkActivated, let url = action.request.url {
+            if url.scheme == LocalFileScheme.scheme, url.fragment != nil { return decisionHandler(.allow) }
             NSWorkspace.shared.open(url)
             return decisionHandler(.cancel)
         }

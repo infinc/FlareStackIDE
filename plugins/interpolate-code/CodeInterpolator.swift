@@ -32,6 +32,7 @@ enum CodeInterpolator {
             replace(textView, range, with: text + inner + close, caret: 1, selection: range.length)
             return false
         }
+        if text == close, char(string, range.location - 1) == text, char(string, range.location - 2) == text { return true }
         if text == close, char(string, range.location - 1).range(of: #"[A-Za-z0-9_]"#, options: .regularExpression) != nil { return true }
         if !next.isEmpty, next.rangeOfCharacter(from: .whitespacesAndNewlines) == nil, !closers.contains(next), !",;:".contains(next) {
             return true

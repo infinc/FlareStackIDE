@@ -1,0 +1,10 @@
+{
+  "id": "pdf-viewer",
+  "name": "PDF Viewer",
+  "version": "1.0",
+  "author": "FlareStackIDE",
+  "symbol": "doc.text.image",
+  "summary": "PDF をファイル編集画面で表示",
+  "fileExtensions": ["pdf"],
+  "files": ["plugin.dylib", "README.md"]
+}

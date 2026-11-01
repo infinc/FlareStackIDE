@@ -49,6 +49,8 @@
 | Lines | 編集画面の左に行数を表示（列の幅・色を設定可、設定画面でプレビュー。Bookmarks の印と Code Folding の開閉マークも表示） |
 | Light Editer | ファイルだけを開く軽量エディタ |
 | Web Feed | 下のフィードで Google などの Web ページをタブで開く |
+| Picture/Video Viewer | 写真と動画をファイル編集画面で表示（サイズと解像度も表示、編集は不可） |
+| PDF Viewer | PDF をファイル編集画面で表示（編集は不可） |
 | Interpolate Code | カッコ・引用符・リスト記号・インデントを自動で補完 |
 | Interpolate Variable | 入力中の変数名・モジュール名の候補を表示（Tab / Enter で補完） |
 | File Tab Cleaner | タブの列の一番左にボタンを追加し、押すとタブをすべて閉じる（ファイルは消えない） |

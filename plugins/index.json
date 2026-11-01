@@ -2,7 +2,7 @@
   {
     "id": "md-viewer",
     "name": "MD Viewer",
-    "version": "1.4",
+    "version": "1.5",
     "author": "FlareStackIDE",
     "symbol": "doc.richtext",
     "summary": "Markdown ファイルをリアルタイムでプレビュー",
@@ -11,7 +11,7 @@
   {
     "id": "code-colors",
     "name": "Code Colors",
-    "version": "1.0",
+    "version": "1.1",
     "author": "FlareStackIDE",
     "symbol": "paintbrush.pointed",
     "summary": "主要なプログラミング言語のコードに色をつける",
@@ -20,7 +20,7 @@
   {
     "id": "runner",
     "name": "Runner",
-    "version": "1.1",
+    "version": "1.2",
     "author": "FlareStackIDE",
     "symbol": "play.circle",
     "summary": "起動構成を作ってプログラムを実行",
@@ -29,7 +29,7 @@
   {
     "id": "code-scanner",
     "name": "Code Scanner",
-    "version": "1.2",
+    "version": "1.3",
     "author": "FlareStackIDE",
     "symbol": "exclamationmark.triangle",
     "summary": "コードのエラーと警告をリアルタイムで表示",
@@ -56,7 +56,7 @@
   {
     "id": "web-feed",
     "name": "Web Feed",
-    "version": "1.1",
+    "version": "1.2",
     "author": "FlareStackIDE",
     "symbol": "globe",
     "summary": "下のフィードで Google などの Web ページを開く",
@@ -65,7 +65,7 @@
   {
     "id": "interpolate-code",
     "name": "Interpolate Code",
-    "version": "1.1",
+    "version": "1.2",
     "author": "FlareStackIDE",
     "symbol": "curlybraces",
     "summary": "カッコ・引用符・リスト記号・インデントを自動で補完",
@@ -110,7 +110,7 @@
   {
     "id": "copy-manager",
     "name": "Copy Manager",
-    "version": "1.0",
+    "version": "1.1",
     "author": "FlareStackIDE",
     "symbol": "paperclip",
     "summary": "コピーした履歴を保存して、選んでもう一度コピー",
@@ -128,7 +128,7 @@
   {
     "id": "snippets",
     "name": "Snippets",
-    "version": "1.0",
+    "version": "1.1",
     "author": "FlareStackIDE",
     "symbol": "text.insert",
     "summary": "トリガーの単語と Tab で定型文を展開",
@@ -137,7 +137,7 @@
   {
     "id": "code-folding",
     "name": "Code Folding",
-    "version": "1.0",
+    "version": "1.1",
     "author": "FlareStackIDE",
     "symbol": "chevron.down.square",
     "summary": "関数やブロックを折りたたんで隠す",
@@ -146,7 +146,7 @@
   {
     "id": "bookmarks",
     "name": "Bookmarks",
-    "version": "1.0",
+    "version": "1.1",
     "author": "FlareStackIDE",
     "symbol": "bookmark",
     "summary": "行に印を付けて、一覧やキーで移動",
@@ -155,7 +155,7 @@
   {
     "id": "git-actions",
     "name": "Git Actions",
-    "version": "1.0",
+    "version": "1.1",
     "author": "FlareStackIDE",
     "symbol": "arrow.triangle.pull",
     "summary": "ステージ・コミット・push・pull・ブランチ切り替えを GUI で",
@@ -164,10 +164,28 @@
   {
     "id": "git-blame",
     "name": "Git Blame",
-    "version": "1.0",
+    "version": "1.1",
     "author": "FlareStackIDE",
     "symbol": "person.text.rectangle",
     "summary": "カーソル行の作者・日付・コミットを行末に表示",
     "fileExtensions": []
+  },
+  {
+    "id": "picture-video-viewer",
+    "name": "Picture/Video Viewer",
+    "version": "1.0",
+    "author": "FlareStackIDE",
+    "symbol": "photo.on.rectangle",
+    "summary": "写真と動画をファイル編集画面で表示",
+    "fileExtensions": ["jpg", "jpeg", "png", "gif", "svg", "webp", "bmp", "tif", "tiff", "heic", "ico", "mp4", "m4v", "mov", "avi"]
+  },
+  {
+    "id": "pdf-viewer",
+    "name": "PDF Viewer",
+    "version": "1.0",
+    "author": "FlareStackIDE",
+    "symbol": "doc.text.image",
+    "summary": "PDF をファイル編集画面で表示",
+    "fileExtensions": ["pdf"]
   }
 ]

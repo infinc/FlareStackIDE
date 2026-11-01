@@ -35,7 +35,7 @@ enum SnippetStore {
     }
 
     static func available(for ext: String) -> [Snippet] {
-        let user = items.filter { $0.languages.isEmpty || $0.languages.contains(ext) }
+        let user = items.filter { !$0.body.isEmpty && ($0.languages.isEmpty || $0.languages.contains(ext)) }
         let triggers = Set(user.map(\.trigger))
         return user + builtin.filter { ($0.languages.isEmpty || $0.languages.contains(ext)) && !triggers.contains($0.trigger) }
     }
@@ -81,7 +81,7 @@ final class SnippetSettingsView: NSStackView, NSTextFieldDelegate {
         add.image = NSImage(systemSymbolName: "plus", accessibilityDescription: nil)
         add.imagePosition = .imageLeading
         add.controlSize = .small
-        let hint = NSTextField(wrappingLabelWithString: "左からトリガー・拡張子（カンマ区切り、空なら全ファイル）・本文。本文の \\n は改行、\\t はタブ、$1 や ${1:初期値} は Tab で移動する場所、$0 は最後の位置です。")
+        let hint = NSTextField(wrappingLabelWithString: "左からトリガー・拡張子（カンマ区切り、空なら全ファイル）・本文。本文の \\n は改行、\\t はタブ、\\\\ は \\、$1 や ${1:初期値} は Tab で移動する場所、$0 は最後の位置です。")
         hint.textColor = .secondaryLabelColor
         hint.font = .systemFont(ofSize: 11)
         hint.preferredMaxLayoutWidth = 380
@@ -92,11 +92,23 @@ final class SnippetSettingsView: NSStackView, NSTextFieldDelegate {
     required init(coder: NSCoder) { fatalError() }
 
     private static func escape(_ text: String) -> String {
-        text.replacingOccurrences(of: "\n", with: "\\n").replacingOccurrences(of: "\t", with: "\\t")
+        text.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\n", with: "\\n").replacingOccurrences(of: "\t", with: "\\t")
     }
 
     private static func unescape(_ text: String) -> String {
-        text.replacingOccurrences(of: "\\n", with: "\n").replacingOccurrences(of: "\\t", with: "\t")
+        var result = ""
+        var escaped = false
+        for c in text {
+            if escaped {
+                result += c == "n" ? "\n" : c == "t" ? "\t" : c == "\\" ? "\\" : "\\\(c)"
+                escaped = false
+            } else if c == "\\" {
+                escaped = true
+            } else {
+                result.append(c)
+            }
+        }
+        return escaped ? result + "\\" : result
     }
 
     private func field(_ value: String, width: CGFloat, placeholder: String, id: String, tag: Int) -> NSTextField {

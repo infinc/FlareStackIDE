@@ -21,6 +21,8 @@
 
 ## 対応しているファイル
 
-`py`（python3）、`js` / `mjs` / `cjs`（node）、`ts`（tsx）、`rb`、`sh` / `bash` / `zsh`、`swift`、`go`、`php`、`pl`、`lua`、`java`、`c` / `cpp`（clang でビルドして実行）、`rs`（rustc でビルドして実行）。それ以外は実行可能ファイルならそのまま実行します。
+`py` / `pyw`（python3）、`js` / `mjs` / `cjs`（node）、`ts` / `tsx` / `mts` / `cts`（tsx）、`rb`、`sh` / `bash` / `zsh`、`swift`、`go`、`php`、`pl`、`lua`、`java`、`c` / `cpp`（clang でビルドして実行）、`rs`（rustc でビルドして実行）。それ以外は実行可能ファイルならそのまま実行します。
+
+スクリプトが空の起動構成は実行せず、通知を出します。
 
 実行フィードの ■ で停止、↻ で再実行できます。

@@ -99,21 +99,23 @@ final class DragLift {
 
 final class DragReorder {
     private let view: NSView
-    private let stack: NSStackView
+    private var stack: NSStackView
+    private let peers: [NSStackView]
     private let movable: (NSView) -> Bool
     private let vertical: Bool
     private let lift: DragLift
     private(set) var moved = false
 
-    init?(view: NSView, event: NSEvent, movable: @escaping (NSView) -> Bool = { _ in true }) {
+    init?(view: NSView, event: NSEvent, peers: [NSStackView] = [], movable: @escaping (NSView) -> Bool = { _ in true }) {
         guard let stack = view.superview as? NSStackView else { return nil }
         vertical = stack.orientation == .vertical
         guard let lift = DragLift(view: view, event: event, axis: vertical ? .vertical : .horizontal) else { return nil }
         self.view = view
         self.stack = stack
+        self.peers = peers
         self.movable = movable
         self.lift = lift
-        stack.wantsLayer = true
+        ([stack] + peers).forEach { $0.wantsLayer = true }
         view.alphaValue = 0
     }
 
@@ -122,7 +124,25 @@ final class DragReorder {
     func drag(_ event: NSEvent) {
         moved = true
         lift.move(event)
+        transfer(to: event.locationInWindow)
         reorder(at: stack.convert(event.locationInWindow, from: nil))
+    }
+
+    private func distance(_ other: NSStackView, _ point: NSPoint) -> CGFloat {
+        let frame = other.convert(other.bounds, to: nil)
+        return max(frame.minY - point.y, point.y - frame.maxY, 0)
+    }
+
+    private func transfer(to point: NSPoint) {
+        guard let target = peers.min(by: { distance($0, point) < distance($1, point) }), target !== stack,
+              distance(target, point) < distance(stack, point) else { return }
+        let above = target.convert(target.bounds, to: nil).midY > stack.convert(stack.bounds, to: nil).midY
+        stack.removeArrangedSubview(view)
+        view.removeFromSuperview()
+        target.insertArrangedSubview(view, at: above ? target.arrangedSubviews.count : 0)
+        stack.layoutSubtreeIfNeeded()
+        stack = target
+        target.layoutSubtreeIfNeeded()
     }
 
     private func reorder(at point: NSPoint) {

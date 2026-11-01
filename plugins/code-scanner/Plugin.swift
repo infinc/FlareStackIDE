@@ -111,7 +111,8 @@ final class CodeScannerAddon: WindowAddon {
 
     func decorate(_ layout: NSLayoutManager) {
         guard let layout = layout as? DiagnosticLayoutManager else { return }
-        for mark in layout.marks where mark.color == .systemRed {
+        let length = layout.textStorage?.length ?? 0
+        for mark in layout.marks where mark.color == .systemRed && NSMaxRange(mark.range) <= length {
             layout.addTemporaryAttribute(.foregroundColor, value: NSColor.systemRed, forCharacterRange: mark.range)
         }
     }
