@@ -1,0 +1,10 @@
+{
+  "id": "code-folding",
+  "name": "Code Folding",
+  "version": "1.0",
+  "author": "FlareStackIDE",
+  "symbol": "chevron.down.square",
+  "summary": "関数やブロックを折りたたんで隠す",
+  "fileExtensions": [],
+  "files": ["plugin.dylib", "main.js", "README.md"]
+}

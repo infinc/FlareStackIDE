@@ -46,7 +46,7 @@
 | Code Colors | 主要な言語のコードに色を付ける |
 | Runner | 起動構成を作ってプログラムを実行 |
 | Code Scanner | エラー・警告をリアルタイムで表示（Markdown・HTML・YAML・TOML なども検査） |
-| Lines | 編集画面の左に行数を表示（列の幅・色を設定可、設定画面でプレビュー） |
+| Lines | 編集画面の左に行数を表示（列の幅・色を設定可、設定画面でプレビュー。Bookmarks の印と Code Folding の開閉マークも表示） |
 | Light Editer | ファイルだけを開く軽量エディタ |
 | Web Feed | 下のフィードで Google などの Web ページをタブで開く |
 | Interpolate Code | カッコ・引用符・リスト記号・インデントを自動で補完 |
@@ -55,7 +55,12 @@
 | Shortcut | 好きなキーの組み合わせに「実行」「テーマ切り替え」「プロジェクトを保存して終了」を割り当てる |
 | Terminal Copy | ターミナルで文字をドラッグして選択し、マウスを離すだけでコピー |
 | Copy Manager | 上のバーにクリップのボタンを追加し、コピーした履歴から選んでもう一度コピー |
-| Scroll Assistant | 編集画面の右にコード全体を小さく表示し、ドラッグでスクロール（Code Scanner のエラー行を赤、警告行を黄色で表示） |
+| Scroll Assistant | 編集画面の右にコード全体を小さく表示し、ドラッグでスクロール（Code Scanner のエラー行を赤、警告行を黄色、Bookmarks の行を青で表示） |
+| Snippets | トリガーの単語と Tab で定型文を展開（自分のスニペットも登録可） |
+| Code Folding | 関数やブロックを折りたたんで隠す（⌥⌘← / ⌥⌘→） |
+| Bookmarks | 行に印を付けて、一覧や ⌥⌘↓ / ⌥⌘↑ で移動 |
+| Git Actions | ステージ・コミット・push・pull・ブランチ切り替え・stash を GUI で操作 |
+| Git Blame | カーソル行の作者・日付・コミットを行末に表示 |
 
 プラグインは `plugins/` にあり、`plugins/index.json` がカタログです。アプリ本体（dmg）にはプラグインのコードを含めず、インストールしたときだけ `plugins/<id>/` の Swift をコンパイルした `plugin.dylib` をダウンロードして読み込みます。プラグインを更新したときは、再起動すると新しいコードが反映されます。
 

@@ -1,0 +1,13 @@
+{
+  "id": "git-blame",
+  "name": "Git Blame",
+  "version": "1.0",
+  "author": "FlareStackIDE",
+  "symbol": "person.text.rectangle",
+  "summary": "カーソル行の作者・日付・コミットを行末に表示",
+  "fileExtensions": [],
+  "files": ["plugin.dylib", "README.md"],
+  "settings": [
+    { "key": "textColor", "title": "文字色", "type": "color" }
+  ]
+}

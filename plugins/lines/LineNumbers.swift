@@ -6,7 +6,20 @@ final class LineNumberRuler: NSRulerView {
     private weak var textView: NSTextView?
     private var starts: [Int] = [0]
     private var startsLength = -1
+    private var bookmarks: Set<Int> = []
+    private var foldActive = false
+    private var foldOpen: Set<Int> = []
+    private var foldClosed: Set<Int> = []
+    private var drawn: [(line: Int, top: CGFloat)] = []
     var keepVisible = true
+
+    private static let bookmarksChanged = Notification.Name("FlareStackIDE.bookmarks")
+    private static let bookmarksRequest = Notification.Name("FlareStackIDE.bookmarksRequest")
+    private static let foldMarks = Notification.Name("FlareStackIDE.foldMarks")
+    private static let foldMarksRequest = Notification.Name("FlareStackIDE.foldMarksRequest")
+    private static let rulerClicked = Notification.Name("FlareStackIDE.rulerClicked")
+
+    private var trailing: CGFloat { foldActive ? 18 : 8 }
 
     init(textView: NSTextView, scroll: NSScrollView) {
         self.textView = textView
@@ -17,9 +30,56 @@ final class LineNumberRuler: NSRulerView {
         NotificationCenter.default.addObserver(self, selector: #selector(textChanged), name: NSText.didChangeNotification, object: textView)
         NotificationCenter.default.addObserver(self, selector: #selector(redraw), name: .settingsChanged, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(redraw), name: NSView.boundsDidChangeNotification, object: scroll.contentView)
+        NotificationCenter.default.addObserver(self, selector: #selector(bookmarksUpdated(_:)), name: Self.bookmarksChanged, object: textView)
+        NotificationCenter.default.addObserver(self, selector: #selector(foldsUpdated(_:)), name: Self.foldMarks, object: textView)
+        NotificationCenter.default.post(name: Self.bookmarksRequest, object: textView)
+        NotificationCenter.default.post(name: Self.foldMarksRequest, object: textView)
     }
 
     required init(coder: NSCoder) { fatalError() }
+
+    @objc private func bookmarksUpdated(_ note: Notification) {
+        bookmarks = note.userInfo?["lines"] as? Set<Int> ?? []
+        needsDisplay = true
+    }
+
+    @objc private func foldsUpdated(_ note: Notification) {
+        foldActive = note.userInfo != nil
+        foldOpen = note.userInfo?["open"] as? Set<Int> ?? []
+        foldClosed = note.userInfo?["closed"] as? Set<Int> ?? []
+        needsDisplay = true
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        guard let line = drawn.last(where: { $0.top <= point.y })?.line else { return }
+        let zone = foldActive && point.x >= ruleThickness - trailing ? "fold" : "line"
+        NotificationCenter.default.post(name: Self.rulerClicked, object: textView, userInfo: ["line": line, "zone": zone])
+    }
+
+    private func drawBookmark(top: CGFloat) {
+        NSColor.systemBlue.setFill()
+        NSBezierPath(ovalIn: NSRect(x: 3, y: top + (Settings.lineHeight - 6) / 2, width: 6, height: 6)).fill()
+    }
+
+    private func drawFoldMark(top: CGFloat, closed: Bool) {
+        let center = NSPoint(x: ruleThickness - 10, y: top + Settings.lineHeight / 2)
+        let path = NSBezierPath()
+        path.lineWidth = 1.5
+        path.lineCapStyle = .round
+        path.lineJoinStyle = .round
+        if closed {
+            path.move(to: NSPoint(x: center.x - 2, y: center.y - 4))
+            path.line(to: NSPoint(x: center.x + 2, y: center.y))
+            path.line(to: NSPoint(x: center.x - 2, y: center.y + 4))
+        } else {
+            path.move(to: NSPoint(x: center.x - 4, y: center.y - 2))
+            path.line(to: NSPoint(x: center.x, y: center.y + 2))
+            path.line(to: NSPoint(x: center.x + 4, y: center.y - 2))
+        }
+        Self.textColor.withAlphaComponent(closed ? 1 : 0.55).setStroke()
+        path.stroke()
+    }
 
     override func viewDidMoveToSuperview() {
         super.viewDidMoveToSuperview()
@@ -89,7 +149,7 @@ final class LineNumberRuler: NSRulerView {
 
         let starts = lineStarts()
         let attrs = Self.attributes
-        let width = Self.width(lines: starts.count)
+        let width = Self.width(lines: starts.count) + trailing - 8
         if abs(ruleThickness - width) > 0.5 {
             ruleThickness = width
             return
@@ -107,11 +167,17 @@ final class LineNumberRuler: NSRulerView {
         }
         let lineHeight = Settings.lineHeight
         var line = lo
+        drawn = []
         while line < starts.count, starts[line] <= NSMaxRange(chars) {
             let start = starts[line]
             let fragment: NSRect
             if start < length {
-                fragment = layout.lineFragmentRect(forGlyphAt: layout.glyphIndexForCharacter(at: start), effectiveRange: nil)
+                let glyph = layout.glyphIndexForCharacter(at: start)
+                if layout.propertyForGlyph(at: glyph) == .null {
+                    line += 1
+                    continue
+                }
+                fragment = layout.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
             } else if layout.extraLineFragmentTextContainer != nil {
                 fragment = layout.extraLineFragmentRect
             } else {
@@ -119,8 +185,13 @@ final class LineNumberRuler: NSRulerView {
             }
             let label = "\(line + 1)" as NSString
             let size = label.size(withAttributes: attrs)
-            let y = offset + fragment.minY + (lineHeight - size.height) / 2
-            label.draw(at: NSPoint(x: ruleThickness - size.width - 8, y: y), withAttributes: attrs)
+            let top = offset + fragment.minY
+            let y = top + (lineHeight - size.height) / 2
+            label.draw(at: NSPoint(x: ruleThickness - size.width - trailing, y: y), withAttributes: attrs)
+            drawn.append((line + 1, top))
+            if bookmarks.contains(line + 1) { drawBookmark(top: top) }
+            if foldClosed.contains(line + 1) { drawFoldMark(top: top, closed: true) }
+            else if foldOpen.contains(line + 1) { drawFoldMark(top: top, closed: false) }
             line += 1
         }
     }

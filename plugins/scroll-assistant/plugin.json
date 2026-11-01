@@ -1,7 +1,7 @@
 {
   "id": "scroll-assistant",
   "name": "Scroll Assistant",
-  "version": "1.0",
+  "version": "1.1",
   "author": "FlareStackIDE",
   "symbol": "sidebar.right",
   "summary": "編集画面の右にコード全体を小さく表示してスクロール",

@@ -1,0 +1,10 @@
+{
+  "id": "git-actions",
+  "name": "Git Actions",
+  "version": "1.0",
+  "author": "FlareStackIDE",
+  "symbol": "arrow.triangle.pull",
+  "summary": "ステージ・コミット・push・pull・ブランチ切り替えを GUI で",
+  "fileExtensions": [],
+  "files": ["plugin.dylib", "README.md"]
+}

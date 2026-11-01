@@ -1,0 +1,10 @@
+{
+  "id": "bookmarks",
+  "name": "Bookmarks",
+  "version": "1.0",
+  "author": "FlareStackIDE",
+  "symbol": "bookmark",
+  "summary": "行に印を付けて、一覧やキーで移動",
+  "fileExtensions": [],
+  "files": ["plugin.dylib", "README.md"]
+}

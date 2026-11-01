@@ -98,7 +98,7 @@ final class ToolStripButton: NSButton {
 
     override func draw(_ dirtyRect: NSRect) {
         if active {
-            NSColor.selectedContentBackgroundColor.withAlphaComponent(0.3).setFill()
+            ButtonHover.activeFill(for: self).setFill()
             NSBezierPath(roundedRect: bounds, xRadius: 6, yRadius: 6).fill()
         }
         super.draw(dirtyRect)
@@ -645,7 +645,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
         reloadGitReport()
     }
 
-    @objc private func reloadGitReport() {
+    @objc func reloadGitReport() {
         let dir = baseDirectory
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let overview = Git.overview(for: dir)
