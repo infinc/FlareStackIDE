@@ -1,0 +1,13 @@
+{
+  "id": "csv-viewer",
+  "name": "CSV Viewer",
+  "version": "1.0",
+  "author": "FlareStackIDE",
+  "symbol": "tablecells",
+  "summary": "CSV と TSV を表で表示して編集",
+  "fileExtensions": [
+    "csv",
+    "tsv"
+  ],
+  "files": ["plugin.dylib", "README.md"]
+}

@@ -111,6 +111,21 @@ enum PluginStore {
         }.resume()
     }
 
+    static func installBundled() {
+        let fm = FileManager.default
+        let marker = directory.appendingPathComponent("bundled.stamp")
+        guard let bundled = Bundle.main.resourceURL?.appendingPathComponent("Plugins"),
+              let stamp = try? String(contentsOf: bundled.appendingPathComponent(".build-stamp"), encoding: .utf8),
+              stamp != (try? String(contentsOf: marker, encoding: .utf8)) else { return }
+        let ids = (try? fm.contentsOfDirectory(atPath: bundled.path))?.filter(isValidID) ?? []
+        try? fm.createDirectory(at: directory, withIntermediateDirectories: true)
+        for id in ids {
+            try? fm.removeItem(at: folder(id))
+            try? fm.copyItem(at: bundled.appendingPathComponent(id), to: folder(id))
+        }
+        try? stamp.write(to: marker, atomically: true, encoding: .utf8)
+    }
+
     static func installed(_ id: String) -> PluginInfo? {
         guard let data = try? Data(contentsOf: manifest(id)),
               let info = try? JSONDecoder().decode(PluginInfo.self, from: data),

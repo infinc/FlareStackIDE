@@ -185,6 +185,7 @@ final class TabItemView: NSView, NSTextFieldDelegate {
     private var reorder: DragReorder?
     private var oldTitle = ""
     var selected = false { didSet { updateColor() } }
+    var tint: NSColor? { didSet { updateColor() } }
     var plain = false { didSet { needsDisplay = true } }
     var title: String {
         get { label.stringValue }
@@ -283,7 +284,7 @@ final class TabItemView: NSView, NSTextFieldDelegate {
     }
 
     private func updateColor() {
-        label.textColor = selected ? .labelColor : .secondaryLabelColor
+        label.textColor = tint ?? (selected ? .labelColor : .secondaryLabelColor)
         needsDisplay = true
     }
 

@@ -136,6 +136,10 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
     private lazy var rootResolved = root.url.resolvingSymlinksInPath().path
     private var treeFeed: FeedView!
     private let leftPane = NSView()
+    private let rightColumn = NSView()
+    private let topFeedHost = NSView()
+    private let topFeedLine = NSBox()
+    private var topFeedHeight: NSLayoutConstraint!
     private var pluginFeed: FeedView?
     private let pluginPage = PluginPage()
     private let barHost = NSView()
@@ -372,8 +376,29 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
 
         mainSplit.isVertical = true
         mainSplit.dividerStyle = .thin
+        topFeedHost.translatesAutoresizingMaskIntoConstraints = false
+        topFeedHost.clipsToBounds = true
+        topFeedLine.boxType = .separator
+        topFeedLine.isHidden = true
+        topFeedLine.translatesAutoresizingMaskIntoConstraints = false
+        rightSplit.translatesAutoresizingMaskIntoConstraints = false
+        [topFeedHost, topFeedLine, rightSplit].forEach(rightColumn.addSubview)
+        topFeedHeight = topFeedHost.heightAnchor.constraint(equalToConstant: 0)
+        NSLayoutConstraint.activate([
+            topFeedHeight,
+            topFeedHost.topAnchor.constraint(equalTo: rightColumn.topAnchor),
+            topFeedHost.leadingAnchor.constraint(equalTo: rightColumn.leadingAnchor),
+            topFeedHost.trailingAnchor.constraint(equalTo: rightColumn.trailingAnchor),
+            topFeedLine.topAnchor.constraint(equalTo: topFeedHost.bottomAnchor),
+            topFeedLine.leadingAnchor.constraint(equalTo: rightColumn.leadingAnchor),
+            topFeedLine.trailingAnchor.constraint(equalTo: rightColumn.trailingAnchor),
+            rightSplit.topAnchor.constraint(equalTo: topFeedLine.bottomAnchor),
+            rightSplit.leadingAnchor.constraint(equalTo: rightColumn.leadingAnchor),
+            rightSplit.trailingAnchor.constraint(equalTo: rightColumn.trailingAnchor),
+            rightSplit.bottomAnchor.constraint(equalTo: rightColumn.bottomAnchor),
+        ])
         mainSplit.addArrangedSubview(leftPane)
-        mainSplit.addArrangedSubview(rightSplit)
+        mainSplit.addArrangedSubview(rightColumn)
         mainSplit.setHoldingPriority(.defaultLow + 10, forSubviewAt: 0)
         mainSplit.translatesAutoresizingMaskIntoConstraints = false
 
@@ -576,10 +601,16 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
         mainSplit.adjustSubviews()
     }
 
+    private func closeFeed(_ feed: NSView) {
+        feed.isHidden = true
+        feed.removeFromSuperview()
+    }
+
     func showBottom(_ view: NSView) {
         let upper = inUpper(view)
+        let height = rightSplit.arrangedSubviews.count > 1 ? editorSplit.frame.height : rightSplit.bounds.height * 0.62
         for (feed, button) in feeds where inUpper(feed) == upper {
-            if feed !== view { feed.isHidden = true }
+            if feed !== view { closeFeed(feed) }
             button?.active = feed === view
         }
         view.isHidden = false
@@ -597,13 +628,13 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
             }
             closeEmptyLeft()
             rightSplit.adjustSubviews()
-            rightSplit.setPosition(rightSplit.bounds.height * 0.62, ofDividerAt: 0)
+            rightSplit.setPosition(height, ofDividerAt: 0)
         }
     }
 
     func hideBottom(_ view: NSView) {
         feeds.first { $0.feed === view }?.button?.active = false
-        view.isHidden = true
+        closeFeed(view)
         closeEmptyLeft()
         rightSplit.adjustSubviews()
         window?.makeFirstResponder(textView)
@@ -673,6 +704,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
             git = nil
             branchView.isHidden = true
             outline.reloadData(forRowIndexes: IndexSet(integersIn: 0..<outline.numberOfRows), columnIndexes: IndexSet(integer: 0))
+            colorTabs()
             return
         }
         guard !gitRefreshing else { return }
@@ -689,13 +721,19 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
                 self.branchView.isHidden = snapshot == nil
                 let rows = IndexSet(integersIn: 0..<self.outline.numberOfRows)
                 self.outline.reloadData(forRowIndexes: rows, columnIndexes: IndexSet(integer: 0))
+                self.colorTabs()
             }
         }
     }
 
-    private func gitState(_ node: FileNode) -> GitFileState? {
-        guard let git else { return nil }
-        let path = node.url.standardizedFileURL.path
+    private func colorTabs() {
+        tabs.forEach { $0.value.tint = gitState($0.key)?.color }
+        splitPane?.colorTabs()
+    }
+
+    private func gitState(_ url: URL) -> GitFileState? {
+        guard let git, url.isFileURL else { return nil }
+        let path = url.standardizedFileURL.path
         let base = root.url.standardizedFileURL.path
         let resolved = path.hasPrefix(base) ? rootResolved + path.dropFirst(base.count) : path
         return git.state(of: resolved)
@@ -750,7 +788,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
             return cell
         }()
         cell.textField?.stringValue = node.url.lastPathComponent
-        cell.textField?.textColor = gitState(node)?.color ?? .labelColor
+        cell.textField?.textColor = gitState(node.url)?.color ?? .labelColor
         cell.imageView?.image = NSWorkspace.shared.icon(forFile: node.url.path)
         return cell
     }
@@ -970,6 +1008,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
             tab.onClose = { [weak self] in self?.closeTab(url) }
             if url.isFileURL { tab.contextMenu = { [weak self] in self?.tabMenu(url) } }
             tab.draggable = true
+            tab.tint = gitState(url)?.color
             tabs[url] = tab
             fileTabs.stack.addArrangedSubview(tab)
         }
@@ -1032,7 +1071,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
         updateTitle()
     }
 
-    private func reloadExternal(_ paths: Set<String>) {
+    func reloadExternal(_ paths: Set<String>) {
         let changed = { (url: URL) -> Bool in
             let real = realpath(url.path, nil).map { defer { free($0) }; return String(cString: $0) }
             return paths.contains(url.standardizedFileURL.path) || real.map(paths.contains) == true
@@ -1602,6 +1641,7 @@ extension EditorWindowController {
         pane.onChange = { [weak self] in self?.updateCloud() }
         pane.onEmpty = { [weak self] in self?.closeSplit() }
         pane.baseDirectory = { [weak self] in self?.projectDirectory }
+        pane.tabColor = { [weak self] in self?.gitState($0)?.color }
         pane.onMoveLeft = { [weak self] url in
             guard let self, let buffer = self.splitPane?.take(url) else { return }
             self.storeCurrent()
@@ -1725,14 +1765,23 @@ extension EditorWindowController: CodeEditing {
         guard !pluginFeeds.contains(where: { $0.feed === feed }) else { return }
         pluginFeeds.append((feed, button))
         feed.isHidden = true
-        rightSplit.addArrangedSubview(feed)
     }
 
     func removeFeed(_ feed: NSView) {
         if !feed.isHidden { hideBottom(feed) }
         pluginFeeds.removeAll { $0.feed === feed }
-        feed.removeFromSuperview()
-        rightSplit.adjustSubviews()
+    }
+
+    func toggleTopFeed(_ feed: NSView, height: CGFloat) {
+        let open = feed.superview === topFeedHost
+        topFeedHost.subviews.forEach { $0.removeFromSuperview() }
+        topFeedHeight.constant = open ? 0 : height
+        topFeedLine.isHidden = open
+        if !open { show(feed, in: topFeedHost) }
+    }
+
+    func removeTopFeed(_ feed: NSView) {
+        if feed.superview === topFeedHost { toggleTopFeed(feed, height: 0) }
     }
 
     func toggleBottom(_ feed: NSView) {

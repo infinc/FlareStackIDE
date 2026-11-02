@@ -1,0 +1,10 @@
+{
+  "id": "emmet",
+  "name": "Emmet",
+  "version": "1.0",
+  "author": "FlareStackIDE",
+  "symbol": "chevron.left.forwardslash.chevron.right",
+  "summary": "ul>li*3 のような短い記法を Tab で HTML や CSS に展開",
+  "fileExtensions": [],
+  "files": ["plugin.dylib", "README.md"]
+}

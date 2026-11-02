@@ -20,7 +20,7 @@
   {
     "id": "runner",
     "name": "Runner",
-    "version": "1.2",
+    "version": "1.3",
     "author": "FlareStackIDE",
     "symbol": "play.circle",
     "summary": "起動構成を作ってプログラムを実行",
@@ -29,10 +29,10 @@
   {
     "id": "code-scanner",
     "name": "Code Scanner",
-    "version": "1.3",
+    "version": "1.4",
     "author": "FlareStackIDE",
     "symbol": "exclamationmark.triangle",
-    "summary": "コードのエラーと警告をリアルタイムで表示",
+    "summary": "コードのエラーと警告を編集の1.5秒後に表示",
     "fileExtensions": []
   },
   {
@@ -119,7 +119,7 @@
   {
     "id": "scroll-assistant",
     "name": "Scroll Assistant",
-    "version": "1.1",
+    "version": "1.2",
     "author": "FlareStackIDE",
     "symbol": "sidebar.right",
     "summary": "編集画面の右にコード全体を小さく表示してスクロール",
@@ -187,5 +187,68 @@
     "symbol": "doc.text.image",
     "summary": "PDF をファイル編集画面で表示",
     "fileExtensions": ["pdf"]
+  },
+  {
+    "id": "multi-cursor",
+    "name": "Multi Cursor",
+    "version": "1.0",
+    "author": "FlareStackIDE",
+    "symbol": "character.cursor.ibeam",
+    "summary": "同じ文字列を検索して、開いているファイルや全てのファイルをまとめて変換",
+    "fileExtensions": []
+  },
+  {
+    "id": "help-me",
+    "name": "Help Me",
+    "version": "1.0",
+    "author": "FlareStackIDE",
+    "symbol": "arrow.uturn.backward.circle",
+    "summary": "上のバーのボタンで編集を巻き戻す・やり直す",
+    "fileExtensions": []
+  },
+  {
+    "id": "sticky-scroll",
+    "name": "Sticky Scroll",
+    "version": "1.0",
+    "author": "FlareStackIDE",
+    "symbol": "pin",
+    "summary": "今いる関数やクラスの行を上端に固定",
+    "fileExtensions": []
+  },
+  {
+    "id": "color-preview",
+    "name": "Color Preview",
+    "version": "1.0",
+    "author": "FlareStackIDE",
+    "symbol": "paintbrush.pointed",
+    "summary": "色の図・RGB・16進数で色を作り、値をコピー",
+    "fileExtensions": []
+  },
+  {
+    "id": "csv-viewer",
+    "name": "CSV Viewer",
+    "version": "1.0",
+    "author": "FlareStackIDE",
+    "symbol": "tablecells",
+    "summary": "CSV と TSV を表で表示して編集",
+    "fileExtensions": ["csv", "tsv"]
+  },
+  {
+    "id": "emmet",
+    "name": "Emmet",
+    "version": "1.0",
+    "author": "FlareStackIDE",
+    "symbol": "chevron.left.forwardslash.chevron.right",
+    "summary": "ul>li*3 のような短い記法を Tab で HTML や CSS に展開",
+    "fileExtensions": []
+  },
+  {
+    "id": "word-highlight",
+    "name": "Word Highlight",
+    "version": "1.0",
+    "author": "FlareStackIDE",
+    "symbol": "highlighter",
+    "summary": "クリックした語と同じ語の背景をファイル内で強調",
+    "fileExtensions": []
   }
 ]

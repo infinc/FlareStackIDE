@@ -6,6 +6,10 @@ private final class HiddenRanges {
     func contains(_ index: Int) -> Bool { ranges.contains { NSLocationInRange(index, $0) } }
 }
 
+private final class BackgroundMarks {
+    var owners: [String: [(range: NSRange, color: NSColor)]] = [:]
+}
+
 final class FixedLineHeights: NSObject, NSLayoutManagerDelegate {
     private let hidden = NSMapTable<NSTextStorage, HiddenRanges>(keyOptions: [.weakMemory, .objectPointerPersonality], valueOptions: .strongMemory)
 
@@ -93,6 +97,20 @@ final class CodeScrollView: NSScrollView {
 
 enum CodeView {
     static let lineHeights = FixedLineHeights()
+    private static let backgrounds = NSMapTable<NSTextView, BackgroundMarks>(keyOptions: [.weakMemory, .objectPointerPersonality], valueOptions: .strongMemory)
+
+    static func setBackgrounds(_ marks: [(range: NSRange, color: NSColor)], owner: String, in textView: NSTextView) {
+        guard let layout = textView.layoutManager, let storage = textView.textStorage else { return }
+        let table = backgrounds.object(forKey: textView) ?? BackgroundMarks()
+        backgrounds.setObject(table, forKey: textView)
+        table.owners[owner] = marks.isEmpty ? nil : marks
+        layout.removeTemporaryAttribute(.backgroundColor, forCharacterRange: NSRange(location: 0, length: storage.length))
+        for key in table.owners.keys.sorted() {
+            for mark in table.owners[key] ?? [] where NSMaxRange(mark.range) <= storage.length {
+                layout.addTemporaryAttribute(.backgroundColor, value: mark.color, forCharacterRange: mark.range)
+            }
+        }
+    }
 
     static func center(_ textView: NSTextView, on range: NSRange) {
         guard let layout = textView.layoutManager, let container = textView.textContainer, let scroll = textView.enclosingScrollView else { return }
@@ -193,6 +211,7 @@ final class SplitPane: NSView, NSTextViewDelegate {
     var onChange: (() -> Void)?
     var onMoveLeft: ((URL) -> Void)?
     var baseDirectory: (() -> URL?)?
+    var tabColor: ((URL) -> NSColor?)?
     private let scroll = CodeScrollView.make()
     var textView: NSTextView { scroll.documentView as! NSTextView }
     private var strip: TabStrip!
@@ -236,6 +255,8 @@ final class SplitPane: NSView, NSTextViewDelegate {
 
     func contains(_ url: URL) -> Bool { tabs[url] != nil }
 
+    func colorTabs() { tabs.forEach { $0.value.tint = tabColor?($0.key) } }
+
     func open(_ buffer: Buffer) {
         storeCurrent()
         let url = buffer.url
@@ -244,6 +265,7 @@ final class SplitPane: NSView, NSTextViewDelegate {
             let tab = TabItemView(title: url.lastPathComponent, closable: true)
             tab.toolTip = url.path
             tab.draggable = true
+            tab.tint = tabColor?(url)
             tab.onSelect = { [weak self] in
                 guard let self, self.current?.url != url, let buffer = self.buffers[url] else { return }
                 self.open(buffer)

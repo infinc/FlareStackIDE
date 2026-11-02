@@ -1,0 +1,18 @@
+{
+  "id": "multi-cursor",
+  "name": "Multi Cursor",
+  "version": "1.0",
+  "author": "FlareStackIDE",
+  "symbol": "character.cursor.ibeam",
+  "summary": "同じ文字列を検索して、開いているファイルや全てのファイルをまとめて変換",
+  "fileExtensions": [],
+  "files": ["plugin.dylib", "README.md"],
+  "settings": [
+    {
+      "key": "highlightColor",
+      "title": "ヒットした文字列の背景色",
+      "type": "color",
+      "default": "#FFD60A"
+    }
+  ]
+}

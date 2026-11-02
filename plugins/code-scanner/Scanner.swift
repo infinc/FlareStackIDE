@@ -150,8 +150,25 @@ final class CodeScanner {
     }
 }
 
+struct DiagnosticMark {
+    var range: NSRange
+    let color: NSColor
+    let message: String
+}
+
 final class DiagnosticLayoutManager: NSLayoutManager {
-    var marks: [(range: NSRange, color: NSColor)] = []
+    var marks: [DiagnosticMark] = []
+
+    func shiftMarks(edited: NSRange, delta: Int) {
+        let oldEnd = NSMaxRange(edited) - delta
+        marks = marks.compactMap { mark in
+            if NSMaxRange(mark.range) <= edited.location { return mark }
+            guard mark.range.location >= oldEnd else { return nil }
+            var moved = mark
+            moved.range.location += delta
+            return moved
+        }
+    }
 
     override func drawGlyphs(forGlyphRange glyphsToShow: NSRange, at origin: NSPoint) {
         super.drawGlyphs(forGlyphRange: glyphsToShow, at: origin)
@@ -227,7 +244,108 @@ final class ProblemBadge: NSView {
 
     override func mouseDown(with event: NSEvent) { onClick?() }
 
+    override func rightMouseDown(with event: NSEvent) { onClick?() }
+
     override func resetCursorRects() { addCursorRect(bounds, cursor: .pointingHand) }
+}
+
+private final class DiagnosticPopup: NSView {
+    private let label = NSTextField(wrappingLabelWithString: "")
+    private static let maxWidth: CGFloat = 420
+
+    init(message: String) {
+        super.init(frame: .zero)
+        wantsLayer = true
+        layer?.cornerRadius = 6
+        layer?.borderWidth = 1
+        layer?.borderColor = NSColor.separatorColor.cgColor
+        layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+        label.stringValue = message
+        label.font = .systemFont(ofSize: 11)
+        label.maximumNumberOfLines = 4
+        label.preferredMaxLayoutWidth = Self.maxWidth - 16
+        addSubview(label)
+        let size = label.sizeThatFits(NSSize(width: Self.maxWidth - 16, height: .greatestFiniteMagnitude))
+        label.frame = NSRect(x: 8, y: 5, width: ceil(size.width), height: ceil(size.height))
+        frame.size = NSSize(width: ceil(size.width) + 16, height: ceil(size.height) + 10)
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+}
+
+final class DiagnosticHover {
+    private static let delay: TimeInterval = 1.5
+    private weak var editor: EditorWindowController?
+    private var monitor: Any?
+    private var pending: DispatchWorkItem?
+    private var popup: NSView?
+    private var target: NSRange?
+
+    init(editor: EditorWindowController?) { self.editor = editor }
+
+    func start() {
+        guard monitor == nil else { return }
+        monitor = NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved, .scrollWheel, .leftMouseDown, .keyDown]) { [weak self] event in
+            if event.type == .mouseMoved { self?.moved(event) } else { self?.hide() }
+            return event
+        }
+    }
+
+    func stop() {
+        hide()
+        if let monitor { NSEvent.removeMonitor(monitor) }
+        monitor = nil
+    }
+
+    func hide() {
+        pending?.cancel()
+        pending = nil
+        popup?.removeFromSuperview()
+        popup = nil
+        target = nil
+    }
+
+    private func mark(at event: NSEvent) -> DiagnosticMark? {
+        guard let textView = editor?.textView, event.window === textView.window, let scroll = textView.enclosingScrollView,
+              let layout = textView.layoutManager as? DiagnosticLayoutManager, let container = textView.textContainer,
+              scroll.contentView.bounds.contains(scroll.contentView.convert(event.locationInWindow, from: nil)) else { return nil }
+        let origin = textView.textContainerOrigin
+        let point = textView.convert(event.locationInWindow, from: nil)
+        let inner = NSPoint(x: point.x - origin.x, y: point.y - origin.y)
+        let glyph = layout.glyphIndex(for: inner, in: container)
+        guard layout.boundingRect(forGlyphRange: NSRange(location: glyph, length: 1), in: container).insetBy(dx: -1, dy: -1).contains(inner) else { return nil }
+        let index = layout.characterIndexForGlyph(at: glyph)
+        return layout.marks.first { NSLocationInRange(index, $0.range) }
+    }
+
+    private func moved(_ event: NSEvent) {
+        let found = mark(at: event)
+        guard found?.range != target else { return }
+        hide()
+        guard let found else { return }
+        target = found.range
+        let item = DispatchWorkItem { [weak self] in self?.show(found) }
+        pending = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.delay, execute: item)
+    }
+
+    private func show(_ mark: DiagnosticMark) {
+        guard let textView = editor?.textView, let content = textView.window?.contentView,
+              let layout = textView.layoutManager, let container = textView.textContainer else { return }
+        let glyphs = layout.glyphRange(forCharacterRange: mark.range, actualCharacterRange: nil)
+        let rect = layout.boundingRect(forGlyphRange: glyphs, in: container)
+            .offsetBy(dx: textView.textContainerOrigin.x, dy: textView.textContainerOrigin.y)
+        let anchor = textView.convert(rect, to: content)
+        let view = DiagnosticPopup(message: mark.message)
+        var y = anchor.minY - view.frame.height - 3
+        if y < 4 { y = anchor.maxY + 3 }
+        let x = max(min(anchor.minX, content.bounds.maxX - view.frame.width - 6), 6)
+        view.setFrameOrigin(NSPoint(x: x, y: y))
+        content.addSubview(view, positioned: .above, relativeTo: nil)
+        popup = view
+    }
 }
 
 final class ProblemsView: NSView, NSTableViewDataSource, NSTableViewDelegate {

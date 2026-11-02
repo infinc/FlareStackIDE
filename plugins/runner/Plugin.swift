@@ -38,7 +38,7 @@ final class RunnerAddon: NSObject, WindowAddon {
 
     @objc private func runClicked() {
         if let config = runner.selected { return run(config) }
-        newConfig()
+        editConfigs()
     }
 
     private func showMenu(_ anchor: NSView) {
@@ -56,11 +56,7 @@ final class RunnerAddon: NSObject, WindowAddon {
             menu.addItem(entry)
         }
         menu.addItem(.separator())
-        menu.addItem(item("新しい起動構成…", #selector(newConfig)))
-        if let selected = runner.selected {
-            menu.addItem(item("「\(selected.name)」を編集…", #selector(editConfig)))
-            menu.addItem(item("「\(selected.name)」を削除", #selector(deleteConfig)))
-        }
+        menu.addItem(item("起動構成を編集", #selector(editConfigs)))
         menu.popUp(positioning: nil, at: NSPoint(x: anchor.bounds.maxX, y: anchor.bounds.maxY), in: anchor)
     }
 
@@ -69,26 +65,10 @@ final class RunnerAddon: NSObject, WindowAddon {
         updateTip()
     }
 
-    @objc private func newConfig() {
+    @objc private func editConfigs() {
         guard let editor else { return }
-        let initial = editor.fileURL.map { RunConfig(name: $0.lastPathComponent, directory: "", script: editor.relativePath($0)) }
-        guard let config = RunnerStore.edit(initial, base: editor.baseDirectory, title: "新しい起動構成") else { return }
-        var created = config
-        created.id = UUID().uuidString
-        runner.upsert(created)
-        updateTip()
-    }
-
-    @objc private func editConfig() {
-        guard let editor, let selected = runner.selected,
-              let config = RunnerStore.edit(selected, base: editor.baseDirectory, title: "起動構成を編集") else { return }
-        runner.upsert(config)
-        updateTip()
-    }
-
-    @objc private func deleteConfig() {
-        guard let selected = runner.selected else { return }
-        runner.remove(selected.id)
+        let current = editor.fileURL.map(editor.relativePath)
+        RunConfigEditor(store: runner, base: editor.baseDirectory, currentFile: current).run(over: editor.window)
         updateTip()
     }
 
@@ -96,6 +76,10 @@ final class RunnerAddon: NSObject, WindowAddon {
         guard let editor else { return }
         if config.script.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             Toasts.post("スクリプトが空です", message: "「\(config.name)」を編集して、実行するファイルかコマンドを指定してください", in: editor.window)
+            return
+        }
+        if let file = runner.envFileURL(of: config), !FileManager.default.fileExists(atPath: file.path) {
+            Toasts.post(".env ファイルが見つかりません", message: file.path, in: editor.window)
             return
         }
         if let error = editor.saveAll() { return editor.showError(error) }
