@@ -79,9 +79,9 @@ function parse(output, format, file) {
       break;
     case "gcc":
       for (const l of lines) {
-        const m = /^.*?:(\d+):(?:(\d+):)?\s*(?:(fatal error|error|warning|note|remark):\s*)?(.*)$/.exec(l);
-        if (!m || m[3] === "note" || m[3] === "remark" || !m[4]) continue;
-        out.push(item(m[1], m[2], sev(m[3]), m[4]));
+        const m = /^(.*?):(\d+):(?:(\d+):)?\s*(?:(fatal error|error|warning|note|remark):\s*)?(.*)$/.exec(l);
+        if (!m || m[1].split("/").pop() !== file || m[4] === "note" || m[4] === "remark" || !m[5]) continue;
+        out.push(item(m[2], m[3], sev(m[4]), m[5]));
       }
       break;
     case "node": {
@@ -97,7 +97,7 @@ function parse(output, format, file) {
         const m = /^(\w*Error): (.*)$/.exec(lines[i]);
         if (m && !message) message = m[1] + ": " + m[2];
       }
-      if (message) out.push(item(line || 1, column, "error", message));
+      if (message && !/Cannot use import statement|Unexpected token 'export'/.test(message)) out.push(item(line || 1, column, "error", message));
       break;
     }
     case "ruby":
@@ -164,6 +164,7 @@ function jsonCheck(text, loose) {
       const c = text[i];
       if (c === '"') { i++; return; }
       if (c === "\n") fail("文字列が閉じられていません");
+      if (c < " ") fail("文字列の中に制御文字は使えません");
       if (c === "\\") {
         const e = text[i + 1];
         if (e === "u") {
@@ -233,6 +234,7 @@ function jsonCheck(text, loose) {
     fail(i >= text.length ? "値がありません" : "不正な値です");
   };
   try {
+    if (text[0] === "\uFEFF") i = 1;
     skip();
     if (i >= text.length) return { error: null, duplicates: duplicates };
     value();
@@ -256,13 +258,14 @@ const LEXERS = {
   js: { ...C_LIKE, multiline: ["`"], templates: true, regex: true },
   java: { ...C_LIKE, triple: ['"""'] },
   kotlin: { ...C_LIKE, triple: ['"""'], templates: true },
-  rust: { ...C_LIKE, lifetimes: true },
+  rust: { ...C_LIKE, lifetimes: true, multiline: ['"'] },
   csharp: { ...C_LIKE, triple: ['@"', '"""'] },
   dart: { ...C_LIKE, triple: ['"""', "'''"], templates: true },
   c: C_LIKE,
   swift: { ...C_LIKE, quotes: ['"'], triple: ['"""'] },
   go: { ...C_LIKE, multiline: ["`"] },
-  css: { line: [], block: [["/*", "*/"]], triple: [], quotes: ['"', "'"], multiline: [] },
+  css: { line: [], block: [["/*", "*/"]], triple: [], quotes: ['"', "'"], multiline: [], urls: true },
+  scss: { line: ["//"], block: [["/*", "*/"]], triple: [], quotes: ['"', "'"], multiline: [], urls: true },
   python: { line: ["#"], block: [], triple: ['"""', "'''"], quotes: ['"', "'"], multiline: [] },
   ruby: { line: ["#"], block: [], triple: [], quotes: ['"', "'"], multiline: [] },
   shell: { line: ["#"], block: [], triple: [], quotes: ['"', "'"], multiline: [] },
@@ -272,9 +275,10 @@ const LEXERS = {
 const LANGUAGES = {
   ts: "ts", mts: "ts", cts: "ts", tsx: "ts", js: "js", mjs: "js", cjs: "js", jsx: "js", java: "java", kt: "kotlin", kts: "kotlin",
   rs: "rust", cs: "csharp", dart: "dart", c: "c", h: "c", m: "c", mm: "c", cpp: "c", cc: "c", cxx: "c", hpp: "c", hh: "c", hxx: "c",
-  swift: "swift", go: "go", css: "css", scss: "css", less: "css", py: "python", pyw: "python", pyi: "python", rb: "ruby", rake: "ruby",
+  swift: "swift", go: "go", css: "css", scss: "scss", less: "scss", py: "python", pyw: "python", pyi: "python", rb: "ruby", rake: "ruby",
   sh: "shell", bash: "shell", zsh: "shell", php: "php", lua: "lua",
 };
+const REGEX = /^\/(?:\\.|\[(?:\\.|[^\]\n])*\]|[^/\\\n])+\/[a-z]*/;
 const BRACKET_CHECKED = ["ts", "mts", "cts", "java", "kt", "kts", "rs", "cs", "dart", "css", "scss", "less"];
 
 function mask(text, c) {
@@ -285,6 +289,14 @@ function mask(text, c) {
   let i = 0, previous = "";
   while (i < n) {
     const t = text[i];
+    if (c.urls && t === "u") {
+      const url = /^url\(\s*[^"'\s)][^)\n]*\)/.exec(text.slice(i, i + 2000));
+      if (url) {
+        blank(i, i + url[0].length);
+        i += url[0].length;
+        continue;
+      }
+    }
     if (c.line.some((s) => text.startsWith(s, i)) && !pairs.some((p) => text.startsWith(p[0], i))) {
       let end = text.indexOf("\n", i);
       if (end < 0) end = n;
@@ -300,6 +312,18 @@ function mask(text, c) {
       i = stop;
       previous = '"';
       continue;
+    }
+    if (c.lifetimes && (t === "r" || t === "b") && !/\w/.test(text[i - 1] || "")) {
+      const raw = /^b?r(#*)"/.exec(text.slice(i, i + 80));
+      if (raw) {
+        const close = '"' + raw[1];
+        const end = text.indexOf(close, i + raw[0].length);
+        const stop = end < 0 ? n : end + close.length;
+        blank(i, stop);
+        i = stop;
+        previous = '"';
+        continue;
+      }
     }
     if (c.lifetimes && t === "'" && !/^'(\\.[^']*|[^\\'\n])'/.test(text.slice(i, i + 12))) { i++; continue; }
     if (c.quotes.indexOf(t) >= 0 || c.multiline.indexOf(t) >= 0) {
@@ -325,8 +349,8 @@ function mask(text, c) {
       previous = '"';
       continue;
     }
-    if (c.regex && t === "/" && "(,=:[!&|?{};\n".indexOf(previous || "\n") >= 0) {
-      const m = /^\/(?:\\.|\[(?:\\.|[^\]\n])*\]|[^/\\\n])+\/[a-z]*/.exec(text.slice(i, i + 500));
+    if (c.regex && t === "/" && ("(,=:[!&|?{};\n".indexOf(previous || "\n") >= 0 || /\b(?:return|typeof|case|delete|void|throw|yield|await|in|of)\s*$/.test(text.slice(Math.max(i - 12, 0), i)))) {
+      const m = REGEX.exec(text.slice(i, i + 500));
       if (m) {
         blank(i, i + m[0].length);
         i += m[0].length;
@@ -398,9 +422,13 @@ function tableCells(line) {
   return cleaned.split("|").length;
 }
 
+function decoded(path) {
+  try { return decodeURI(path); } catch (e) { return path; }
+}
+
 function markdown(lines, dir) {
   const out = [];
-  let fence = null, heading = 0;
+  let fence = null, heading = 0, comment = false;
   let lists = [];
   const flush = (keep) => {
     lists.filter((l) => !keep(l)).forEach((l) => listNumbers(out, l.items));
@@ -420,8 +448,17 @@ function markdown(lines, dir) {
       continue;
     }
     if (mark) {
+      flush((l) => l.indent < /^ */.exec(line)[0].length);
       fence = { char: mark[1][0], size: mark[1].length, line: i + 1 };
       continue;
+    }
+    if (comment) {
+      comment = line.indexOf("-->") < 0;
+      continue;
+    }
+    if (/^\s*<!--/.test(line)) {
+      comment = line.indexOf("-->") < 0;
+      if (comment || /-->\s*$/.test(line)) continue;
     }
     if (!line.trim()) continue;
     const indent = /^\s*/.exec(line)[0].length;
@@ -460,12 +497,12 @@ function markdown(lines, dir) {
       continue;
     }
     const plain = line.replace(/`[^`]*`/g, (m) => " ".repeat(m.length));
-    const link = /!?\[[^\]]*\]\(([^)\s]*)(?:\s+"[^"]*")?\)/g;
+    const link = /!?\[[^\]]*\]\((?:<([^>]*)>|((?:[^()\s]|\([^()\s]*\))*))(?:\s+"[^"]*")?\)/g;
     for (let m = link.exec(plain); m; m = link.exec(plain)) {
-      const target = m[1];
+      const target = m[1] ?? m[2];
       if (!target) out.push(item(i + 1, m.index + 1, "warning", "リンク先が空です"));
       else if (dir && typeof fileExists === "function" && !/^([a-z][a-z0-9+.-]*:|#|\/)/i.test(target)) {
-        const path = decodeURI(target.replace(/[#?].*$/, ""));
+        const path = decoded(target.replace(/[#?].*$/, ""));
         if (path && !fileExists(path, dir)) out.push(item(i + 1, m.index + 1, "warning", "ファイルが見つかりません: " + path));
       }
     }
@@ -482,7 +519,7 @@ function markup(text, strict) {
   const severity = strict ? "error" : "warning";
   const out = [];
   const stack = [];
-  const re = /<!--[\s\S]*?-->|<!\[CDATA\[[\s\S]*?\]\]>|<\?[\s\S]*?\?>|<![^>]*>|<(script|style)\b(?:"[^"]*"|'[^']*'|[^'">])*?(?<!\/)>[\s\S]*?<\/\1\s*>|<(\/?)([A-Za-z][\w:.-]*)((?:"[^"]*"|'[^']*'|[^'">])*?)(\/?)>/gi;
+  const re = /<!--[\s\S]*?-->|<!\[CDATA\[[\s\S]*?\]\]>|<\?[\s\S]*?\?>|<![^>]*>|<(script|style)\b(?:"[^"]*"|'[^']*'|\/(?!>)|[^'">/])*>[\s\S]*?<\/\1\s*>|<(\/?)([A-Za-z][\w:.-]*)((?:"[^"]*"|'[^']*'|[^'">])*?)(\/?)>/gi;
   for (let m = re.exec(text); m; m = re.exec(text)) {
     if (!m[3]) continue;
     const name = strict ? m[3] : m[3].toLowerCase();
@@ -536,7 +573,7 @@ function yaml(lines) {
       stack.push({ indent: at, keys: new Set() });
     }
     const keys = stack[stack.length - 1].keys;
-    if (keys.has(m[3])) out.push(item(i + 1, at + 1, "warning", "キー " + m[3] + " が重複しています"));
+    if (m[3] !== "<<" && keys.has(m[3])) out.push(item(i + 1, at + 1, "warning", "キー " + m[3] + " が重複しています"));
     keys.add(m[3]);
     if (/^[|>][+-]?\d*\s*(#.*)?$/.test(m[4] || "")) scalar = at;
   });
@@ -563,8 +600,9 @@ function toml(lines) {
     const table = /^\[\[?([^\]]+)\]\]?$/.exec(plain);
     if (table) {
       if (!plain.startsWith("[[")) {
-        if (tables.has(table[1])) out.push(item(i + 1, 0, "error", "テーブル [" + table[1] + "] が重複しています"));
-        tables.add(table[1]);
+        const title = line.trim().replace(/\]\s*(#.*)?$/, "").slice(1);
+        if (tables.has(title)) out.push(item(i + 1, 0, "error", "テーブル [" + title + "] が重複しています"));
+        tables.add(title);
       }
       keys = new Set();
       return;
@@ -581,12 +619,16 @@ function toml(lines) {
   return out;
 }
 
+const STRICT_JSON = (ext, name, dir) => (ext === "json" || ext === "geojson")
+  && !/^(?:tsconfig|jsconfig)[\w.-]*\.json$|^\.?devcontainer\.json$|^\.(?:eslintrc|babelrc|swcrc)\.json$/.test(name) && !/\/\.vscode$/.test(dir || "");
+
 function diagnose(text, ext, name, dir) {
   if (text.length > 400000) return [];
   const lines = text.split("\n").map((l) => l.replace(/\r$/, ""));
   let out = conflicts(lines);
-  if (["json", "jsonc", "json5", "geojson"].indexOf(ext) >= 0 || [".babelrc", ".eslintrc", ".prettierrc"].indexOf(name) >= 0) {
-    const result = jsonCheck(text, ext !== "json" && ext !== "geojson");
+  if (ext === "json5") return out;
+  if (["json", "jsonc", "geojson"].indexOf(ext) >= 0 || [".babelrc", ".eslintrc", ".prettierrc"].indexOf(name) >= 0) {
+    const result = jsonCheck(text, !STRICT_JSON(ext, name, dir));
     if (result.error) out.push(located(text, result.error.at, "error", result.error.message));
     return out.concat(result.duplicates.map((d) => located(text, d.at, "warning", d.message)));
   }

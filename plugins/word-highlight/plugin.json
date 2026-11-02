@@ -1,0 +1,18 @@
+{
+  "id": "word-highlight",
+  "name": "Word Highlight",
+  "version": "1.0",
+  "author": "FlareStackIDE",
+  "symbol": "highlighter",
+  "summary": "クリックした語と同じ語の背景をファイル内で強調",
+  "fileExtensions": [],
+  "files": ["plugin.dylib", "README.md"],
+  "settings": [
+    {
+      "key": "highlightColor",
+      "title": "強調の背景色",
+      "type": "color",
+      "default": "#6E9EFF"
+    }
+  ]
+}

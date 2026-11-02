@@ -1,0 +1,10 @@
+{
+  "id": "help-me",
+  "name": "Help Me",
+  "version": "1.0",
+  "author": "FlareStackIDE",
+  "symbol": "arrow.uturn.backward.circle",
+  "summary": "上のバーのボタンで編集を巻き戻す・やり直す",
+  "fileExtensions": [],
+  "files": ["plugin.dylib", "README.md"]
+}

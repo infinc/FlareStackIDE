@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 NAME="FlareStackIDE"
 VERSION="$(tr -d '[:space:]' < "$ROOT/VERSION")"
-VERSION="${VERSION#v}"
+VERSION="${VERSION#v}${VERSION_SUFFIX:-}"
 APP="$ROOT/build/$NAME.app"
 ICONSET="$ROOT/build/AppIcon.iconset"
 STEPS=7
@@ -54,6 +54,18 @@ rm -rf "$ICONSET"
 progress "リソースと Info.plist"
 cp "$ROOT/data/pics/interpolate.png" "$APP/Contents/Resources/interpolate.png"
 
+if [ -n "${BUNDLE_PLUGINS:-}" ]; then
+    BUNDLED="$APP/Contents/Resources/Plugins"
+    mkdir -p "$BUNDLED"
+    for dir in "$ROOT"/plugins/*/; do
+        [ -f "$dir/plugin.json" ] || continue
+        id="$(basename "$dir")"
+        ditto "$dir" "$BUNDLED/$id"
+        find "$BUNDLED/$id" -name '*.swift' -delete
+    done
+    date +%s > "$BUNDLED/.build-stamp"
+fi
+
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -69,6 +81,10 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>CFBundleVersion</key><string>$VERSION</string>
     <key>LSMinimumSystemVersion</key><string>13.0</string>
     <key>NSHighResolutionCapable</key><true/>
+    <key>NSAppTransportSecurity</key>
+    <dict>
+        <key>NSAllowsArbitraryLoadsInWebContent</key><true/>
+    </dict>
     <key>CFBundleDocumentTypes</key>
     <array>
         <dict>

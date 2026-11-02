@@ -68,6 +68,10 @@ protocol PluginSettingsProviding: AnyObject {
     func settingsView() -> NSView?
 }
 
+protocol FileViewing: AnyObject {
+    func viewer(for url: URL) -> EditorExtension?
+}
+
 extension NativePlugin {
     var opensFiles: Bool { false }
     func textAddon(for code: CodeEditing) -> TextAddon? { nil }
@@ -118,6 +122,8 @@ enum NativePlugins {
     }
 
     static func fileWindow(for url: URL) -> FileWindow? { active.lazy.compactMap { $0.fileWindow(for: url) }.first }
+
+    static func viewer(for url: URL) -> EditorExtension? { active.lazy.compactMap { ($0 as? FileViewing)?.viewer(for: url) }.first }
 
     static var opensFiles: Bool { active.contains { $0.opensFiles } }
 }

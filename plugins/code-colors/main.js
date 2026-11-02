@@ -22,6 +22,7 @@ const TRIPLE_DQ = '"""[\\s\\S]*?(?:"""|' + END + ")";
 const TRIPLE_SQ = "'''[\\s\\S]*?(?:'''|" + END + ")";
 const NUMBER = "\\b(?:0[xX][\\da-fA-F_]+|0[bB][01_]+|0[oO][0-7_]+|\\d[\\d_]*(?:\\.\\d[\\d_]*)?(?:[eE][+-]?\\d+)?)[a-zA-Z]*\\b";
 const IDENT = "[A-Za-z_$][\\w$]*";
+const SWIFT_DQ = '"(?:[^"\\\\\\n]|\\\\\\((?:[^()\\n]|\\((?:[^()\\n]|\\([^()\\n]*\\))*\\))*\\)|\\\\.)*"';
 
 function nextChar(text, i) {
   while (text[i] === " " || text[i] === "\t") i++;
@@ -151,7 +152,7 @@ const LANGS = {
     constants: words("true false nil"),
     variables: words("self Self"),
     line: "\\/\\/",
-    strings: [TRIPLE_DQ, DQ],
+    strings: [TRIPLE_DQ, '(#+)"[\\s\\S]*?"\\1', SWIFT_DQ],
     decorator: true,
     extra: [["#[A-Za-z]+", K.meta]],
   }),
@@ -180,7 +181,7 @@ const LANGS = {
     variables: words("self Self"),
     macros: true,
     line: "\\/\\/",
-    strings: ['b?r#*"[\\s\\S]*?"#*', "b?'(?:[^'\\\\\\n]|\\\\.){1,10}'"],
+    strings: ['b?r(#*)"[\\s\\S]*?"\\1', "b?" + DQ_ML, "b?'(?:[^'\\\\\\n]|\\\\[^\\n][^'\\n]{0,8})'"],
     extra: [["'[A-Za-z_]\\w*", K.variable], ["#!?\\[[^\\]\\n]*\\]", K.meta]],
   }),
   dart: () => clike({
@@ -196,6 +197,7 @@ const LANGS = {
     variables: words("self"),
     line: "#",
     block: "^=begin[\\s\\S]*?(?:^=end|" + END + ")",
+    ident: "[A-Za-z_]\\w*[?!]?",
     strings: [DQ_ML, "'(?:[^'\\\\]|\\\\[\\s\\S])*'"],
     extra: [["(?:@@?|\\$)[A-Za-z_]\\w*", K.variable], [":[A-Za-z_]\\w*[?!]?", K.constant]],
   }),
@@ -246,12 +248,13 @@ const LANGS = {
       const lead = s.match(/^[\s-]*/)[0].length;
       out.push(base + at + lead, s.length - lead, K.property);
     }],
-    ['"(?:[^"\\\\]|\\\\[\\s\\S])*"', K.string],
-    ["'(?:[^']|'')*'", K.string],
+    ['"(?:[^"\\\\\\n]|\\\\.)*"', K.string],
+    ["'(?:[^'\\n]|'')*'", K.string],
+    [" ~(?=[ \\t]*$)", (s, at, text, out, base) => out.push(base + at + 1, 1, K.constant)],
     ["[&*][\\w-]+", K.variable],
     ["!!?[\\w/]+", K.meta],
     ["-?" + NUMBER, K.number],
-    ["\\b(?:true|false|null|yes|no|on|off|True|False|Null|~)\\b", K.constant],
+    ["\\b(?:true|false|null|yes|no|on|off|True|False|Null)\\b", K.constant],
     ["^[ \\t]*-(?=[ \\t])|[|>][-+]?(?=[ \\t]*$)", K.marker],
   ]),
   toml: () => compile([
@@ -298,19 +301,24 @@ const LANGS = {
   scss: () => css(true),
 };
 
+const INCLUDE = ["^[ \\t]*#[ \\t]*(?:include|import)[ \\t]*<[^>\\n]*>", (s, at, text, out, base) => {
+  const open = s.indexOf("<");
+  out.push(base + at, open, K.meta);
+  out.push(base + at + open, s.length - open, K.string);
+}];
+
 const C = {
   keywords: words("auto break case const continue default do else enum extern for goto if inline register restrict return signed sizeof static struct switch typedef union unsigned volatile while _Alignas _Alignof _Atomic _Generic _Noreturn _Static_assert _Thread_local"),
   types: words("char double float int long short void bool _Bool size_t ssize_t uint8_t uint16_t uint32_t uint64_t int8_t int16_t int32_t int64_t FILE"),
   constants: words("NULL true false"),
   line: "\\/\\/",
   preproc: true,
-  extra: [["<[\\w./]+\\.h>", K.string]],
+  pre: [INCLUDE],
 };
 const CPP = Object.assign({}, C, {
   keywords: words([...C.keywords].join(" ") + " alignas alignof and asm catch class constexpr consteval constinit const_cast decltype delete dynamic_cast explicit export friend mutable namespace new noexcept not nullptr operator or private protected public reinterpret_cast static_assert static_cast template this thread_local throw try typeid typename using virtual override final co_await co_return co_yield concept requires"),
   types: words([...C.types].join(" ") + " wchar_t char8_t char16_t char32_t std string vector map auto"),
   constants: words("NULL true false nullptr"),
-  extra: [["<[\\w./]+>", K.string]],
   strings: ['R"([^(\\s]*)\\([\\s\\S]*?\\)\\1"', DQ, SQ],
 });
 
@@ -318,6 +326,10 @@ function css(scss) {
   const rules = [];
   rules.push([BLOCK, K.comment]);
   if (scss) rules.push(["\\/\\/.*", K.comment]);
+  rules.push(["url\\(\\s*[^\"'\\s)][^)\\n]*\\)", (s, at, text, out, base) => {
+    out.push(base + at, 3, K.func);
+    out.push(base + at + 4, s.length - 5, K.string);
+  }]);
   rules.push([DQ, K.string], [SQ, K.string]);
   rules.push(["[{}]", (s, at, text, out, base, state) => { state.depth = Math.max(0, state.depth + (s === "{" ? 1 : -1)); }]);
   rules.push(["@[\\w-]+", K.meta]);
@@ -363,9 +375,11 @@ function markup(text, out, base, html) {
     if (!html || s[1] === "/" || s.endsWith("/>")) continue;
     const lower = name.toLowerCase();
     if (lower !== "script" && lower !== "style") continue;
-    const close = text.toLowerCase().indexOf("</" + lower, re.lastIndex);
-    const end = close < 0 ? text.length : close;
-    let lang = lower === "style" ? "css" : "javascript";
+    const closing = new RegExp("</" + lower, "gi");
+    closing.lastIndex = re.lastIndex;
+    const close = closing.exec(text);
+    const end = close ? close.index : text.length;
+    let lang = lower === "style" ? (/lang\s*=\s*["']?(?:scss|sass|less)/i.test(s) ? "scss" : "css") : "javascript";
     if (lower === "script" && /type\s*=\s*["']?(?:text\/(?:template|html)|module\/html)/i.test(s)) lang = "html";
     if (lower === "script" && /lang\s*=\s*["']?ts/i.test(s)) lang = "typescript";
     tokenize(lang, text.slice(re.lastIndex, end), out, base + re.lastIndex);
@@ -400,11 +414,12 @@ const MD_INLINE = compile([
 function markdown(text, out, base) {
   let pos = 0, fence = null, first = true;
   const lines = text.split("\n");
+  const bare = lines.map((l) => l.replace(/\r$/, ""));
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i], at = pos;
     pos += line.length + 1;
-    if (first && line === "---") {
-      const close = lines.indexOf("---", i + 1);
+    if (first && bare[i] === "---") {
+      const close = bare.indexOf("---", i + 1);
       if (close > 0) {
         let end = at;
         for (let j = i; j <= close; j++) end += lines[j].length + 1;
@@ -486,6 +501,8 @@ const EXTENSIONS = {
   md: "markdown", markdown: "markdown", mdown: "markdown", mkd: "markdown",
   dockerfile: "dockerfile", docker: "dockerfile", makefile: "makefile", mk: "makefile", make: "makefile",
 };
+
+Object.setPrototypeOf(EXTENSIONS, null);
 
 function detect(ext, name) {
   return EXTENSIONS[name] || EXTENSIONS[ext] || (name && name.startsWith("dockerfile") ? "dockerfile" : null);

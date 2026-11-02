@@ -14,6 +14,8 @@ final class ClipboardHistory {
     private let historyKey = "Plugin.\(pluginID).History"
     private let orderKey = "Plugin.\(pluginID).Order"
     private let limit = 50
+    private let maxLength = 1_000_000
+    private let privateTypes = ["org.nspasteboard.ConcealedType", "org.nspasteboard.TransientType", "com.agilebits.onepassword"].map { NSPasteboard.PasteboardType($0) }
     private var timer: Timer?
     private var changeCount = NSPasteboard.general.changeCount
     private var users = 0
@@ -54,7 +56,9 @@ final class ClipboardHistory {
         let board = NSPasteboard.general
         guard board.changeCount != changeCount else { return }
         changeCount = board.changeCount
-        guard let text = board.string(forType: .string), !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        guard board.types?.contains(where: { privateTypes.contains($0) }) != true,
+              let text = board.string(forType: .string), text.utf16.count <= maxLength,
+              !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         items = [text] + items.filter { $0 != text }
     }
 

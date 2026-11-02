@@ -1,7 +1,7 @@
 {
   "id": "git-blame",
   "name": "Git Blame",
-  "version": "1.0",
+  "version": "1.1",
   "author": "FlareStackIDE",
   "symbol": "person.text.rectangle",
   "summary": "カーソル行の作者・日付・コミットを行末に表示",

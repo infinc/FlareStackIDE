@@ -11,6 +11,7 @@ final class GitActionsAddon: NSObject, WindowAddon {
     private var button: ToolStripButton!
     private var view: GitActionsView?
     private var feed: FeedView?
+    private var work: DispatchWorkItem?
 
     init(editor: EditorWindowController) {
         self.editor = editor
@@ -48,7 +49,15 @@ final class GitActionsAddon: NSObject, WindowAddon {
         reload()
     }
 
+    func textChanged() {
+        work?.cancel()
+        let item = DispatchWorkItem { [weak self] in self?.reload() }
+        work = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5, execute: item)
+    }
+
     func detach() {
+        work?.cancel()
         NotificationCenter.default.removeObserver(self)
         if let feed { editor?.removeFeed(feed) }
         feed = nil

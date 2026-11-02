@@ -1,7 +1,7 @@
 {
   "id": "code-folding",
   "name": "Code Folding",
-  "version": "1.0",
+  "version": "1.1",
   "author": "FlareStackIDE",
   "symbol": "chevron.down.square",
   "summary": "関数やブロックを折りたたんで隠す",

@@ -25,6 +25,53 @@ func renderInlineMarkdown(_ line: String, font base: NSFont, color: NSColor = .l
     return result
 }
 
+private struct MarkdownTable {
+    let rows: [[String]]
+    let alignments: [NSTextAlignment]
+    let end: Int
+
+    private static func cells(_ line: String) -> [String] {
+        var body = line.trimmingCharacters(in: .whitespaces)
+        if body.hasPrefix("|") { body.removeFirst() }
+        if body.hasSuffix("|"), !body.hasSuffix("\\|") { body.removeLast() }
+        var cells: [String] = []
+        var cell = ""
+        var escaped = false
+        for character in body {
+            if escaped {
+                cell += character == "|" ? "|" : "\\\(character)"
+                escaped = false
+            } else if character == "\\" {
+                escaped = true
+            } else if character == "|" {
+                cells.append(cell.trimmingCharacters(in: .whitespaces))
+                cell = ""
+            } else {
+                cell.append(character)
+            }
+        }
+        cells.append(cell.trimmingCharacters(in: .whitespaces))
+        return cells
+    }
+
+    init?(_ lines: [String], at start: Int) {
+        guard start + 1 < lines.count, lines[start].contains("|"), lines[start + 1].contains("-") else { return nil }
+        let header = Self.cells(lines[start]), marks = Self.cells(lines[start + 1])
+        guard header.count == marks.count,
+              marks.allSatisfy({ $0.range(of: #"^:?-+:?$"#, options: .regularExpression) != nil }) else { return nil }
+        alignments = marks.map { $0.hasPrefix(":") && $0.hasSuffix(":") ? .center : $0.hasSuffix(":") ? .right : .left }
+        var rows = [header]
+        var next = start + 2
+        while next < lines.count, lines[next].contains("|") {
+            let row = Self.cells(lines[next])
+            rows.append((0..<header.count).map { $0 < row.count ? row[$0] : "" })
+            next += 1
+        }
+        self.rows = rows
+        end = next
+    }
+}
+
 func renderMarkdown(_ markdown: String, size: CGFloat = NSFont.systemFontSize, color: NSColor = .labelColor) -> NSAttributedString {
     let body = NSFont.systemFont(ofSize: size)
     let output = NSMutableAttributedString()
@@ -45,8 +92,31 @@ func renderMarkdown(_ markdown: String, size: CGFloat = NSFont.systemFontSize, c
         output.append(line)
     }
 
+    func append(_ table: MarkdownTable) {
+        let grid = NSTextTable()
+        grid.numberOfColumns = table.alignments.count
+        grid.setContentWidth(100, type: .percentageValueType)
+        for (r, row) in table.rows.enumerated() {
+            for (c, cell) in row.enumerated() {
+                let block = NSTextTableBlock(table: grid, startingRow: r, rowSpan: 1, startingColumn: c, columnSpan: 1)
+                block.setWidth(6, type: .absoluteValueType, for: .padding)
+                block.setWidth(0.5, type: .absoluteValueType, for: .border)
+                block.setBorderColor(.separatorColor)
+                if r == 0 { block.backgroundColor = .quaternaryLabelColor }
+                let style = NSMutableParagraphStyle()
+                style.textBlocks = [block]
+                style.alignment = table.alignments[c]
+                append(renderInlineMarkdown(cell, font: r == 0 ? .boldSystemFont(ofSize: size) : body, color: color), style)
+            }
+        }
+        append(NSAttributedString(string: "", attributes: [.font: NSFont.systemFont(ofSize: size / 2)]), paragraph(spacing: 0))
+    }
+
     let lines = markdown.replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: "\n")
-    for raw in lines {
+    var index = 0
+    while index < lines.count {
+        let raw = lines[index]
+        index += 1
         let trimmed = raw.trimmingCharacters(in: .whitespaces)
         if trimmed.hasPrefix("```") { inCode.toggle(); continue }
         if inCode {
@@ -57,6 +127,11 @@ func renderMarkdown(_ markdown: String, size: CGFloat = NSFont.systemFontSize, c
             continue
         }
         if trimmed.isEmpty { continue }
+        if let table = MarkdownTable(lines, at: index - 1) {
+            append(table)
+            index = table.end
+            continue
+        }
 
         let depth = CGFloat(raw.prefix { $0 == " " || $0 == "\t" }.count / 2) * 16
 

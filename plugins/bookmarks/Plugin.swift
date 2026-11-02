@@ -123,7 +123,7 @@ final class BookmarksAddon: NSObject, TextAddon {
         guard !(range.location == 0 && oldCount >= oldLength) else { return }
         let oldEnd = range.location + oldCount
         let first = lineIndex(range.location), last = lineIndex(oldEnd)
-        let added = (storage.string as NSString).substring(with: range).reduce(0) { $0 + ($1 == "\n" ? 1 : 0) }
+        let added = (storage.string as NSString).substring(with: range).utf16.filter { $0 == 10 }.count
         let removed = last - first
         guard added != 0 || removed != 0 else { return }
         let startsLine = starts[first] == range.location
@@ -139,6 +139,7 @@ final class BookmarksAddon: NSObject, TextAddon {
             if index == last { return endsAtLine ? mark + added - removed : nil }
             return mark + added - removed
         }
+        reloadStarts()
         store.set(Set(moved), for: url)
     }
 
@@ -318,7 +319,7 @@ final class BookmarksFeedAddon: NSObject, WindowAddon {
         list.show(store.all.map { url, line in
             if texts[url] == nil {
                 let text = open[url] ?? CodeView.diskText(url) ?? ""
-                texts[url] = text.split(separator: "\n", omittingEmptySubsequences: false)
+                texts[url] = text.replacingOccurrences(of: "\r\n", with: "\n").split(separator: "\n", omittingEmptySubsequences: false)
             }
             let lines = texts[url] ?? []
             let code = line <= lines.count ? lines[line - 1].trimmingCharacters(in: .whitespaces) : ""

@@ -9,6 +9,7 @@ final class CodeScannerPlugin: NativePlugin {
 }
 
 final class CodeScannerAddon: WindowAddon {
+    private static let idleDelay: TimeInterval = 1.5
     private weak var editor: EditorWindowController?
     private let scanner: CodeScanner
     private var work: DispatchWorkItem?
@@ -16,6 +17,8 @@ final class CodeScannerAddon: WindowAddon {
     private let badge = ProblemBadge()
     private let problemsView = ProblemsView()
     private var feed: FeedView?
+    private var revision = 0
+    private lazy var hover = DiagnosticHover(editor: editor)
 
     init(editor: EditorWindowController, scanner: CodeScanner) {
         self.editor = editor
@@ -26,11 +29,19 @@ final class CodeScannerAddon: WindowAddon {
         editor.addOverlay(badge)
         problemsView.onSelect = { [weak editor] in editor?.reveal($0.url, range: $0.range) }
         NotificationCenter.default.addObserver(self, selector: #selector(marksRequested), name: CodeScanner.marksRequest, object: editor.textView)
+        NotificationCenter.default.addObserver(self, selector: #selector(textEdited(_:)), name: NSTextStorage.didProcessEditingNotification, object: editor.textView.textStorage)
+        hover.start()
         apply()
         schedule(delay: 0)
     }
 
     @objc private func marksRequested() { postMarks() }
+
+    @objc private func textEdited(_ note: Notification) {
+        guard let storage = note.object as? NSTextStorage, storage.editedMask.contains(.editedCharacters),
+              let layout = editor?.textView.layoutManager as? DiagnosticLayoutManager else { return }
+        layout.shiftMarks(edited: storage.editedRange, delta: storage.changeInLength)
+    }
 
     private func postMarks() {
         guard let textView = editor?.textView else { return }
@@ -63,8 +74,10 @@ final class CodeScannerAddon: WindowAddon {
 
     private func scan() {
         guard let editor, let url = editor.fileURL else { return }
+        let scanned = revision
         scanner.scan(editor.textView.string, url: url) { [weak self] found in
             guard let self, self.editor?.isOpen(url) == true else { return }
+            if self.editor?.fileURL == url, self.revision != scanned { return }
             self.diagnostics[url] = found
             self.apply()
         }
@@ -82,27 +95,26 @@ final class CodeScannerAddon: WindowAddon {
 
         let length = (textView.string as NSString).length
         let valid = mine.filter { NSMaxRange($0.range) <= length }
-        (textView.layoutManager as? DiagnosticLayoutManager)?.marks = valid.map { ($0.range, $0.color) }
-        if let storage = textView.textStorage {
-            storage.beginEditing()
-            storage.removeAttribute(.toolTip, range: NSRange(location: 0, length: storage.length))
-            for item in valid {
-                let kind = item.severity == .error ? "エラー" : "警告"
-                storage.addAttribute(.toolTip, value: "\(kind): \(item.message)", range: item.range)
-            }
-            storage.endEditing()
+        (textView.layoutManager as? DiagnosticLayoutManager)?.marks = valid.map {
+            DiagnosticMark(range: $0.range, color: $0.color, message: "\($0.severity == .error ? "エラー" : "警告"): \($0.message)")
         }
+        hover.hide()
         editor.recolor()
         textView.needsDisplay = true
         postMarks()
     }
 
     func fileOpened() {
+        revision += 1
         apply()
         schedule(delay: 0)
     }
 
-    func textChanged() { schedule(delay: 0.5) }
+    func textChanged() {
+        revision += 1
+        hover.hide()
+        schedule(delay: Self.idleDelay)
+    }
 
     func bufferClosed(_ url: URL) {
         diagnostics[url] = nil
@@ -111,13 +123,15 @@ final class CodeScannerAddon: WindowAddon {
 
     func decorate(_ layout: NSLayoutManager) {
         guard let layout = layout as? DiagnosticLayoutManager else { return }
-        for mark in layout.marks where mark.color == .systemRed {
+        let length = layout.textStorage?.length ?? 0
+        for mark in layout.marks where mark.color == .systemRed && NSMaxRange(mark.range) <= length {
             layout.addTemporaryAttribute(.foregroundColor, value: NSColor.systemRed, forCharacterRange: mark.range)
         }
     }
 
     func detach() {
         work?.cancel()
+        hover.stop()
         NotificationCenter.default.removeObserver(self)
         if let textView = editor?.textView {
             NotificationCenter.default.post(name: CodeScanner.marksChanged, object: textView, userInfo: ["errors": Set<Int>(), "warnings": Set<Int>()])
@@ -125,9 +139,6 @@ final class CodeScannerAddon: WindowAddon {
         badge.removeFromSuperview()
         if let feed { editor?.removeFeed(feed) }
         guard let editor else { return }
-        if let storage = editor.textView.textStorage {
-            storage.removeAttribute(.toolTip, range: NSRange(location: 0, length: storage.length))
-        }
         CodeView.replaceLayoutManager(editor.textView, with: NSLayoutManager())
         editor.recolor()
     }

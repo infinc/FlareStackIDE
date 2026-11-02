@@ -26,6 +26,7 @@ enum GitBlame {
         process.standardOutput = output
         process.standardError = FileHandle.nullDevice
         do { try process.run() } catch { return nil }
+        _ = fcntl(input.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
         DispatchQueue.global(qos: .utility).async {
             try? input.fileHandleForWriting.write(contentsOf: Data(text.utf8))
             try? input.fileHandleForWriting.close()
@@ -41,7 +42,7 @@ enum GitBlame {
         var result: [Int: BlameLine] = [:]
         var hash = ""
         var line = 0
-        for raw in output.split(separator: "\n", omittingEmptySubsequences: false) {
+        for raw in output.replacingOccurrences(of: "\r\n", with: "\n").split(separator: "\n", omittingEmptySubsequences: false) {
             if raw.hasPrefix("\t") {
                 if let info = commits[hash] {
                     result[line] = BlameLine(hash: hash, author: info.author, time: Date(timeIntervalSince1970: info.time), summary: info.summary)
@@ -71,6 +72,7 @@ private final class BlameLabel: NSTextField {
 
 final class GitBlameAddon: NSObject, TextAddon {
     static let pluginID = "git-blame"
+    private static let repositoryChanged = Notification.Name("FlareStackIDE.gitChanged")
     private static let relative: RelativeDateTimeFormatter = {
         let formatter = RelativeDateTimeFormatter()
         formatter.locale = Locale(identifier: "ja_JP")
@@ -90,13 +92,17 @@ final class GitBlameAddon: NSObject, TextAddon {
         label.lineBreakMode = .byTruncatingTail
         code.textView.addSubview(label)
         NotificationCenter.default.addObserver(self, selector: #selector(settingsChanged), name: .settingsChanged, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(gitChanged), name: Self.repositoryChanged, object: nil)
         schedule(delay: 0)
     }
 
     @objc private func settingsChanged() {
+        if Settings.gitEnabled, lines.isEmpty { schedule(delay: 0) }
         if !Settings.gitEnabled { lines = [:] }
         update()
     }
+
+    @objc private func gitChanged() { schedule(delay: 0) }
 
     private func schedule(delay: TimeInterval) {
         work?.cancel()
