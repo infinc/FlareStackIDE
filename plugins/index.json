@@ -2,7 +2,7 @@
   {
     "id": "md-viewer",
     "name": "MD Viewer",
-    "version": "1.5",
+    "version": "1.6",
     "author": "FlareStackIDE",
     "symbol": "doc.richtext",
     "summary": "Markdown ファイルをリアルタイムでプレビュー",
@@ -20,7 +20,7 @@
   {
     "id": "runner",
     "name": "Runner",
-    "version": "1.3",
+    "version": "1.4",
     "author": "FlareStackIDE",
     "symbol": "play.circle",
     "summary": "起動構成を作ってプログラムを実行",
@@ -29,7 +29,7 @@
   {
     "id": "code-scanner",
     "name": "Code Scanner",
-    "version": "1.4",
+    "version": "1.5",
     "author": "FlareStackIDE",
     "symbol": "exclamationmark.triangle",
     "summary": "コードのエラーと警告を編集の1.5秒後に表示",
@@ -38,7 +38,7 @@
   {
     "id": "lines",
     "name": "Lines",
-    "version": "1.3",
+    "version": "1.4",
     "author": "FlareStackIDE",
     "symbol": "list.number",
     "summary": "ファイル編集画面の左側に行数を表示",
@@ -119,7 +119,7 @@
   {
     "id": "scroll-assistant",
     "name": "Scroll Assistant",
-    "version": "1.2",
+    "version": "1.3",
     "author": "FlareStackIDE",
     "symbol": "sidebar.right",
     "summary": "編集画面の右にコード全体を小さく表示してスクロール",
@@ -249,6 +249,33 @@
     "author": "FlareStackIDE",
     "symbol": "highlighter",
     "summary": "クリックした語と同じ語の背景をファイル内で強調",
+    "fileExtensions": []
+  },
+  {
+    "id": "bracket-colorizer",
+    "name": "Bracket Colorizer",
+    "version": "1.0",
+    "author": "FlareStackIDE",
+    "symbol": "curlybraces",
+    "summary": "括弧を深さごとに色分けし、対応する括弧を強調",
+    "fileExtensions": []
+  },
+  {
+    "id": "session-restore",
+    "name": "Session Restore",
+    "version": "1.0",
+    "author": "FlareStackIDE",
+    "symbol": "clock.arrow.circlepath",
+    "summary": "終了時に開いていたタブとカーソル位置を次回の起動時に復元",
+    "fileExtensions": []
+  },
+  {
+    "id": "scratch-pad",
+    "name": "Scratch Pad",
+    "version": "1.0",
+    "author": "FlareStackIDE",
+    "symbol": "note.text",
+    "summary": "左の大タブのメモボタンから保存しない一時的なメモを開く",
     "fileExtensions": []
   }
 ]

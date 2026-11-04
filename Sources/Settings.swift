@@ -127,8 +127,14 @@ enum Settings {
         set { set(Double(min(max(newValue, 8), 40)), "Editor.FontSize") }
     }
 
+    static var lineSpacingOverride: (() -> CGFloat?)? {
+        didSet { changed() }
+    }
+
+    static var editorLineSpacing: CGFloat { CGFloat(value("Editor.LineSpacing", 0.0)) }
+
     static var lineSpacing: CGFloat {
-        get { CGFloat(value("Editor.LineSpacing", 0.0)) }
+        get { lineSpacingOverride?() ?? editorLineSpacing }
         set { set(Double(newValue), "Editor.LineSpacing") }
     }
 
@@ -737,7 +743,7 @@ final class PreferencesView: NSView {
         sizeField.integerValue = Int(Settings.fontSize)
         sizeStepper.integerValue = Int(Settings.fontSize)
         foregroundPopup.selectItem(at: Settings.foregrounds.firstIndex { $0.hex == Settings.foregroundHex } ?? 0)
-        spacingPopup.selectItem(at: Settings.lineSpacings.firstIndex { $0.value == Settings.lineSpacing } ?? 0)
+        spacingPopup.selectItem(at: Settings.lineSpacings.firstIndex { $0.value == Settings.editorLineSpacing } ?? 0)
         wrap.state = Settings.wrapLines ? .on : .off
         durationSlider.doubleValue = Settings.toastDuration
         durationLabel.stringValue = "\(Int(Settings.toastDuration)) 秒"

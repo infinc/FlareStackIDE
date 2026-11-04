@@ -236,10 +236,41 @@ final class ProblemBadge: NSView {
 
     required init?(coder: NSCoder) { fatalError() }
 
+    private var hovered = false { didSet { paintBackground() } }
+
     func update(errors: Int, warnings: Int) {
         errorLabel.stringValue = "\(errors)"
         warningLabel.stringValue = "\(warnings)"
-        layer?.backgroundColor = NSColor.windowBackgroundColor.withAlphaComponent(0.85).cgColor
+        paintBackground()
+    }
+
+    private func paintBackground() {
+        var color = NSColor.windowBackgroundColor
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            let base = NSColor.windowBackgroundColor.usingColorSpace(.sRGB) ?? NSColor.windowBackgroundColor
+            color = hovered ? base.blended(withFraction: 0.14, of: ButtonHover.tint(for: self)) ?? base : base
+        }
+        layer?.backgroundColor = color.withAlphaComponent(hovered ? 0.95 : 0.85).cgColor
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        paintBackground()
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackingAreas.forEach(removeTrackingArea)
+        addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeInActiveApp, .inVisibleRect], owner: self))
+    }
+
+    override func mouseEntered(with event: NSEvent) { hovered = true }
+
+    override func mouseExited(with event: NSEvent) { hovered = false }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        hovered = false
     }
 
     override func mouseDown(with event: NSEvent) { onClick?() }
@@ -277,13 +308,13 @@ private final class DiagnosticPopup: NSView {
 
 final class DiagnosticHover {
     private static let delay: TimeInterval = 1.5
-    private weak var editor: EditorWindowController?
+    private weak var editor: CodeEditing?
     private var monitor: Any?
     private var pending: DispatchWorkItem?
     private var popup: NSView?
     private var target: NSRange?
 
-    init(editor: EditorWindowController?) { self.editor = editor }
+    init(editor: CodeEditing?) { self.editor = editor }
 
     func start() {
         guard monitor == nil else { return }

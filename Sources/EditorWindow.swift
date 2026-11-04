@@ -167,6 +167,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
     private let cloudButton = NSButton()
     private let topButtons = NSStackView()
     private var shiftMonitor: Any?
+    private var topDragMonitor: Any?
     private var lastShift: TimeInterval?
     private var autosaveTimer: Timer?
     private var cloning: GitClone?
@@ -203,6 +204,10 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
         shiftMonitor = NSEvent.addLocalMonitorForEvents(matching: [.flagsChanged, .keyDown]) { [weak self] event in
             self?.watchShift(event)
             return event
+        }
+        topDragMonitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { [weak self] event in
+            guard let self, self.dragTopButton(event) else { return event }
+            return nil
         }
         watcher = FileWatcher(path: baseDirectory.path) { [weak self] structural, modified in
             guard let self else { return }
@@ -283,6 +288,11 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
         topButtons.spacing = 8
         topButtons.translatesAutoresizingMaskIntoConstraints = false
         topBar.addSubview(topButtons)
+        for (button, id) in [(cloudButton, "cloud"), (searchButton, "search"), (gearButton, "gear")] {
+            button.removeFromSuperview()
+            button.identifier = NSUserInterfaceItemIdentifier(Self.topPrefix + id)
+            insertTopButton(button)
+        }
         let topLine = NSBox()
         topLine.boxType = .separator
         topLine.translatesAutoresizingMaskIntoConstraints = false
@@ -416,14 +426,8 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
             titleStack.leadingAnchor.constraint(equalTo: back.trailingAnchor, constant: 6),
             titleStack.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
             titleStack.trailingAnchor.constraint(lessThanOrEqualTo: topButtons.leadingAnchor, constant: -12),
-            topButtons.trailingAnchor.constraint(equalTo: cloudButton.leadingAnchor, constant: -8),
+            topButtons.trailingAnchor.constraint(equalTo: topBar.trailingAnchor, constant: -12),
             topButtons.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
-            cloudButton.trailingAnchor.constraint(equalTo: searchButton.leadingAnchor, constant: -8),
-            searchButton.trailingAnchor.constraint(equalTo: gearButton.leadingAnchor, constant: -8),
-            searchButton.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
-            gearButton.trailingAnchor.constraint(equalTo: topBar.trailingAnchor, constant: -12),
-            gearButton.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
-            cloudButton.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
             topLine.topAnchor.constraint(equalTo: topBar.bottomAnchor),
             topLine.leadingAnchor.constraint(equalTo: content.leadingAnchor),
             topLine.trailingAnchor.constraint(equalTo: content.trailingAnchor),
@@ -527,7 +531,9 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
             let list = PluginList()
             list.onOpen = { [weak self] id in self?.open(PluginStore.pageURL(id)) }
             list.onError = { [weak self] in self?.showError($0) }
-            feed = FeedView(title: "プラグイン", content: list)
+            let installAll = FeedView.barButton(symbol: "square.and.arrow.down.on.square", tip: "全てインストール", target: list, action: #selector(PluginList.installAll))
+            let uninstallAll = FeedView.barButton(symbol: "trash", tip: "全てアンインストール", target: list, action: #selector(PluginList.uninstallAll))
+            feed = FeedView(title: "プラグイン", content: list, extras: [installAll, uninstallAll])
             feed.onRemove = { [weak self] in self?.togglePlugins() }
             pluginFeed = feed
             feed.isHidden = true
@@ -906,6 +912,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
         detachExtension()
         textView.string = ""
         textView.isEditable = false
+        textAddons.each { $0.fileOpened() }
         windowAddons.each { $0.fileOpened() }
         placeholder.isHidden = false
         fileLabel.stringValue = ""
@@ -952,7 +959,10 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
         guard let layout = textView.layoutManager else { return }
         let text = textView.string
         layout.removeTemporaryAttribute(.foregroundColor, forCharacterRange: NSRange(location: 0, length: (text as NSString).length))
-        defer { windowAddons.each { $0.decorate(layout) } }
+        defer {
+            textAddons.decorate(layout)
+            windowAddons.each { $0.decorate(layout) }
+        }
         guard let highlighter, let url = current?.url else { return }
         for span in highlighter.spans(text, file: url) {
             layout.addTemporaryAttribute(.foregroundColor, value: span.color, forCharacterRange: span.range)
@@ -1240,6 +1250,8 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
     func windowWillClose(_ notification: Notification) {
         if let shiftMonitor { NSEvent.removeMonitor(shiftMonitor) }
         shiftMonitor = nil
+        if let topDragMonitor { NSEvent.removeMonitor(topDragMonitor) }
+        topDragMonitor = nil
         textAddons.detachAll()
         windowAddons.detachAll()
         splitPane?.detachAddons()
@@ -1621,7 +1633,13 @@ extension EditorWindowController {
         if let url = sender.representedObject as? URL { closeTab(url) }
     }
 
-    private func openRight(_ url: URL) {
+    var splitURLs: [URL] { splitPane?.urls ?? [] }
+
+    var splitTextView: NSTextView? { splitPane?.textView }
+
+    var splitFileURL: URL? { splitPane?.fileURL }
+
+    func openRight(_ url: URL) {
         let pane = splitPane ?? makeSplitPane()
         if pane.contains(url) { return pane.select(url) }
         let buffer: Buffer
@@ -1702,7 +1720,7 @@ extension EditorWindowController {
     }
 }
 
-extension EditorWindowController: CodeEditing {
+extension EditorWindowController: CodeEditing, OverlayHosting {
     var scrollView: NSScrollView { editorScroll }
     var fileURL: URL? { current?.editable == true ? current?.url : nil }
     var tabStrip: TabStrip? { fileTabs }
@@ -1746,9 +1764,61 @@ extension EditorWindowController: CodeEditing {
         if ext?.floating == true { layoutExtensionBar() }
     }
 
+    func removeOverlay(_ view: NSView) {
+        guard view.identifier == Self.overlayID else { return }
+        view.removeFromSuperview()
+        if ext?.floating == true { layoutExtensionBar() }
+    }
+
     func addTopButton(_ view: NSView) {
         guard view.superview == nil else { return }
-        topButtons.addArrangedSubview(view)
+        if view.identifier == nil {
+            let name = view.toolTip ?? String(describing: type(of: view))
+            view.identifier = NSUserInterfaceItemIdentifier(Self.topPrefix + "plugin." + name)
+        }
+        insertTopButton(view)
+    }
+
+    private static let topKey = "BigTab.Order.Top"
+    private static let topPrefix = "top."
+    private static let builtinTop: Set<String> = ["top.cloud", "top.search", "top.gear"]
+
+    private func insertTopButton(_ view: NSView) {
+        let saved = UserDefaults.standard.stringArray(forKey: Self.topKey) ?? []
+        let id = view.identifier?.rawValue ?? ""
+        let views = topButtons.arrangedSubviews
+        let index: Int
+        if let mine = saved.firstIndex(of: id) {
+            index = views.firstIndex { saved.firstIndex(of: $0.identifier?.rawValue ?? "").map { $0 > mine } ?? false } ?? views.count
+        } else if Self.builtinTop.contains(id) {
+            index = views.count
+        } else {
+            index = views.firstIndex { Self.builtinTop.contains($0.identifier?.rawValue ?? "") } ?? views.count
+        }
+        topButtons.insertArrangedSubview(view, at: index)
+    }
+
+    private func dragTopButton(_ event: NSEvent) -> Bool {
+        guard event.window === window, event.modifierFlags.contains(.command), let window,
+              let frame = window.contentView?.superview,
+              let hit = window.contentView?.hitTest(frame.convert(event.locationInWindow, from: nil)),
+              let item = sequence(first: hit, next: { $0.superview }).first(where: { $0.superview === topButtons }) else { return false }
+        var reorder: DragReorder?
+        while let next = window.nextEvent(matching: [.leftMouseDragged, .leftMouseUp]), next.type == .leftMouseDragged {
+            if reorder == nil {
+                guard hypot(next.locationInWindow.x - event.locationInWindow.x, next.locationInWindow.y - event.locationInWindow.y) > 3 else { continue }
+                reorder = DragReorder(view: item, event: event)
+            }
+            reorder?.drag(next)
+        }
+        reorder?.end()
+        if reorder != nil {
+            var order = UserDefaults.standard.stringArray(forKey: Self.topKey) ?? []
+            let current = topButtons.arrangedSubviews.compactMap { $0.identifier?.rawValue }
+            order.removeAll { current.contains($0) }
+            UserDefaults.standard.set(current + order, forKey: Self.topKey)
+        }
+        return true
     }
 
     func pressStripButton(_ id: String) -> Bool {

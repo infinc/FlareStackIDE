@@ -10,6 +10,16 @@ protocol CodeEditing: AnyObject {
     func closeAllTabs()
 }
 
+protocol OverlayHosting: AnyObject {
+    func addOverlay(_ view: NSView)
+    func removeOverlay(_ view: NSView)
+    func setOverlayInset(_ inset: CGFloat)
+}
+
+protocol TextDecorating: AnyObject {
+    func decorate(_ layout: NSLayoutManager)
+}
+
 protocol TextAddon: AnyObject {
     var priority: Int { get }
     func shouldChange(_ range: NSRange, text: String) -> Bool
@@ -157,6 +167,8 @@ final class TextAddons {
     func doCommand(_ selector: Selector) -> Bool { items.contains { $0.addon.doCommand(selector) } }
 
     func each(_ body: (TextAddon) -> Void) { items.forEach { body($0.addon) } }
+
+    func decorate(_ layout: NSLayoutManager) { items.forEach { ($0.addon as? TextDecorating)?.decorate(layout) } }
 
     func detachAll() {
         items.forEach { $0.addon.detach() }

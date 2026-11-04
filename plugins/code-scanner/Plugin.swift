@@ -6,6 +6,10 @@ final class CodeScannerPlugin: NativePlugin {
     func windowAddon(for editor: EditorWindowController) -> WindowAddon? {
         CodeScanner.make().map { CodeScannerAddon(editor: editor, scanner: $0) }
     }
+    func textAddon(for code: CodeEditing) -> TextAddon? {
+        guard let pane = code as? SplitPane else { return nil }
+        return CodeScanner.make().map { SplitScannerAddon(pane: pane, scanner: $0) }
+    }
 }
 
 final class CodeScannerAddon: WindowAddon {
@@ -19,15 +23,25 @@ final class CodeScannerAddon: WindowAddon {
     private var feed: FeedView?
     private var revision = 0
     private lazy var hover = DiagnosticHover(editor: editor)
+    private static let all = NSHashTable<CodeScannerAddon>.weakObjects()
+    private let splits = NSHashTable<SplitScannerAddon>.weakObjects()
+
+    static func owner(of window: NSWindow?) -> CodeScannerAddon? {
+        all.allObjects.first { $0.editor?.window != nil && $0.editor?.window === window }
+    }
 
     init(editor: EditorWindowController, scanner: CodeScanner) {
         self.editor = editor
         self.scanner = scanner
+        Self.all.add(self)
         CodeView.replaceLayoutManager(editor.textView, with: DiagnosticLayoutManager())
         badge.isHidden = true
         badge.onClick = { [weak self] in self?.toggleProblems() }
         editor.addOverlay(badge)
-        problemsView.onSelect = { [weak editor] in editor?.reveal($0.url, range: $0.range) }
+        problemsView.onSelect = { [weak self, weak editor] item in
+            if self?.splits.allObjects.contains(where: { $0.reveal(item) }) == true { return }
+            editor?.reveal(item.url, range: item.range)
+        }
         NotificationCenter.default.addObserver(self, selector: #selector(marksRequested), name: CodeScanner.marksRequest, object: editor.textView)
         NotificationCenter.default.addObserver(self, selector: #selector(textEdited(_:)), name: NSTextStorage.didProcessEditingNotification, object: editor.textView.textStorage)
         hover.start()
@@ -51,7 +65,20 @@ final class CodeScannerAddon: WindowAddon {
                                         userInfo: ["errors": lines(.error), "warnings": lines(.warning)])
     }
 
-    private func toggleProblems() {
+    func register(_ split: SplitScannerAddon) {
+        splits.add(split)
+        refreshProblems()
+    }
+
+    func refreshProblems() {
+        let url = editor?.fileURL
+        let mine = url.flatMap { diagnostics[$0] } ?? []
+        let others = editor?.openURLs.filter { $0 != url }.flatMap { diagnostics[$0] ?? [] } ?? []
+        let right = splits.allObjects.flatMap(\.items).filter { item in !(mine + others).contains { $0.url == item.url } }
+        problemsView.show(mine + others + right)
+    }
+
+    func toggleProblems() {
         guard let editor else { return }
         let feed = self.feed ?? {
             let made = FeedView(title: "問題", content: problemsView)
@@ -90,8 +117,7 @@ final class CodeScannerAddon: WindowAddon {
         let mine = url.flatMap { diagnostics[$0] } ?? []
         badge.isHidden = url == nil
         badge.update(errors: mine.filter { $0.severity == .error }.count, warnings: mine.filter { $0.severity == .warning }.count)
-        let others = editor.openURLs.filter { $0 != url }.flatMap { diagnostics[$0] ?? [] }
-        problemsView.show(mine + others)
+        refreshProblems()
 
         let length = (textView.string as NSString).length
         let valid = mine.filter { NSMaxRange($0.range) <= length }
@@ -118,7 +144,7 @@ final class CodeScannerAddon: WindowAddon {
 
     func bufferClosed(_ url: URL) {
         diagnostics[url] = nil
-        problemsView.show(editor?.openURLs.flatMap { diagnostics[$0] ?? [] } ?? [])
+        refreshProblems()
     }
 
     func decorate(_ layout: NSLayoutManager) {
@@ -130,6 +156,7 @@ final class CodeScannerAddon: WindowAddon {
     }
 
     func detach() {
+        Self.all.remove(self)
         work?.cancel()
         hover.stop()
         NotificationCenter.default.removeObserver(self)
@@ -141,6 +168,120 @@ final class CodeScannerAddon: WindowAddon {
         guard let editor else { return }
         CodeView.replaceLayoutManager(editor.textView, with: NSLayoutManager())
         editor.recolor()
+    }
+}
+
+final class SplitScannerAddon: TextAddon {
+    private weak var pane: SplitPane?
+    private let scanner: CodeScanner
+    private let badge = ProblemBadge()
+    private var work: DispatchWorkItem?
+    private var revision = 0
+    private(set) var items: [Diagnostic] = []
+    private lazy var hover = DiagnosticHover(editor: pane)
+
+    init(pane: SplitPane, scanner: CodeScanner) {
+        self.pane = pane
+        self.scanner = scanner
+        CodeView.replaceLayoutManager(pane.textView, with: DiagnosticLayoutManager())
+        badge.isHidden = true
+        badge.onClick = { [weak self] in self?.owner?.toggleProblems() }
+        pane.addOverlay(badge)
+        NotificationCenter.default.addObserver(self, selector: #selector(marksRequested), name: CodeScanner.marksRequest, object: pane.textView)
+        NotificationCenter.default.addObserver(self, selector: #selector(textEdited(_:)), name: NSTextStorage.didProcessEditingNotification, object: pane.textView.textStorage)
+        hover.start()
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.owner?.register(self)
+            self.apply()
+            self.schedule(delay: 0)
+        }
+    }
+
+    private var owner: CodeScannerAddon? { CodeScannerAddon.owner(of: pane?.window) }
+
+    @objc private func marksRequested() { postMarks() }
+
+    @objc private func textEdited(_ note: Notification) {
+        guard let storage = note.object as? NSTextStorage, storage.editedMask.contains(.editedCharacters),
+              let layout = pane?.textView.layoutManager as? DiagnosticLayoutManager else { return }
+        layout.shiftMarks(edited: storage.editedRange, delta: storage.changeInLength)
+    }
+
+    private func postMarks() {
+        guard let textView = pane?.textView else { return }
+        let lines = { (severity: Diagnostic.Severity) in Set(self.items.filter { $0.severity == severity }.map(\.line)) }
+        NotificationCenter.default.post(name: CodeScanner.marksChanged, object: textView,
+                                        userInfo: ["errors": lines(.error), "warnings": lines(.warning)])
+    }
+
+    private func schedule(delay: TimeInterval) {
+        work?.cancel()
+        guard pane?.fileURL != nil else { return }
+        let item = DispatchWorkItem { [weak self] in self?.scan() }
+        work = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: item)
+    }
+
+    private func scan() {
+        guard let pane, let url = pane.fileURL else { return }
+        let scanned = revision
+        scanner.scan(pane.textView.string, url: url) { [weak self] found in
+            guard let self, self.pane?.fileURL == url, self.revision == scanned else { return }
+            self.items = found
+            self.apply()
+        }
+    }
+
+    private func apply() {
+        guard let pane else { return }
+        let textView = pane.textView
+        if pane.fileURL == nil { items = [] }
+        badge.isHidden = pane.fileURL == nil
+        badge.update(errors: items.filter { $0.severity == .error }.count, warnings: items.filter { $0.severity == .warning }.count)
+        let length = (textView.string as NSString).length
+        (textView.layoutManager as? DiagnosticLayoutManager)?.marks = items.filter { NSMaxRange($0.range) <= length }.map {
+            DiagnosticMark(range: $0.range, color: $0.color, message: "\($0.severity == .error ? "エラー" : "警告"): \($0.message)")
+        }
+        hover.hide()
+        textView.needsDisplay = true
+        postMarks()
+        owner?.refreshProblems()
+    }
+
+    func reveal(_ item: Diagnostic) -> Bool {
+        guard let pane, pane.contains(item.url) else { return false }
+        pane.select(item.url)
+        guard pane.fileURL == item.url, NSMaxRange(item.range) <= (pane.textView.string as NSString).length else { return true }
+        pane.textView.setSelectedRange(item.range)
+        pane.textView.scrollRangeToVisible(item.range)
+        pane.textView.showFindIndicator(for: item.range)
+        return true
+    }
+
+    func fileOpened() {
+        revision += 1
+        items = []
+        apply()
+        schedule(delay: 0)
+    }
+
+    func textChanged() {
+        revision += 1
+        hover.hide()
+        schedule(delay: 1.5)
+    }
+
+    func detach() {
+        work?.cancel()
+        hover.stop()
+        NotificationCenter.default.removeObserver(self)
+        items = []
+        owner?.refreshProblems()
+        guard let pane else { return }
+        NotificationCenter.default.post(name: CodeScanner.marksChanged, object: pane.textView, userInfo: ["errors": Set<Int>(), "warnings": Set<Int>()])
+        pane.removeOverlay(badge)
+        CodeView.replaceLayoutManager(pane.textView, with: NSLayoutManager())
     }
 }
 

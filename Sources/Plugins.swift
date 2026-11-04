@@ -418,6 +418,13 @@ final class PluginRow: NSView {
     override func mouseEntered(with event: NSEvent) { hovered = true }
     override func mouseExited(with event: NSEvent) { hovered = false }
 
+    func refreshHover() {
+        guard let window else { return hovered = false }
+        let point = convert(window.mouseLocationOutsideOfEventStream, from: nil)
+        let visible = visibleRect.contains(point) && window.isKeyWindow
+        if hovered != visible { hovered = visible }
+    }
+
     override func mouseUp(with event: NSEvent) {
         if bounds.contains(convert(event.locationInWindow, from: nil)) { onOpen?() }
     }
@@ -461,6 +468,8 @@ final class PluginList: NSView {
         scroll.autohidesScrollers = true
         scroll.documentView = document
         scroll.translatesAutoresizingMaskIntoConstraints = false
+        scroll.contentView.postsBoundsChangedNotifications = true
+        NotificationCenter.default.addObserver(self, selector: #selector(scrolled), name: NSView.boundsDidChangeNotification, object: scroll.contentView)
         addSubview(search)
         addSubview(refresh)
         addSubview(scroll)
@@ -499,6 +508,62 @@ final class PluginList: NSView {
 
     @objc private func refreshClicked() { PluginStore.refreshCatalog() }
 
+    @objc private func scrolled() {
+        list.arrangedSubviews.compactMap { $0 as? PluginRow }.forEach { $0.refreshHover() }
+    }
+
+    private static func confirm(_ title: String, _ message: String, _ button: String, in window: NSWindow?) -> Bool {
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = message
+        alert.addButton(withTitle: button)
+        alert.addButton(withTitle: "キャンセル")
+        return alert.runModal() == .alertFirstButtonReturn
+    }
+
+    @objc func installAll() {
+        let targets = PluginStore.catalog.filter { !PluginStore.isInstalled($0.id) && !PluginStore.isBusy($0.id) }
+        guard !targets.isEmpty else {
+            Toasts.post("インストールできるプラグインはありません", in: window)
+            return
+        }
+        guard Self.confirm("全てのプラグインをインストールしますか？", "\(targets.count) 個のプラグインをインストールします", "全てインストール", in: window) else { return }
+        let group = DispatchGroup()
+        var failed: [String] = []
+        for info in targets {
+            group.enter()
+            PluginStore.install(info.id) { error in
+                if error != nil { failed.append(info.name) }
+                group.leave()
+            }
+        }
+        group.notify(queue: .main) { [weak self] in
+            if failed.isEmpty {
+                Toasts.post("\(targets.count) 個のプラグインをインストールしました", in: self?.window)
+            } else {
+                Toasts.post("\(failed.count) 個のプラグインのインストールに失敗しました", message: failed.joined(separator: "、"), in: self?.window)
+            }
+        }
+    }
+
+    @objc func uninstallAll() {
+        let targets = PluginStore.installedIDs.filter { !PluginStore.isBusy($0) }
+        guard !targets.isEmpty else {
+            Toasts.post("インストール済みのプラグインはありません", in: window)
+            return
+        }
+        guard Self.confirm("全てのプラグインをアンインストールしますか？", "\(targets.count) 個のプラグインをアンインストールします", "全てアンインストール", in: window) else { return }
+        var failed: [String] = []
+        for id in targets {
+            do { try PluginStore.uninstall(id) } catch { failed.append(PluginStore.info(id)?.name ?? id) }
+        }
+        if failed.isEmpty {
+            Toasts.post("\(targets.count) 個のプラグインをアンインストールしました", in: window)
+        } else {
+            Toasts.post("\(failed.count) 個のプラグインのアンインストールに失敗しました", message: failed.joined(separator: "、"), in: window)
+        }
+    }
+
     @objc func reload() {
         list.arrangedSubviews.forEach { $0.removeFromSuperview() }
         if PluginStore.loading { list.addArrangedSubview(header("プラグイン一覧を取得中…")) }
@@ -518,12 +583,23 @@ final class PluginList: NSView {
                 let row = PluginRow(info: info)
                 row.onOpen = { [weak self] in self?.onOpen?(info.id) }
                 row.onAction = { [weak self] in
-                    PluginStore.perform(info.id) { error in if let error { self?.onError?(error) } }
+                    let installing = !PluginStore.isInstalled(info.id) || PluginStore.hasUpdate(info.id)
+                    let updating = PluginStore.hasUpdate(info.id)
+                    PluginStore.perform(info.id) { error in
+                        if let error {
+                            self?.onError?(error)
+                            return
+                        }
+                        guard installing else { return }
+                        let version = PluginStore.installed(info.id)?.version ?? info.version
+                        Toasts.post(updating ? "\(info.name) を v\(version) に更新しました" : "\(info.name) をインストールしました", in: self?.window)
+                    }
                 }
                 list.addArrangedSubview(row)
                 row.widthAnchor.constraint(equalTo: list.widthAnchor).isActive = true
             }
         }
+        DispatchQueue.main.async { [weak self] in self?.scrolled() }
     }
 }
 
