@@ -334,7 +334,15 @@ func buildMainMenu() -> NSMenu {
     let projectFind = editMenu.addItem(withTitle: "プロジェクト内を検索…", action: #selector(EditorWindowController.findInProject(_:)), keyEquivalent: "f")
     projectFind.keyEquivalentModifierMask = [.command, .shift]
 
-    for (title, submenu) in [(appName, appMenu), ("ファイル", fileMenu), ("編集", editMenu)] {
+    let viewMenu = NSMenu(title: "表示")
+    let palette = viewMenu.addItem(withTitle: "コマンドパレット…", action: #selector(EditorWindowController.showCommandPalette(_:)),
+                                   keyEquivalent: CommandPalette.defaultKey)
+    palette.keyEquivalentModifierMask = CommandPalette.defaultModifiers
+    CommandPalette.menuItem = palette
+    viewMenu.addItem(.separator())
+    viewMenu.addItem(withTitle: "VS Code テーマを読み込む…", action: #selector(ThemeImport.importClicked(_:)), keyEquivalent: "").target = ThemeImport.shared
+
+    for (title, submenu) in [(appName, appMenu), ("ファイル", fileMenu), ("編集", editMenu), ("表示", viewMenu)] {
         let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
         item.submenu = submenu
         main.addItem(item)

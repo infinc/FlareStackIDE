@@ -44,9 +44,28 @@ final class CodeScannerAddon: WindowAddon {
         }
         NotificationCenter.default.addObserver(self, selector: #selector(marksRequested), name: CodeScanner.marksRequest, object: editor.textView)
         NotificationCenter.default.addObserver(self, selector: #selector(textEdited(_:)), name: NSTextStorage.didProcessEditingNotification, object: editor.textView.textStorage)
+        NotificationCenter.default.addObserver(self, selector: #selector(externalChanged), name: ExternalDiagnostics.changed, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(lspFilesChanged), name: ExternalDiagnostics.filesChanged, object: nil)
+        ExternalDiagnostics.install()
         hover.start()
         apply()
         schedule(delay: 0)
+    }
+
+    @objc private func externalChanged() { DispatchQueue.main.async { [weak self] in self?.apply() } }
+
+    @objc private func lspFilesChanged() {
+        DispatchQueue.main.async { [weak self] in
+            self?.apply()
+            self?.schedule(delay: 0)
+        }
+    }
+
+    private func merged(_ url: URL?) -> [Diagnostic] {
+        guard let url, let editor else { return [] }
+        let own = diagnostics[url] ?? []
+        let text = editor.fileURL == url ? editor.textView.string : editor.openTexts.first { $0.url == url }?.text ?? ""
+        return ExternalDiagnostics.merge(own, url: url, text: text)
     }
 
     @objc private func marksRequested() { postMarks() }
@@ -59,7 +78,7 @@ final class CodeScannerAddon: WindowAddon {
 
     private func postMarks() {
         guard let textView = editor?.textView else { return }
-        let mine = editor?.fileURL.flatMap { diagnostics[$0] } ?? []
+        let mine = merged(editor?.fileURL)
         let lines = { (severity: Diagnostic.Severity) in Set(mine.filter { $0.severity == severity }.map(\.line)) }
         NotificationCenter.default.post(name: CodeScanner.marksChanged, object: textView,
                                         userInfo: ["errors": lines(.error), "warnings": lines(.warning)])
@@ -72,9 +91,9 @@ final class CodeScannerAddon: WindowAddon {
 
     func refreshProblems() {
         let url = editor?.fileURL
-        let mine = url.flatMap { diagnostics[$0] } ?? []
-        let others = editor?.openURLs.filter { $0 != url }.flatMap { diagnostics[$0] ?? [] } ?? []
-        let right = splits.allObjects.flatMap(\.items).filter { item in !(mine + others).contains { $0.url == item.url } }
+        let mine = merged(url)
+        let others = editor?.openURLs.filter { $0 != url }.flatMap { merged($0) } ?? []
+        let right = splits.allObjects.flatMap(\.shown).filter { item in !(mine + others).contains { $0.url == item.url } }
         problemsView.show(mine + others + right)
     }
 
@@ -114,16 +133,14 @@ final class CodeScannerAddon: WindowAddon {
         guard let editor else { return }
         let textView = editor.textView
         let url = editor.fileURL
-        let mine = url.flatMap { diagnostics[$0] } ?? []
+        let mine = merged(url)
         badge.isHidden = url == nil
         badge.update(errors: mine.filter { $0.severity == .error }.count, warnings: mine.filter { $0.severity == .warning }.count)
         refreshProblems()
 
         let length = (textView.string as NSString).length
         let valid = mine.filter { NSMaxRange($0.range) <= length }
-        (textView.layoutManager as? DiagnosticLayoutManager)?.marks = valid.map {
-            DiagnosticMark(range: $0.range, color: $0.color, message: "\($0.severity == .error ? "エラー" : "警告"): \($0.message)")
-        }
+        (textView.layoutManager as? DiagnosticLayoutManager)?.marks = valid.map(\.mark)
         hover.hide()
         editor.recolor()
         textView.needsDisplay = true
@@ -189,6 +206,9 @@ final class SplitScannerAddon: TextAddon {
         pane.addOverlay(badge)
         NotificationCenter.default.addObserver(self, selector: #selector(marksRequested), name: CodeScanner.marksRequest, object: pane.textView)
         NotificationCenter.default.addObserver(self, selector: #selector(textEdited(_:)), name: NSTextStorage.didProcessEditingNotification, object: pane.textView.textStorage)
+        NotificationCenter.default.addObserver(self, selector: #selector(externalChanged), name: ExternalDiagnostics.changed, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(lspFilesChanged), name: ExternalDiagnostics.filesChanged, object: nil)
+        ExternalDiagnostics.install()
         hover.start()
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
@@ -200,6 +220,20 @@ final class SplitScannerAddon: TextAddon {
 
     private var owner: CodeScannerAddon? { CodeScannerAddon.owner(of: pane?.window) }
 
+    @objc private func externalChanged() { DispatchQueue.main.async { [weak self] in self?.apply() } }
+
+    @objc private func lspFilesChanged() {
+        DispatchQueue.main.async { [weak self] in
+            self?.apply()
+            self?.schedule(delay: 0)
+        }
+    }
+
+    var shown: [Diagnostic] {
+        guard let pane, let url = pane.fileURL else { return [] }
+        return ExternalDiagnostics.merge(items, url: url, text: pane.textView.string)
+    }
+
     @objc private func marksRequested() { postMarks() }
 
     @objc private func textEdited(_ note: Notification) {
@@ -210,7 +244,8 @@ final class SplitScannerAddon: TextAddon {
 
     private func postMarks() {
         guard let textView = pane?.textView else { return }
-        let lines = { (severity: Diagnostic.Severity) in Set(self.items.filter { $0.severity == severity }.map(\.line)) }
+        let all = shown
+        let lines = { (severity: Diagnostic.Severity) in Set(all.filter { $0.severity == severity }.map(\.line)) }
         NotificationCenter.default.post(name: CodeScanner.marksChanged, object: textView,
                                         userInfo: ["errors": lines(.error), "warnings": lines(.warning)])
     }
@@ -238,11 +273,10 @@ final class SplitScannerAddon: TextAddon {
         let textView = pane.textView
         if pane.fileURL == nil { items = [] }
         badge.isHidden = pane.fileURL == nil
-        badge.update(errors: items.filter { $0.severity == .error }.count, warnings: items.filter { $0.severity == .warning }.count)
+        let all = shown
+        badge.update(errors: all.filter { $0.severity == .error }.count, warnings: all.filter { $0.severity == .warning }.count)
         let length = (textView.string as NSString).length
-        (textView.layoutManager as? DiagnosticLayoutManager)?.marks = items.filter { NSMaxRange($0.range) <= length }.map {
-            DiagnosticMark(range: $0.range, color: $0.color, message: "\($0.severity == .error ? "エラー" : "警告"): \($0.message)")
-        }
+        (textView.layoutManager as? DiagnosticLayoutManager)?.marks = all.filter { NSMaxRange($0.range) <= length }.map(\.mark)
         hover.hide()
         textView.needsDisplay = true
         postMarks()

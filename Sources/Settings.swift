@@ -96,6 +96,7 @@ enum Settings {
     static func surfaceColor(_ surface: Surface) -> NSColor? { NSColor(hex: surfaceHex(surface)) }
 
     static var themeIndex: Int? {
+        guard defaults.object(forKey: paletteKey) == nil else { return nil }
         let current = Surface.allCases.map(surfaceHex)
         return themes.firstIndex { $0.colors == current }
     }
@@ -104,8 +105,52 @@ enum Settings {
         guard themes.indices.contains(index) else { return }
         for (surface, hex) in zip(Surface.allCases, themes[index].colors) { defaults.set(hex, forKey: surface.key) }
         defaults.set("", forKey: "Editor.Foreground")
+        defaults.removeObject(forKey: paletteKey)
         changed()
     }
+
+    private static let userThemesKey = "Themes.User"
+    private static let paletteKey = "Theme.Palette"
+
+    static var userThemes: [UserTheme] {
+        get { defaults.data(forKey: userThemesKey).flatMap { try? JSONDecoder().decode([UserTheme].self, from: $0) } ?? [] }
+        set { defaults.set(try? JSONEncoder().encode(newValue), forKey: userThemesKey) }
+    }
+
+    static var userThemeIndex: Int? {
+        let current = Surface.allCases.map(surfaceHex)
+        let palette = defaults.stringArray(forKey: paletteKey)
+        return userThemes.firstIndex { $0.colors == current && $0.palette == palette && $0.foreground == foregroundHex }
+    }
+
+    static func addUserTheme(_ theme: UserTheme) {
+        var list = userThemes
+        list.removeAll { $0.name == theme.name }
+        list.append(theme)
+        userThemes = list
+        applyUserTheme(list.count - 1)
+    }
+
+    static func removeUserTheme(_ index: Int) {
+        var list = userThemes
+        guard list.indices.contains(index) else { return }
+        if userThemeIndex == index { applyTheme(0) }
+        list.remove(at: index)
+        userThemes = list
+        changed()
+    }
+
+    static func applyUserTheme(_ index: Int) {
+        let list = userThemes
+        guard list.indices.contains(index) else { return }
+        let theme = list[index]
+        for (surface, hex) in zip(Surface.allCases, theme.colors) { defaults.set(hex, forKey: surface.key) }
+        defaults.set(theme.foreground, forKey: "Editor.Foreground")
+        defaults.set(theme.palette, forKey: paletteKey)
+        changed()
+    }
+
+    static var tokenPalette: [NSColor?]? { defaults.stringArray(forKey: paletteKey)?.map { NSColor(hex: $0) } }
 
     static var backgroundHex: String {
         get { surfaceHex(.editor) }
@@ -369,6 +414,25 @@ final class EditorSettingsMenu: NSObject {
         for (i, entry) in Settings.themes.enumerated() {
             themes.addItem(item(entry.name, #selector(themeClicked(_:)), i, checked: Settings.themeIndex == i, image: NSColor.swatch(entry.colors)))
         }
+        let users = Settings.userThemes
+        if !users.isEmpty {
+            themes.addItem(.separator())
+            let current = Settings.userThemeIndex
+            for (i, entry) in users.enumerated() {
+                themes.addItem(item(entry.name, #selector(userThemeClicked(_:)), i, checked: current == i, image: NSColor.swatch(entry.colors)))
+            }
+        }
+        themes.addItem(.separator())
+        let load = NSMenuItem(title: "VS Code テーマを読み込む…", action: #selector(ThemeImport.importClicked(_:)), keyEquivalent: "")
+        load.target = ThemeImport.shared
+        themes.addItem(load)
+        if !users.isEmpty {
+            let remove = NSMenuItem(title: "読み込んだテーマを削除", action: nil, keyEquivalent: "")
+            let list = NSMenu()
+            for (i, entry) in users.enumerated() { list.addItem(item(entry.name, #selector(userThemeRemoved(_:)), i)) }
+            remove.submenu = list
+            themes.addItem(remove)
+        }
         theme.submenu = themes
         menu.addItem(theme)
         let autosave = NSMenuItem(title: "自動保存: \(Settings.autosaveEnabled ? Settings.intervalTitle(Settings.autosaveInterval) : "オフ")",
@@ -397,6 +461,10 @@ final class EditorSettingsMenu: NSObject {
     }
 
     @objc private func themeClicked(_ sender: NSMenuItem) { Settings.applyTheme(sender.representedObject as? Int ?? 0) }
+
+    @objc private func userThemeClicked(_ sender: NSMenuItem) { Settings.applyUserTheme(sender.representedObject as? Int ?? 0) }
+
+    @objc private func userThemeRemoved(_ sender: NSMenuItem) { Settings.removeUserTheme(sender.representedObject as? Int ?? -1) }
 
     @objc private func autosaveClicked(_ sender: NSMenuItem) {
         guard let value = sender.representedObject as? Double else { return }

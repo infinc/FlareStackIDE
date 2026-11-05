@@ -11,8 +11,63 @@ struct Diagnostic {
     let severity: Severity
     let message: String
     let snippet: String
+    var source = ""
 
     var color: NSColor { severity == .error ? .systemRed : .systemYellow }
+    var mark: DiagnosticMark {
+        DiagnosticMark(range: range, color: color, message: "\(severity == .error ? "エラー" : "警告"): \(message)", external: !source.isEmpty)
+    }
+}
+
+enum ExternalDiagnostics {
+    static let changed = Notification.Name("FlareStackIDE.externalDiagnostics")
+    static let filesChanged = Notification.Name("FlareStackIDE.lspFiles")
+    static let filesRequest = Notification.Name("FlareStackIDE.lspFilesRequest")
+    static let hoverShown = Notification.Name("FlareStackIDE.hoverShown")
+    private(set) static var files: Set<String> = []
+    private static var items: [String: [[String: Any]]] = [:]
+    private static var installed = false
+
+    static func install() {
+        guard !installed else { return }
+        installed = true
+        let center = NotificationCenter.default
+        center.addObserver(forName: filesChanged, object: nil, queue: .main) { note in
+            files = Set((note.userInfo?["urls"] as? [URL] ?? []).map(\.standardizedFileURL.path))
+            items = items.filter { files.contains($0.key) }
+        }
+        center.addObserver(forName: changed, object: nil, queue: .main) { note in
+            guard let url = note.object as? URL else { return }
+            items[url.standardizedFileURL.path] = note.userInfo?["items"] as? [[String: Any]] ?? []
+        }
+        center.post(name: filesRequest, object: nil)
+    }
+
+    static func handles(_ url: URL?) -> Bool { url.map { files.contains($0.standardizedFileURL.path) } ?? false }
+
+    static func diagnostics(for url: URL, text: String) -> [Diagnostic] {
+        guard let raw = items[url.standardizedFileURL.path], !raw.isEmpty else { return [] }
+        let ns = text as NSString
+        return raw.compactMap { item in
+            guard let start = (item["start"] as? NSNumber)?.intValue, let length = (item["length"] as? NSNumber)?.intValue,
+                  let message = item["message"] as? String, start >= 0, start <= ns.length else { return nil }
+            var range = NSRange(location: start, length: max(min(length, ns.length - start), 0))
+            if range.length == 0, ns.length > 0 { range = NSRange(location: min(start, ns.length - 1), length: 1) }
+            let lineRange = ns.lineRange(for: NSRange(location: range.location, length: 0))
+            let line = ns.substring(to: lineRange.location).reduce(1) { $1 == "\n" ? $0 + 1 : $0 }
+            let severity: Diagnostic.Severity = (item["severity"] as? String) == "warning" ? .warning : .error
+            let snippet = ns.substring(with: lineRange).trimmingCharacters(in: .whitespacesAndNewlines)
+            return Diagnostic(url: url, range: range, line: line, column: range.location - lineRange.location + 1, severity: severity,
+                              message: message, snippet: snippet, source: item["source"] as? String ?? "LSP")
+        }
+    }
+
+    static func merge(_ own: [Diagnostic], url: URL, text: String) -> [Diagnostic] {
+        let external = diagnostics(for: url, text: text)
+        guard !external.isEmpty else { return own }
+        let kept = own.filter { mine in !external.contains { NSIntersectionRange($0.range, mine.range).length > 0 && $0.message == mine.message } }
+        return (kept + external).sorted { ($0.severity == .error ? 0 : 1, $0.line) < ($1.severity == .error ? 0 : 1, $1.line) }
+    }
 }
 
 final class CodeScanner {
@@ -58,7 +113,7 @@ final class CodeScanner {
         generation[url] = token
         context.exception = nil
         let local = items(diagnose?.call(withArguments: [text, ext, name, url.deletingLastPathComponent().path]))
-        let spec = checker?.call(withArguments: [ext, name]).flatMap { $0.isObject ? $0.toDictionary() : nil }
+        let spec = ExternalDiagnostics.handles(url) ? nil : checker?.call(withArguments: [ext, name]).flatMap { $0.isObject ? $0.toDictionary() : nil }
         guard let args = spec?["args"] as? [String], !args.isEmpty else {
             return completion(Self.convert(local, text: text, url: url))
         }
@@ -154,6 +209,7 @@ struct DiagnosticMark {
     var range: NSRange
     let color: NSColor
     let message: String
+    var external = false
 }
 
 final class DiagnosticLayoutManager: NSLayoutManager {
@@ -313,11 +369,17 @@ final class DiagnosticHover {
     private var pending: DispatchWorkItem?
     private var popup: NSView?
     private var target: NSRange?
+    private var observer: NSObjectProtocol?
 
     init(editor: CodeEditing?) { self.editor = editor }
 
     func start() {
         guard monitor == nil else { return }
+        observer = NotificationCenter.default.addObserver(forName: ExternalDiagnostics.hoverShown, object: nil, queue: .main) { [weak self] note in
+            guard let self, note.userInfo?["from"] as? String != CodeScanner.pluginID,
+                  note.object as? NSTextView === self.editor?.textView else { return }
+            self.hide()
+        }
         monitor = NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved, .scrollWheel, .leftMouseDown, .keyDown]) { [weak self] event in
             if event.type == .mouseMoved { self?.moved(event) } else { self?.hide() }
             return event
@@ -328,6 +390,8 @@ final class DiagnosticHover {
         hide()
         if let monitor { NSEvent.removeMonitor(monitor) }
         monitor = nil
+        if let observer { NotificationCenter.default.removeObserver(observer) }
+        observer = nil
     }
 
     func hide() {
@@ -348,7 +412,8 @@ final class DiagnosticHover {
         let glyph = layout.glyphIndex(for: inner, in: container)
         guard layout.boundingRect(forGlyphRange: NSRange(location: glyph, length: 1), in: container).insetBy(dx: -1, dy: -1).contains(inner) else { return nil }
         let index = layout.characterIndexForGlyph(at: glyph)
-        return layout.marks.first { NSLocationInRange(index, $0.range) }
+        let lsp = ExternalDiagnostics.handles(editor?.fileURL)
+        return layout.marks.first { NSLocationInRange(index, $0.range) && !(lsp && $0.external) }
     }
 
     private func moved(_ event: NSEvent) {
@@ -376,6 +441,7 @@ final class DiagnosticHover {
         view.setFrameOrigin(NSPoint(x: x, y: y))
         content.addSubview(view, positioned: .above, relativeTo: nil)
         popup = view
+        NotificationCenter.default.post(name: ExternalDiagnostics.hoverShown, object: textView, userInfo: ["from": CodeScanner.pluginID])
     }
 }
 
@@ -444,7 +510,7 @@ final class ProblemsView: NSView, NSTableViewDataSource, NSTableViewDelegate {
         }
         let text: String
         switch id {
-        case "message": text = item.message
+        case "message": text = item.source.isEmpty ? item.message : "\(item.message)　— \(item.source)"
         case "code": text = item.snippet
         case "file": text = item.url.lastPathComponent
         default: text = item.column > 0 ? "\(item.line):\(item.column)" : "\(item.line)"

@@ -1,10 +1,15 @@
 {
   "id": "shortcut",
   "name": "Shortcut",
-  "version": "1.0",
+  "version": "1.1",
   "author": "FlareStackIDE",
   "symbol": "command",
-  "summary": "好きなキーで実行・テーマ切り替え・保存して終了",
+  "summary": "好きなキーで実行・テーマ切り替え・保存して終了・コマンドパレット",
   "fileExtensions": [],
-  "files": ["plugin.dylib", "README.md"]
+  "files": ["plugin.dylib", "README.md"],
+  "apiVersion": 1,
+  "hashes": {
+    "README.md": "48b4e532ed899fe4302a0bba21d512a2f323b8eb5cd04c77bf1be7424a3d315c",
+    "plugin.dylib": "8299d742c41b30629ac104da3d6a4226c0549a171148e9b65e1afe770aa764b1"
+  }
 }

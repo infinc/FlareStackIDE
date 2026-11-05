@@ -157,6 +157,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
     private let gearButton = NSButton()
     private let searchButton = NSButton()
     private var searchPanel: SearchPanel?
+    private var commandPalette: CommandPalette?
     private let settingsMenu = EditorSettingsMenu()
     private let fileTabs = TabStrip()
     private let editorSplit = NSSplitView()
@@ -571,6 +572,32 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
     }
 
     @objc func findInProject(_ sender: Any?) { searchClicked() }
+
+    @objc func showCommandPalette(_ sender: Any?) {
+        guard let window else { return }
+        if let palette = commandPalette, palette.isVisible { return palette.close() }
+        let palette = commandPalette ?? CommandPalette()
+        commandPalette = palette
+        palette.show(over: window, commands: paletteCommands)
+    }
+
+    var paletteCommands: [PaletteCommand] {
+        var list: [PaletteCommand] = []
+        let collect: (AnyObject) -> Void = { if let provider = $0 as? CommandProviding { list += provider.commands } }
+        windowAddons.each(collect)
+        textAddons.each(collect)
+        splitPane?.addons.each(collect)
+        for button in stripButtons {
+            guard let tip = button.toolTip, !tip.isEmpty else { continue }
+            list.append(PaletteCommand(id: "strip." + tip, title: tip, detail: "アイコン列") { [weak button] in button?.performClick(nil) })
+        }
+        for view in topButtons.arrangedSubviews {
+            func find(_ view: NSView) -> NSButton? { (view as? NSButton) ?? view.subviews.lazy.compactMap(find).first }
+            guard let button = find(view), let tip = button.toolTip ?? view.toolTip, !tip.isEmpty else { continue }
+            list.append(PaletteCommand(id: "top." + tip, title: tip, detail: "上のバー") { [weak button] in button?.performClick(nil) })
+        }
+        return list + CommandPalette.menuCommands()
+    }
 
     private func openHit(_ url: URL, line: Int?, query: String) {
         if selectedURL != url { open(url) }

@@ -6,7 +6,7 @@ final class GitActionsPlugin: NativePlugin {
     func windowAddon(for editor: EditorWindowController) -> WindowAddon? { GitActionsAddon(editor: editor) }
 }
 
-final class GitActionsAddon: NSObject, WindowAddon {
+final class GitActionsAddon: NSObject, WindowAddon, CommandProviding {
     private weak var editor: EditorWindowController?
     private var button: ToolStripButton!
     private var view: GitActionsView?
@@ -47,6 +47,23 @@ final class GitActionsAddon: NSObject, WindowAddon {
         }()
         editor.toggleBottom(feed)
         reload()
+    }
+
+    var commands: [PaletteCommand] {
+        guard Settings.gitEnabled else { return [] }
+        let run: (@escaping (GitActionsView) -> Void) -> () -> Void = { [weak self] body in
+            { [weak self] in
+                guard let self else { return }
+                if self.feed?.isHidden != false { self.toggle() }
+                if let view = self.view { body(view) }
+            }
+        }
+        return [
+            PaletteCommand(id: "git-actions.fetch", title: "Git: Fetch", perform: run { $0.fetchAction() }),
+            PaletteCommand(id: "git-actions.pull", title: "Git: Pull", perform: run { $0.pullAction() }),
+            PaletteCommand(id: "git-actions.push", title: "Git: Push", perform: run { $0.pushAction() }),
+            PaletteCommand(id: "git-actions.stash", title: "Git: Stash", perform: run { $0.stashAction() }),
+        ]
     }
 
     func textChanged() {

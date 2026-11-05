@@ -68,7 +68,7 @@ enum ProjectSearch {
     }
 }
 
-private final class SearchPanelWindow: NSPanel {
+final class SearchPanelWindow: NSPanel {
     override var canBecomeKey: Bool { true }
     override func cancelOperation(_ sender: Any?) { close() }
 }

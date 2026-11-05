@@ -1,10 +1,16 @@
 {
   "id": "light-editor",
   "name": "Light Editer",
-  "version": "1.1",
+  "version": "1.2",
   "author": "FlareStackIDE",
   "symbol": "doc.text",
   "summary": "ファイルだけを開く軽量エディタ",
   "fileExtensions": [],
-  "files": ["plugin.dylib", "README.md"]
+  "requires": ["lines"],
+  "files": ["plugin.dylib", "README.md"],
+  "apiVersion": 1,
+  "hashes": {
+    "README.md": "6c7d5a05b478662782f24cb4742fd2f32a68989fc07f162b14a9317057f7659d",
+    "plugin.dylib": "0c94580f1562616cbbf42e3aee7628a71d9b9090ed515a6c6837f164425145d2"
+  }
 }

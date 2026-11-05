@@ -12,5 +12,9 @@
     { "key": "barTransparent", "title": "透明（ボタンだけを表示）", "type": "bool" },
     { "key": "barMinimize", "title": "透明表示のとき最小化する", "type": "bool" },
     { "key": "barPosition", "title": "透明表示のボタンの位置", "type": "choice", "options": ["右下", "右上", "左下", "左上"], "default": "右下" }
-  ]
+  ],
+  "hashes": {
+    "README.md": "2c6eb0213289beb578c6181b630168a5e6b7876a0bd2f7f711b97e2cad2d95f3",
+    "main.js": "48614062d25dec320cba737b5508e8fba2fb2b6860569b21dd41f9c24072d0bd"
+  }
 }

@@ -91,6 +91,7 @@ extension NativePlugin {
 
 enum NativePlugins {
     static let binary = "plugin.dylib"
+    static let apiVersion = 1
     private typealias Entry = @convention(c) () -> Void
     private static var loaded: [String: (plugin: NativePlugin?, version: String)] = [:]
     private static var registering: NativePlugin?
@@ -98,8 +99,26 @@ enum NativePlugins {
 
     static func register(_ plugin: NativePlugin) { registering = plugin }
 
+    static var loadOrder: [String] {
+        let ids = PluginStore.installedIDs
+        let present = Set(ids)
+        var order: [String] = []
+        var done: Set<String> = []
+        func visit(_ id: String, _ path: Set<String>) {
+            guard !done.contains(id), !path.contains(id), let info = PluginStore.installed(id) else { return }
+            let requires = info.requires ?? []
+            guard requires.allSatisfy(present.contains) else { return }
+            requires.forEach { visit($0, path.union([id])) }
+            guard requires.allSatisfy(done.contains) else { return }
+            done.insert(id)
+            order.append(id)
+        }
+        ids.forEach { visit($0, []) }
+        return order
+    }
+
     static var active: [NativePlugin] {
-        PluginStore.installedIDs.compactMap { id in
+        loadOrder.compactMap { id in
             guard let info = PluginStore.installed(id) else { return nil }
             if let entry = loaded[id] {
                 if entry.version != info.version, entry.plugin != nil, !restartNoted.contains(id) {
@@ -110,6 +129,11 @@ enum NativePlugins {
             }
             let file = PluginStore.folder(id).appendingPathComponent(binary)
             guard FileManager.default.fileExists(atPath: file.path) else { return nil }
+            if let reason = PluginStore.compatibility(info) ?? PluginTrust.verifyInstalled(PluginStore.folder(id), info: info, files: [binary]) {
+                loaded[id] = (nil, info.version)
+                Toasts.post("\(info.name) を読み込みませんでした", message: reason)
+                return nil
+            }
             let plugin = load(file, name: info.name)
             loaded[id] = (plugin, info.version)
             return plugin

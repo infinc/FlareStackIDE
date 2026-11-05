@@ -215,7 +215,7 @@ final class SplitPane: NSView, NSTextViewDelegate {
     private let scroll = CodeScrollView.make()
     var textView: NSTextView { scroll.documentView as! NSTextView }
     private var strip: TabStrip!
-    private lazy var addons = TextAddons(code: self)
+    private(set) lazy var addons = TextAddons(code: self)
     private var tabs: [URL: TabItemView] = [:]
     private(set) var buffers: [URL: Buffer] = [:]
     private var current: Buffer?

@@ -11,271 +11,333 @@
   {
     "id": "code-colors",
     "name": "Code Colors",
-    "version": "1.1",
+    "version": "1.2",
     "author": "FlareStackIDE",
     "symbol": "paintbrush.pointed",
     "summary": "主要なプログラミング言語のコードに色をつける",
-    "fileExtensions": ["html", "htm", "xhtml", "vue", "svelte", "xml", "svg", "plist", "xsd", "xsl", "rss", "atom", "storyboard", "xib", "css", "scss", "less", "sass", "js", "mjs", "cjs", "jsx", "javascript", "ts", "tsx", "mts", "cts", "typescript", "json", "jsonc", "json5", "geojson", ".babelrc", ".prettierrc", ".eslintrc", "py", "pyw", "pyi", "python", "java", "kt", "kts", "kotlin", "swift", "c", "h", "cpp", "cc", "cxx", "hpp", "hh", "hxx", "ino", "c++", "m", "mm", "objc", "objective-c", "cs", "csharp", "go", "golang", "rs", "rust", "dart", "rb", "rake", "gemspec", "ruby", "gemfile", "rakefile", "podfile", "php", "lua", "sh", "bash", "zsh", "ksh", "shell", "console", ".bashrc", ".zshrc", ".profile", ".bash_profile", ".zprofile", "sql", "yaml", "yml", "toml", "ini", "cfg", "conf", "properties", "env", ".env", ".gitconfig", ".editorconfig", "md", "markdown", "mdown", "mkd", "dockerfile", "docker", "makefile", "mk", "make"]
+    "fileExtensions": ["html", "htm", "xhtml", "vue", "svelte", "xml", "svg", "plist", "xsd", "xsl", "rss", "atom", "storyboard", "xib", "css", "scss", "less", "sass", "js", "mjs", "cjs", "jsx", "javascript", "ts", "tsx", "mts", "cts", "typescript", "json", "jsonc", "json5", "geojson", ".babelrc", ".prettierrc", ".eslintrc", "py", "pyw", "pyi", "python", "java", "kt", "kts", "kotlin", "swift", "c", "h", "cpp", "cc", "cxx", "hpp", "hh", "hxx", "ino", "c++", "m", "mm", "objc", "objective-c", "cs", "csharp", "go", "golang", "rs", "rust", "dart", "rb", "rake", "gemspec", "ruby", "gemfile", "rakefile", "podfile", "php", "lua", "sh", "bash", "zsh", "ksh", "shell", "console", ".bashrc", ".zshrc", ".profile", ".bash_profile", ".zprofile", "sql", "yaml", "yml", "toml", "http", "rest", "ini", "cfg", "conf", "properties", "env", ".env", ".gitconfig", ".editorconfig", "md", "markdown", "mdown", "mkd", "dockerfile", "docker", "makefile", "mk", "make"]
   },
   {
     "id": "runner",
     "name": "Runner",
-    "version": "1.4",
+    "version": "1.5",
     "author": "FlareStackIDE",
     "symbol": "play.circle",
     "summary": "起動構成を作ってプログラムを実行",
-    "fileExtensions": []
+    "fileExtensions": [],
+    "apiVersion": 1
   },
   {
     "id": "code-scanner",
     "name": "Code Scanner",
-    "version": "1.5",
+    "version": "1.6",
     "author": "FlareStackIDE",
     "symbol": "exclamationmark.triangle",
     "summary": "コードのエラーと警告を編集の1.5秒後に表示",
-    "fileExtensions": []
+    "fileExtensions": [],
+    "apiVersion": 1
   },
   {
     "id": "lines",
     "name": "Lines",
-    "version": "1.4",
+    "version": "1.5",
     "author": "FlareStackIDE",
     "symbol": "list.number",
     "summary": "ファイル編集画面の左側に行数を表示",
-    "fileExtensions": []
+    "fileExtensions": [],
+    "apiVersion": 1
   },
   {
     "id": "light-editor",
     "name": "Light Editer",
-    "version": "1.1",
+    "version": "1.2",
     "author": "FlareStackIDE",
     "symbol": "doc.text",
     "summary": "ファイルだけを開く軽量エディタ",
-    "fileExtensions": []
+    "fileExtensions": [],
+    "requires": ["lines"],
+    "apiVersion": 1
   },
   {
     "id": "web-feed",
     "name": "Web Feed",
-    "version": "1.2",
+    "version": "1.3",
     "author": "FlareStackIDE",
     "symbol": "globe",
     "summary": "下のフィードで Google などの Web ページを開く",
-    "fileExtensions": []
+    "fileExtensions": [],
+    "apiVersion": 1
   },
   {
     "id": "interpolate-code",
     "name": "Interpolate Code",
-    "version": "1.2",
+    "version": "1.3",
     "author": "FlareStackIDE",
     "symbol": "curlybraces",
     "summary": "カッコ・引用符・リスト記号・インデントを自動で補完",
-    "fileExtensions": []
+    "fileExtensions": [],
+    "apiVersion": 1
   },
   {
     "id": "interpolate-variable",
     "name": "Interpolate Variable",
-    "version": "1.1",
+    "version": "1.2",
     "author": "FlareStackIDE",
     "symbol": "text.badge.plus",
     "summary": "入力中の変数名・モジュール名の候補を表示して補完",
-    "fileExtensions": []
+    "fileExtensions": [],
+    "apiVersion": 1
   },
   {
     "id": "file-tab-cleaner",
     "name": "File Tab Cleaner",
-    "version": "1.1",
+    "version": "1.2",
     "author": "FlareStackIDE",
     "symbol": "xmark.circle",
     "summary": "ファイルのタブをボタン1つですべて閉じる",
-    "fileExtensions": []
+    "fileExtensions": [],
+    "apiVersion": 1
   },
   {
     "id": "shortcut",
     "name": "Shortcut",
-    "version": "1.0",
+    "version": "1.1",
     "author": "FlareStackIDE",
     "symbol": "command",
-    "summary": "好きなキーで実行・テーマ切り替え・保存して終了",
-    "fileExtensions": []
+    "summary": "好きなキーで実行・テーマ切り替え・保存して終了・コマンドパレット",
+    "fileExtensions": [],
+    "apiVersion": 1
   },
   {
     "id": "terminal-copy",
     "name": "Terminal Copy",
-    "version": "1.0",
+    "version": "1.1",
     "author": "FlareStackIDE",
     "symbol": "doc.on.clipboard",
     "summary": "ターミナルでドラッグして選んだ文字をすぐにコピー",
-    "fileExtensions": []
+    "fileExtensions": [],
+    "apiVersion": 1
   },
   {
     "id": "copy-manager",
     "name": "Copy Manager",
-    "version": "1.1",
+    "version": "1.2",
     "author": "FlareStackIDE",
     "symbol": "paperclip",
     "summary": "コピーした履歴を保存して、選んでもう一度コピー",
-    "fileExtensions": []
+    "fileExtensions": [],
+    "apiVersion": 1
   },
   {
     "id": "scroll-assistant",
     "name": "Scroll Assistant",
-    "version": "1.3",
+    "version": "1.4",
     "author": "FlareStackIDE",
     "symbol": "sidebar.right",
     "summary": "編集画面の右にコード全体を小さく表示してスクロール",
-    "fileExtensions": []
+    "fileExtensions": [],
+    "apiVersion": 1
   },
   {
     "id": "snippets",
     "name": "Snippets",
-    "version": "1.1",
+    "version": "1.2",
     "author": "FlareStackIDE",
     "symbol": "text.insert",
     "summary": "トリガーの単語と Tab で定型文を展開",
-    "fileExtensions": []
+    "fileExtensions": [],
+    "apiVersion": 1
   },
   {
     "id": "code-folding",
     "name": "Code Folding",
-    "version": "1.1",
+    "version": "1.2",
     "author": "FlareStackIDE",
     "symbol": "chevron.down.square",
     "summary": "関数やブロックを折りたたんで隠す",
-    "fileExtensions": []
+    "fileExtensions": [],
+    "requires": ["lines"],
+    "apiVersion": 1
   },
   {
     "id": "bookmarks",
     "name": "Bookmarks",
-    "version": "1.1",
+    "version": "1.2",
     "author": "FlareStackIDE",
     "symbol": "bookmark",
     "summary": "行に印を付けて、一覧やキーで移動",
-    "fileExtensions": []
+    "fileExtensions": [],
+    "requires": ["lines"],
+    "apiVersion": 1
   },
   {
     "id": "git-actions",
     "name": "Git Actions",
-    "version": "1.1",
+    "version": "1.2",
     "author": "FlareStackIDE",
     "symbol": "arrow.triangle.pull",
     "summary": "ステージ・コミット・push・pull・ブランチ切り替えを GUI で",
-    "fileExtensions": []
+    "fileExtensions": [],
+    "apiVersion": 1
   },
   {
     "id": "git-blame",
     "name": "Git Blame",
-    "version": "1.1",
+    "version": "1.2",
     "author": "FlareStackIDE",
     "symbol": "person.text.rectangle",
     "summary": "カーソル行の作者・日付・コミットを行末に表示",
-    "fileExtensions": []
+    "fileExtensions": [],
+    "apiVersion": 1
   },
   {
     "id": "picture-video-viewer",
     "name": "Picture/Video Viewer",
-    "version": "1.0",
+    "version": "1.1",
     "author": "FlareStackIDE",
     "symbol": "photo.on.rectangle",
     "summary": "写真と動画をファイル編集画面で表示",
-    "fileExtensions": ["jpg", "jpeg", "png", "gif", "svg", "webp", "bmp", "tif", "tiff", "heic", "ico", "mp4", "m4v", "mov", "avi"]
+    "fileExtensions": ["jpg", "jpeg", "png", "gif", "svg", "webp", "bmp", "tif", "tiff", "heic", "ico", "mp4", "m4v", "mov", "avi"],
+    "apiVersion": 1
   },
   {
     "id": "pdf-viewer",
     "name": "PDF Viewer",
-    "version": "1.0",
+    "version": "1.1",
     "author": "FlareStackIDE",
     "symbol": "doc.text.image",
     "summary": "PDF をファイル編集画面で表示",
-    "fileExtensions": ["pdf"]
+    "fileExtensions": ["pdf"],
+    "apiVersion": 1
   },
   {
     "id": "multi-cursor",
     "name": "Multi Cursor",
-    "version": "1.0",
+    "version": "1.1",
     "author": "FlareStackIDE",
     "symbol": "character.cursor.ibeam",
     "summary": "同じ文字列を検索して、開いているファイルや全てのファイルをまとめて変換",
-    "fileExtensions": []
+    "fileExtensions": [],
+    "apiVersion": 1
   },
   {
     "id": "help-me",
     "name": "Help Me",
-    "version": "1.0",
+    "version": "1.1",
     "author": "FlareStackIDE",
     "symbol": "arrow.uturn.backward.circle",
     "summary": "上のバーのボタンで編集を巻き戻す・やり直す",
-    "fileExtensions": []
+    "fileExtensions": [],
+    "apiVersion": 1
   },
   {
     "id": "sticky-scroll",
     "name": "Sticky Scroll",
-    "version": "1.0",
+    "version": "1.1",
     "author": "FlareStackIDE",
     "symbol": "pin",
     "summary": "今いる関数やクラスの行を上端に固定",
-    "fileExtensions": []
+    "fileExtensions": [],
+    "apiVersion": 1
   },
   {
     "id": "color-preview",
     "name": "Color Preview",
-    "version": "1.0",
+    "version": "1.1",
     "author": "FlareStackIDE",
     "symbol": "paintbrush.pointed",
     "summary": "色の図・RGB・16進数で色を作り、値をコピー",
-    "fileExtensions": []
+    "fileExtensions": [],
+    "apiVersion": 1
   },
   {
     "id": "csv-viewer",
     "name": "CSV Viewer",
-    "version": "1.0",
+    "version": "1.1",
     "author": "FlareStackIDE",
     "symbol": "tablecells",
     "summary": "CSV と TSV を表で表示して編集",
-    "fileExtensions": ["csv", "tsv"]
+    "fileExtensions": ["csv", "tsv"],
+    "apiVersion": 1
   },
   {
     "id": "emmet",
     "name": "Emmet",
-    "version": "1.0",
+    "version": "1.1",
     "author": "FlareStackIDE",
     "symbol": "chevron.left.forwardslash.chevron.right",
     "summary": "ul>li*3 のような短い記法を Tab で HTML や CSS に展開",
-    "fileExtensions": []
+    "fileExtensions": [],
+    "apiVersion": 1
   },
   {
     "id": "word-highlight",
     "name": "Word Highlight",
-    "version": "1.0",
+    "version": "1.1",
     "author": "FlareStackIDE",
     "symbol": "highlighter",
     "summary": "クリックした語と同じ語の背景をファイル内で強調",
-    "fileExtensions": []
+    "fileExtensions": [],
+    "apiVersion": 1
   },
   {
     "id": "bracket-colorizer",
     "name": "Bracket Colorizer",
-    "version": "1.0",
+    "version": "1.1",
     "author": "FlareStackIDE",
     "symbol": "curlybraces",
     "summary": "括弧を深さごとに色分けし、対応する括弧を強調",
-    "fileExtensions": []
+    "fileExtensions": [],
+    "apiVersion": 1
   },
   {
     "id": "session-restore",
     "name": "Session Restore",
-    "version": "1.0",
+    "version": "1.1",
     "author": "FlareStackIDE",
     "symbol": "clock.arrow.circlepath",
     "summary": "終了時に開いていたタブとカーソル位置を次回の起動時に復元",
-    "fileExtensions": []
+    "fileExtensions": [],
+    "apiVersion": 1
   },
   {
     "id": "scratch-pad",
     "name": "Scratch Pad",
-    "version": "1.0",
+    "version": "1.1",
     "author": "FlareStackIDE",
     "symbol": "note.text",
     "summary": "左の大タブのメモボタンから保存しない一時的なメモを開く",
-    "fileExtensions": []
+    "fileExtensions": [],
+    "apiVersion": 1
+  },
+  {
+    "id": "merge-resolver",
+    "name": "Merge Resolver",
+    "version": "1.0",
+    "author": "FlareStackIDE",
+    "symbol": "arrow.triangle.merge",
+    "summary": "マージ競合を「自分の変更」「相手の変更」「両方」のボタンで解決",
+    "fileExtensions": [],
+    "apiVersion": 1
+  },
+  {
+    "id": "http-client",
+    "name": "HTTP Client",
+    "version": "1.0",
+    "author": "FlareStackIDE",
+    "symbol": "network",
+    "summary": ".http ファイルに書いたリクエストを送信して応答を表示",
+    "fileExtensions": [],
+    "apiVersion": 1
+  },
+  {
+    "id": "lsp-client",
+    "name": "LSP Client",
+    "version": "1.0",
+    "author": "FlareStackIDE",
+    "symbol": "brain",
+    "summary": "言語サーバーで診断・ホバー・定義へ移動・名前の変更・補完（Python）",
+    "fileExtensions": [],
+    "apiVersion": 1
   }
 ]

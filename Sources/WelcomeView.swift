@@ -6,7 +6,7 @@ protocol WelcomeDelegate: AnyObject {
     func welcomeOpen(_ project: Project)
 }
 
-final class ProjectRow: NSView {
+final class ProjectRow: NSView, HoverRefreshing {
     let project: Project
     var onOpen: (() -> Void)?
     var onRemove: (() -> Void)?
@@ -65,6 +65,11 @@ final class ProjectRow: NSView {
 
     override func mouseEntered(with event: NSEvent) { hovered = true }
     override func mouseExited(with event: NSEvent) { hovered = false }
+
+    func refreshHover() {
+        let visible = ButtonHover.isUnderMouse(self)
+        if hovered != visible { hovered = visible }
+    }
 
     override func mouseUp(with event: NSEvent) {
         if bounds.contains(convert(event.locationInWindow, from: nil)) { onOpen?() }
