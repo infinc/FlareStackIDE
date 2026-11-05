@@ -252,7 +252,7 @@ final class LinesPreview: NSView {
         let code: [NSAttributedString.Key: Any] = [.font: Settings.font, .foregroundColor: Settings.foreground]
         let height = max(Settings.lineHeight, 14)
         for (i, text) in sample.enumerated() {
-            let y = 8 + CGFloat(i) * height
+            let y = 8 + CGFloat(i) * (height + Settings.lineSpacing)
             let label = "\(i + 1)" as NSString
             let size = label.size(withAttributes: numbers)
             NSGraphicsContext.saveGraphicsState()

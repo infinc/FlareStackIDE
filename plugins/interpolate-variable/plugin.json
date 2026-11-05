@@ -1,7 +1,7 @@
 {
   "id": "interpolate-variable",
   "name": "Interpolate Variable",
-  "version": "1.1",
+  "version": "1.2",
   "author": "FlareStackIDE",
   "symbol": "text.badge.plus",
   "summary": "入力中の変数名・モジュール名の候補を表示して補完",
@@ -9,5 +9,10 @@
   "files": ["plugin.dylib", "README.md"],
   "settings": [
     { "key": "acceptKey", "title": "補完するキー", "type": "choice", "options": ["Tab", "Enter"], "default": "Tab" }
-  ]
+  ],
+  "apiVersion": 1,
+  "hashes": {
+    "README.md": "9fdefa21b53c134fd90c75b21eb96c8a75c4d96271174e059826d136bb188d5c",
+    "plugin.dylib": "5f853c9b346dca87f20d62dd85234b2f12357a222f50bd5b9648136bfcb74c7b"
+  }
 }

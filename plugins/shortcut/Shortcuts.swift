@@ -17,16 +17,28 @@ struct Shortcut: Codable, Equatable {
         return parts.filter { flags.contains($0.0) }.map(\.1).joined() + key
     }
 
+    var keyEquivalent: String? {
+        guard keyCode != nil else { return nil }
+        let special: [String: Int] = ["↩": 0x0D, "⇥": 0x09, "Space": 0x20, "⌫": 0x08, "⌦": NSDeleteFunctionKey, "esc": 0x1B,
+                                      "←": NSLeftArrowFunctionKey, "→": NSRightArrowFunctionKey, "↓": NSDownArrowFunctionKey,
+                                      "↑": NSUpArrowFunctionKey, "Home": NSHomeFunctionKey, "End": NSEndFunctionKey,
+                                      "PageUp": NSPageUpFunctionKey, "PageDown": NSPageDownFunctionKey]
+        if let code = special[key] { return UnicodeScalar(code).map { String(Character($0)) } }
+        if key.hasPrefix("F"), let n = Int(key.dropFirst()) { return UnicodeScalar(NSF1FunctionKey + n - 1).map { String(Character($0)) } }
+        return key.count == 1 ? key.lowercased() : nil
+    }
+
     func matches(_ event: NSEvent) -> Bool {
         event.keyCode == keyCode && event.modifierFlags.intersection(Self.mask).rawValue == modifiers
     }
 }
 
 enum ShortcutAction: String, CaseIterable {
-    case run, theme, close
+    case run, theme, close, palette
 
     var title: String {
         switch self {
+        case .palette: return "コマンドパレットを開く"
         case .run: return "実行（Runner が必要）"
         case .theme: return "テーマ切り替え"
         case .close: return "プロジェクトを保存して終了"
@@ -37,13 +49,32 @@ enum ShortcutAction: String, CaseIterable {
 enum ShortcutStore {
     static let pluginID = "shortcut"
     private static let key = "Plugin.\(pluginID).Items"
+    private static let seededKey = "Plugin.\(pluginID).PaletteSeeded"
+    static var live = 0
 
     static var items: [Shortcut] {
         get {
             guard let data = UserDefaults.standard.data(forKey: key) else { return [] }
             return (try? JSONDecoder().decode([Shortcut].self, from: data)) ?? []
         }
-        set { UserDefaults.standard.set(try? JSONEncoder().encode(newValue), forKey: key) }
+        set {
+            UserDefaults.standard.set(try? JSONEncoder().encode(newValue), forKey: key)
+            applyPaletteKey()
+        }
+    }
+
+    static func seedPalette() {
+        guard !UserDefaults.standard.bool(forKey: seededKey) else { return }
+        UserDefaults.standard.set(true, forKey: seededKey)
+        guard !items.contains(where: { $0.action == ShortcutAction.palette.rawValue }) else { return }
+        let modifiers = CommandPalette.defaultModifiers
+        items.append(Shortcut(keyCode: 35, modifiers: modifiers.rawValue, key: "P", action: ShortcutAction.palette.rawValue))
+    }
+
+    static func applyPaletteKey() {
+        guard live > 0 else { return CommandPalette.overrideKey(nil) }
+        let item = items.first { $0.action == ShortcutAction.palette.rawValue && $0.keyCode != nil }
+        CommandPalette.overrideKey(item?.keyEquivalent ?? "", modifiers: NSEvent.ModifierFlags(rawValue: item?.modifiers ?? 0))
     }
 
     private static let names: [UInt16: String] = [

@@ -13,6 +13,9 @@ final class ShortcutAddon: WindowAddon {
 
     init(editor: EditorWindowController) {
         self.editor = editor
+        ShortcutStore.live += 1
+        ShortcutStore.seedPalette()
+        ShortcutStore.applyPaletteKey()
         monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self, let editor = self.editor, event.window === editor.window,
                   let shortcut = ShortcutStore.items.first(where: { $0.matches(event) }),
@@ -33,12 +36,17 @@ final class ShortcutAddon: WindowAddon {
             Settings.applyTheme(((Settings.themeIndex ?? -1) + 1) % Settings.themes.count)
         case .close:
             editor.goBack()
+        case .palette:
+            editor.showCommandPalette(nil)
         }
     }
 
     func detach() {
-        if let monitor { NSEvent.removeMonitor(monitor) }
-        monitor = nil
+        guard let monitor else { return }
+        NSEvent.removeMonitor(monitor)
+        self.monitor = nil
+        ShortcutStore.live -= 1
+        ShortcutStore.applyPaletteKey()
     }
 }
 

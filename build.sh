@@ -7,7 +7,7 @@ VERSION="$(tr -d '[:space:]' < "$ROOT/VERSION")"
 VERSION="${VERSION#v}${VERSION_SUFFIX:-}"
 APP="$ROOT/build/$NAME.app"
 ICONSET="$ROOT/build/AppIcon.iconset"
-STEPS=7
+STEPS=8
 STEP=0
 
 progress() {
@@ -42,6 +42,9 @@ for dir in "$ROOT"/plugins/*/; do
     swiftc -target arm64-apple-macos13 -O -emit-library -module-name "FSPlugin_${id//-/_}" -I "$MODULE" \
         "${sources[@]}" -o "$dir/plugin.dylib" -Xlinker -undefined -Xlinker dynamic_lookup
 done
+
+progress "マニフェストと署名 (plugins/*/plugin.sig)"
+swift "$ROOT/tools/manifest.swift" "$ROOT" >/dev/null
 
 progress "アイコン生成"
 for s in 16 32 128 256 512; do

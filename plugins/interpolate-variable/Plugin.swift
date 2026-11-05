@@ -18,12 +18,23 @@ final class InterpolateVariableAddon: TextAddon {
         completer.extraWords = { [weak self] in self?.words() ?? [] }
         NotificationCenter.default.addObserver(self, selector: #selector(scrolled), name: NSView.boundsDidChangeNotification,
                                                object: code.scrollView.contentView)
+        NotificationCenter.default.addObserver(self, selector: #selector(completionArrived(_:)), name: Self.completionItems,
+                                               object: code.textView)
         loadFiles()
     }
 
     var priority: Int { 10 }
+    private static let completionItems = Notification.Name("FlareStackIDE.completionItems")
 
     @objc private func scrolled() { completer.hide() }
+
+    @objc private func completionArrived(_ note: Notification) {
+        guard let code, let url = code.fileURL, let items = note.userInfo?["items"] as? [String],
+              let location = note.userInfo?["location"] as? Int, code.textView.selectedRange() == NSRange(location: location, length: 0),
+              code.textView.window?.firstResponder === code.textView else { return }
+        completer.priorityWords = Set(items)
+        completer.update(code.textView, ext: url.pathExtension.lowercased())
+    }
 
     private func loadFiles() {
         guard let base = code?.projectDirectory, !loading else { return }
@@ -65,13 +76,21 @@ final class InterpolateVariableAddon: TextAddon {
         guard let code, let url = code.fileURL, let typed = lastTyped else { return completer.hide() }
         let wordish = typed.isEmpty ? completer.isVisible
             : typed.utf16.count == 1 && typed.range(of: #"^[A-Za-z0-9_$]$"#, options: .regularExpression) != nil
-        guard wordish else { return completer.hide() }
+        guard wordish else {
+            completer.priorityWords = []
+            return completer.hide()
+        }
         completer.update(code.textView, ext: url.pathExtension.lowercased())
     }
 
     func treeChanged() { loadFiles() }
 
-    func dismiss() { completer.hide() }
+    func fileOpened() { completer.priorityWords = [] }
+
+    func dismiss() {
+        completer.hide()
+        completer.priorityWords = []
+    }
 
     func detach() {
         completer.hide()

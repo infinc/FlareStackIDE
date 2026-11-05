@@ -1,10 +1,15 @@
 {
   "id": "interpolate-code",
   "name": "Interpolate Code",
-  "version": "1.2",
+  "version": "1.3",
   "author": "FlareStackIDE",
   "symbol": "curlybraces",
   "summary": "カッコ・引用符・リスト記号・インデントを自動で補完",
   "fileExtensions": [],
-  "files": ["plugin.dylib", "README.md"]
+  "files": ["plugin.dylib", "README.md"],
+  "apiVersion": 1,
+  "hashes": {
+    "README.md": "5714385d6c6e7710941f784cc8672164cb8a2ec5d8c50e87ed679b5b127b8195",
+    "plugin.dylib": "e047937ac0c4a215da4030840f0a38bbddc2f5d038675b2c16d29e130fbfb1c3"
+  }
 }

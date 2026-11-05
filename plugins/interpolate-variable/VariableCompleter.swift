@@ -12,6 +12,7 @@ final class VariableCompleter: NSObject, NSTableViewDataSource, NSTableViewDeleg
     private static let maxShown = 8
 
     var extraWords: (() -> [String])?
+    var priorityWords: Set<String> = []
     private let panel: CompletionPanel
     private let table = NSTableView()
     private weak var textView: NSTextView?
@@ -97,9 +98,12 @@ final class VariableCompleter: NSObject, NSTableViewDataSource, NSTableViewDeleg
         var counts = Self.words(in: textView.string)
         if let own = counts[prefix] { counts[prefix] = own - 1 }
         for word in extraWords?() ?? [] where counts[word] == nil { counts[word] = 0 }
+        for word in priorityWords where counts[word] == nil { counts[word] = 0 }
         let lower = prefix.lowercased()
         let found = counts.filter { $0.key != prefix && $0.key.lowercased().hasPrefix(lower) }
             .sorted { a, b in
+                let ap = priorityWords.contains(a.key), bp = priorityWords.contains(b.key)
+                if ap != bp { return ap }
                 let ac = a.key.hasPrefix(prefix), bc = b.key.hasPrefix(prefix)
                 if ac != bc { return ac }
                 if a.value != b.value { return a.value > b.value }

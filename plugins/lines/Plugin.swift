@@ -17,10 +17,17 @@ final class LinesPlugin: NativePlugin, PluginSettingsProviding {
 }
 
 final class LinesAddon: TextAddon {
+    private static var live = 0
     private weak var code: CodeEditing?
+
+    static var spacing: CGFloat? {
+        Settings.pluginValue(LineNumberRuler.pluginID, "lineSpacing").flatMap(Double.init).map { CGFloat($0) }
+    }
 
     init(code: CodeEditing) {
         self.code = code
+        Self.live += 1
+        if Self.live == 1 { Settings.lineSpacingOverride = { LinesAddon.spacing } }
         show()
     }
 
@@ -42,6 +49,8 @@ final class LinesAddon: TextAddon {
     func textChanged() { refresh() }
 
     func detach() {
+        Self.live -= 1
+        if Self.live == 0 { Settings.lineSpacingOverride = nil }
         guard let code else { return }
         code.scrollView.setLineNumbers(false, textView: code.textView)
     }

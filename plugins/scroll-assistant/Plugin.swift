@@ -17,17 +17,31 @@ final class ScrollAssistantAddon: TextAddon {
         self.code = code
         self.scroll = scroll
         map = Minimap(textView: code.textView, scroll: scroll)
-        scroll.gutter = map
-        (code as? EditorWindowController)?.setOverlayInset(Minimap.width)
+        updateVisibility()
     }
 
-    func fileOpened() { map.contentChanged() }
+    private func updateVisibility() {
+        guard let scroll else { return }
+        let visible = code?.fileURL != nil
+        if visible, scroll.gutter !== map {
+            scroll.gutter = map
+            (code as? OverlayHosting)?.setOverlayInset(Minimap.width)
+        } else if !visible, scroll.gutter === map {
+            scroll.gutter = nil
+            (code as? OverlayHosting)?.setOverlayInset(0)
+        }
+    }
+
+    func fileOpened() {
+        updateVisibility()
+        map.contentChanged()
+    }
 
     func textChanged() { map.textChanged() }
 
     func detach() {
         scroll?.gutter = nil
-        (code as? EditorWindowController)?.setOverlayInset(0)
+        (code as? OverlayHosting)?.setOverlayInset(0)
     }
 }
 

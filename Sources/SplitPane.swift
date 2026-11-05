@@ -215,12 +215,20 @@ final class SplitPane: NSView, NSTextViewDelegate {
     private let scroll = CodeScrollView.make()
     var textView: NSTextView { scroll.documentView as! NSTextView }
     private var strip: TabStrip!
-    private lazy var addons = TextAddons(code: self)
+    private(set) lazy var addons = TextAddons(code: self)
     private var tabs: [URL: TabItemView] = [:]
     private(set) var buffers: [URL: Buffer] = [:]
     private var current: Buffer?
     private var highlighter: Highlighter?
     private var recolorWork: DispatchWorkItem?
+    private let barHost = NSView()
+    private let bodyHost = NSView()
+    private var barHeight: NSLayoutConstraint!
+    private var floatConstraints: [NSLayoutConstraint] = []
+    private var overlays: [NSView] = []
+    private var overlayTrailing: [NSLayoutConstraint] = []
+    private var overlayInset: CGFloat = 0
+    private var ext: EditorExtension?
 
     init() {
         super.init(frame: .zero)
@@ -230,19 +238,29 @@ final class SplitPane: NSView, NSTextViewDelegate {
         close.action = #selector(closeAll)
         CodeView.configure(textView, scroll: scroll)
         textView.delegate = self
-        scroll.translatesAutoresizingMaskIntoConstraints = false
         scroll.clipsToBounds = true
-        addSubview(scroll)
+        [barHost, bodyHost].forEach {
+            $0.translatesAutoresizingMaskIntoConstraints = false
+            $0.clipsToBounds = true
+        }
+        addSubview(bodyHost)
+        addSubview(barHost)
         addSubview(strip)
+        barHeight = barHost.heightAnchor.constraint(equalToConstant: 0)
         NSLayoutConstraint.activate([
             strip.topAnchor.constraint(equalTo: topAnchor),
             strip.leadingAnchor.constraint(equalTo: leadingAnchor),
             strip.trailingAnchor.constraint(equalTo: trailingAnchor),
-            scroll.topAnchor.constraint(equalTo: strip.bottomAnchor),
-            scroll.leadingAnchor.constraint(equalTo: leadingAnchor),
-            scroll.trailingAnchor.constraint(equalTo: trailingAnchor),
-            scroll.bottomAnchor.constraint(equalTo: bottomAnchor),
+            barHost.topAnchor.constraint(equalTo: strip.bottomAnchor),
+            barHost.leadingAnchor.constraint(equalTo: leadingAnchor),
+            barHost.trailingAnchor.constraint(equalTo: trailingAnchor),
+            barHeight,
+            bodyHost.topAnchor.constraint(equalTo: barHost.bottomAnchor),
+            bodyHost.leadingAnchor.constraint(equalTo: leadingAnchor),
+            bodyHost.trailingAnchor.constraint(equalTo: trailingAnchor),
+            bodyHost.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
+        host(scroll, in: bodyHost)
         applyPlugins()
         applySettings()
     }
@@ -284,6 +302,7 @@ final class SplitPane: NSView, NSTextViewDelegate {
         highlighter = buffer.editable ? PluginStore.makeHighlighter(for: url) : nil
         recolor()
         addons.each { $0.fileOpened() }
+        attachExtension()
         textView.undoManager?.removeAllActions()
         textView.setSelectedRange(NSRange(location: 0, length: 0))
         textView.scrollToBeginningOfDocument(nil)
@@ -353,6 +372,7 @@ final class SplitPane: NSView, NSTextViewDelegate {
            let buffer = buffers[next] {
             open(buffer)
         } else {
+            detachExtension()
             onEmpty?()
         }
     }
@@ -366,6 +386,7 @@ final class SplitPane: NSView, NSTextViewDelegate {
         tabs = [:]
         buffers = [:]
         current = nil
+        detachExtension()
         onChange?()
         onEmpty?()
     }
@@ -399,6 +420,7 @@ final class SplitPane: NSView, NSTextViewDelegate {
                 buffer.text = text
                 addons.each { $0.textChanged() }
                 recolor()
+                ext?.update(text: text)
             } else {
                 buffer.text = text
             }
@@ -423,14 +445,90 @@ final class SplitPane: NSView, NSTextViewDelegate {
         strip.paint(.midTab)
         CodeView.applySettings(textView, scroll: scroll)
         recolor()
+        ext?.applySettings()
+        if ext?.floating == true { layoutExtensionBar() }
     }
 
     func applyPlugins() {
         addons.sync()
         if let current {
+            storeCurrent()
             highlighter = current.editable ? PluginStore.makeHighlighter(for: current.url) : nil
             recolor()
+            attachExtension()
         }
+    }
+
+    private func host(_ view: NSView, in host: NSView) {
+        host.subviews.filter { $0 !== view }.forEach { $0.removeFromSuperview() }
+        view.isHidden = false
+        guard view.superview !== host else { return }
+        view.removeFromSuperview()
+        view.translatesAutoresizingMaskIntoConstraints = false
+        host.addSubview(view)
+        NSLayoutConstraint.activate([
+            view.topAnchor.constraint(equalTo: host.topAnchor),
+            view.leadingAnchor.constraint(equalTo: host.leadingAnchor),
+            view.trailingAnchor.constraint(equalTo: host.trailingAnchor),
+            view.bottomAnchor.constraint(equalTo: host.bottomAnchor),
+        ])
+    }
+
+    private func attachExtension() {
+        detachExtension()
+        guard let current else { return }
+        let viewer = NativePlugins.viewer(for: current.url)
+        textView.isEditable = current.editable && viewer == nil
+        ext = viewer ?? (current.editable ? PluginStore.makeExtension(for: current.url, code: scroll) : nil)
+        guard let ext else { return detachExtension() }
+        host(ext.body, in: bodyHost)
+        layoutExtensionBar()
+        ext.update(text: textView.string)
+    }
+
+    private func layoutExtensionBar() {
+        guard let ext else { return }
+        let bar = ext.bar
+        NSLayoutConstraint.deactivate(floatConstraints)
+        floatConstraints = []
+        bar.removeFromSuperview()
+        barHost.subviews.forEach { $0.removeFromSuperview() }
+        guard ext.floating else {
+            host(bar, in: barHost)
+            barHeight.constant = 30
+            return
+        }
+        barHeight.constant = 0
+        bar.translatesAutoresizingMaskIntoConstraints = false
+        bodyHost.addSubview(bar)
+        let corner = ext.corner
+        let ruler = scroll.rulersVisible ? scroll.verticalRulerView?.ruleThickness ?? 0 : 0
+        floatConstraints = [
+            bar.heightAnchor.constraint(equalToConstant: 28),
+            corner.right ? bar.trailingAnchor.constraint(equalTo: bodyHost.trailingAnchor, constant: -18 - overlayInset)
+                : bar.leadingAnchor.constraint(equalTo: bodyHost.leadingAnchor, constant: 18 + ruler),
+        ]
+        if corner.top {
+            let top = bar.topAnchor.constraint(equalTo: bodyHost.topAnchor, constant: 14)
+            top.priority = .defaultHigh
+            floatConstraints.append(top)
+            if corner.right {
+                floatConstraints += overlays.filter { $0.superview != nil }.map { bar.topAnchor.constraint(greaterThanOrEqualTo: $0.bottomAnchor, constant: 8) }
+            }
+        } else {
+            floatConstraints.append(bar.bottomAnchor.constraint(equalTo: bodyHost.bottomAnchor, constant: -14))
+        }
+        NSLayoutConstraint.activate(floatConstraints)
+    }
+
+    private func detachExtension() {
+        NSLayoutConstraint.deactivate(floatConstraints)
+        floatConstraints = []
+        ext?.bar.removeFromSuperview()
+        ext = nil
+        barHost.subviews.forEach { $0.removeFromSuperview() }
+        barHeight.constant = 0
+        host(scroll, in: bodyHost)
     }
 
     private func recolor() {
@@ -439,6 +537,7 @@ final class SplitPane: NSView, NSTextViewDelegate {
         guard let layout = textView.layoutManager else { return }
         let text = textView.string
         layout.removeTemporaryAttribute(.foregroundColor, forCharacterRange: NSRange(location: 0, length: (text as NSString).length))
+        defer { addons.decorate(layout) }
         guard let highlighter, let url = current?.url else { return }
         for span in highlighter.spans(text, file: url) {
             layout.addTemporaryAttribute(.foregroundColor, value: span.color, forCharacterRange: span.range)
@@ -466,6 +565,7 @@ final class SplitPane: NSView, NSTextViewDelegate {
         }
         guard let current, current.editable else { return }
         current.text = textView.string
+        ext?.update(text: current.text)
         if Settings.autosaveImmediate {
             current.dirty = (try? current.text.write(to: current.url, atomically: false, encoding: .utf8)) == nil
         } else {
@@ -487,4 +587,31 @@ extension SplitPane: CodeEditing {
     }
 
     func closeAllTabs() { closeAll() }
+}
+
+extension SplitPane: OverlayHosting {
+    func addOverlay(_ view: NSView) {
+        guard !overlays.contains(view) else { return }
+        view.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(view)
+        overlays.append(view)
+        let trailing = view.trailingAnchor.constraint(equalTo: bodyHost.trailingAnchor, constant: -4 - overlayInset)
+        overlayTrailing.append(trailing)
+        NSLayoutConstraint.activate([view.topAnchor.constraint(equalTo: bodyHost.topAnchor, constant: 4), trailing])
+        if ext?.floating == true { layoutExtensionBar() }
+    }
+
+    func removeOverlay(_ view: NSView) {
+        guard let index = overlays.firstIndex(of: view) else { return }
+        overlays.remove(at: index)
+        overlayTrailing.remove(at: index)
+        view.removeFromSuperview()
+        if ext?.floating == true { layoutExtensionBar() }
+    }
+
+    func setOverlayInset(_ inset: CGFloat) {
+        overlayInset = inset
+        overlayTrailing.forEach { $0.constant = -4 - inset }
+        if ext?.floating == true { layoutExtensionBar() }
+    }
 }

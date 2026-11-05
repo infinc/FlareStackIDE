@@ -1,0 +1,18 @@
+{
+  "id": "lsp-client",
+  "name": "LSP Client",
+  "version": "1.0",
+  "author": "FlareStackIDE",
+  "symbol": "brain",
+  "summary": "言語サーバーで診断・ホバー・定義へ移動・名前の変更・補完（Python）",
+  "fileExtensions": [],
+  "files": ["plugin.dylib", "README.md"],
+  "settings": [
+    { "key": "command", "title": "言語サーバーのコマンド（空なら自動）", "type": "string" }
+  ],
+  "apiVersion": 1,
+  "hashes": {
+    "README.md": "29e26338e4e9d72e15fd0484b8ffde813b40abe58d1c6dd372f23241581f15a8",
+    "plugin.dylib": "27dd96337f57ea656ed49fba163e8f9d7e5d4a95016a1a038de2f89c689eba1d"
+  }
+}

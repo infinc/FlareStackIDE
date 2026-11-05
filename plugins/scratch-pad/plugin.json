@@ -1,0 +1,15 @@
+{
+  "id": "scratch-pad",
+  "name": "Scratch Pad",
+  "version": "1.1",
+  "author": "FlareStackIDE",
+  "symbol": "note.text",
+  "summary": "左の大タブのメモボタンから保存しない一時的なメモを開く",
+  "fileExtensions": [],
+  "files": ["plugin.dylib", "README.md"],
+  "apiVersion": 1,
+  "hashes": {
+    "README.md": "433026758938a1da28c4bb1f3c600102fd69198d0dc9071da11dab2ee90311a4",
+    "plugin.dylib": "ac7ba69f50cc5fd0af7f12596a18edaa363451dd3b4530cce86ee2cb162b76b0"
+  }
+}

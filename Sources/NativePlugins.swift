@@ -10,6 +10,16 @@ protocol CodeEditing: AnyObject {
     func closeAllTabs()
 }
 
+protocol OverlayHosting: AnyObject {
+    func addOverlay(_ view: NSView)
+    func removeOverlay(_ view: NSView)
+    func setOverlayInset(_ inset: CGFloat)
+}
+
+protocol TextDecorating: AnyObject {
+    func decorate(_ layout: NSLayoutManager)
+}
+
 protocol TextAddon: AnyObject {
     var priority: Int { get }
     func shouldChange(_ range: NSRange, text: String) -> Bool
@@ -81,6 +91,7 @@ extension NativePlugin {
 
 enum NativePlugins {
     static let binary = "plugin.dylib"
+    static let apiVersion = 1
     private typealias Entry = @convention(c) () -> Void
     private static var loaded: [String: (plugin: NativePlugin?, version: String)] = [:]
     private static var registering: NativePlugin?
@@ -88,8 +99,26 @@ enum NativePlugins {
 
     static func register(_ plugin: NativePlugin) { registering = plugin }
 
+    static var loadOrder: [String] {
+        let ids = PluginStore.installedIDs
+        let present = Set(ids)
+        var order: [String] = []
+        var done: Set<String> = []
+        func visit(_ id: String, _ path: Set<String>) {
+            guard !done.contains(id), !path.contains(id), let info = PluginStore.installed(id) else { return }
+            let requires = info.requires ?? []
+            guard requires.allSatisfy(present.contains) else { return }
+            requires.forEach { visit($0, path.union([id])) }
+            guard requires.allSatisfy(done.contains) else { return }
+            done.insert(id)
+            order.append(id)
+        }
+        ids.forEach { visit($0, []) }
+        return order
+    }
+
     static var active: [NativePlugin] {
-        PluginStore.installedIDs.compactMap { id in
+        loadOrder.compactMap { id in
             guard let info = PluginStore.installed(id) else { return nil }
             if let entry = loaded[id] {
                 if entry.version != info.version, entry.plugin != nil, !restartNoted.contains(id) {
@@ -100,6 +129,11 @@ enum NativePlugins {
             }
             let file = PluginStore.folder(id).appendingPathComponent(binary)
             guard FileManager.default.fileExists(atPath: file.path) else { return nil }
+            if let reason = PluginStore.compatibility(info) ?? PluginTrust.verifyInstalled(PluginStore.folder(id), info: info, files: [binary]) {
+                loaded[id] = (nil, info.version)
+                Toasts.post("\(info.name) を読み込みませんでした", message: reason)
+                return nil
+            }
             let plugin = load(file, name: info.name)
             loaded[id] = (plugin, info.version)
             return plugin
@@ -157,6 +191,8 @@ final class TextAddons {
     func doCommand(_ selector: Selector) -> Bool { items.contains { $0.addon.doCommand(selector) } }
 
     func each(_ body: (TextAddon) -> Void) { items.forEach { body($0.addon) } }
+
+    func decorate(_ layout: NSLayoutManager) { items.forEach { ($0.addon as? TextDecorating)?.decorate(layout) } }
 
     func detachAll() {
         items.forEach { $0.addon.detach() }

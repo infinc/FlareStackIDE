@@ -39,6 +39,7 @@
 | SQL | `.sql` |
 | YAML | `.yaml` `.yml` |
 | TOML | `.toml` |
+| HTTP リクエスト | `.http` `.rest`（HTTP Client プラグイン用） |
 | INI / 設定ファイル | `.ini` `.cfg` `.conf` `.properties` `.env` `.gitconfig` `.editorconfig` |
 | Markdown | `.md` `.markdown` `.mdown` `.mkd`（コードブロックは指定した言語で色分け） |
 | Dockerfile | `Dockerfile` |

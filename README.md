@@ -6,27 +6,38 @@
 
 <img width="720" height="450" alt="Image" src="https://github.com/user-attachments/assets/cf1a92e7-252e-4ee8-af33-dca0800cdfab" />
 
-<img width="720" height="450" alt="Image" src="https://github.com/user-attachments/assets/55bcc704-b0d3-4f72-b4d4-75beef79b147" />
+<img width="720" height="450" alt="Image" src="https://github.com/user-attachments/assets/84850640-24e3-4fd7-9e04-54d7486eed55" />
 
-<img width="720" height="450" alt="Image" src="https://github.com/user-attachments/assets/484528fb-822f-4a65-b5c2-353557a1d5bf" />
+<img width="720" height="450" alt="Image" src="https://github.com/user-attachments/assets/199f8a1d-7208-40e3-b58a-46947b6567d5" />
 
-<img width="720" height="450" alt="Image" src="https://github.com/user-attachments/assets/03522aaf-b94b-4326-98d6-457c94996b1d" />
+<img width="720" height="450" alt="Image" src="https://github.com/user-attachments/assets/0055468c-da19-4725-980a-a15eaf71ce5c" />
+
+<img width="720" height="450" alt="Image" src="https://github.com/user-attachments/assets/cbad1453-0d75-4e71-93b0-1811adb19628" />
+
+<img width="720" height="450" alt="Image" src="https://github.com/user-attachments/assets/70488b01-8557-4a72-8e8f-2322fe9ee9dd" />
+
+<img width="720" height="450" alt="Image" src="https://github.com/user-attachments/assets/44015ffe-6af9-4954-900b-b69d9a781244" />
+
+<img width="720" height="450" alt="Image" src="https://github.com/user-attachments/assets/90a98335-70f6-4996-b1ac-a54a21d08e73" />
 
 ## 主な機能
 
 - ディレクトリツリー（ファイルの作成・削除をほぼリアルタイムで反映、Git の状態で色分け）
 - ファイルタブ（持ち上げるようなアニメーションでドラッグして並べ替え）とコード編集画面（ほかのアプリでファイルが書き換えられると、その内容をすぐに画面へ反映）
 - 分割画面（ファイルのタブやディレクトリを右クリック →「右に開く」で右側に2つ目の編集画面とタブ）
-- 左の大タブ（アイコン列）は ⌘ を押しながらドラッグすると位置を変えられる（上のグループ・下のグループの中だけ。順番は次に開いたときも保たれる）
+- 左の大タブ（アイコン列）は ⌘ を押しながらドラッグすると位置を変えられる（上下のグループをまたいで移動できる。順番は次に開いたときも保たれる）
+- 上のバーの右側のボタン（保存・検索・歯車とプラグインのボタン）も ⌘ を押しながらドラッグで並べ替えられる
 - ディレクトリのファイルやフォルダはドラッグで別のフォルダへ移動でき、移動時にリファクタリングするかを選べる。右クリックで新規ファイル・新規フォルダを作成
 - 内蔵ターミナル（複数タブ、ドラッグで並べ替え、ダブルクリックで名前変更）
 - プロジェクト内検索（上のバーの🔍、⇧⌘F、またはファイル編集画面で ⇧ を2回すばやく押す。ファイル名とコードの一致を表示し、押すとその行を開く）
+- コマンドパレット（⌘⇧P。メニュー・アイコン列・上のバーのボタン・プラグインの操作を名前で探して実行。よく使うものが上に来る。Shortcut プラグインを入れると開くキーを変えられる）
 - Git パネル（ブランチ・変更ファイル・全ブランチのコミット履歴をツリーで表示）と GitHub からのクローン
 - 自動保存（即時 / 3・10・30・60 秒ごと / オフ）。上のバーのクラウドマークを押すとすぐに保存
 - ボタンにカーソルを合わせると背景の色が変わる
 - テーマ・背景色・フォント・ターミナルのカーソル・大タブの大きさの設定（初期画面と設定画面にも同じ配色を適用）
+- VS Code のテーマ（.json）の読み込み（歯車メニュー →「テーマ」→「VS Code テーマを読み込む…」。背景色・文字色・コードの色を取り込む）
 - 編集画面の大きさと全画面表示を記憶し、次にプロジェクトを開いたときも同じ大きさで開く
-- プラグイン（オンラインのカタログからインストール・更新）
+- プラグイン（オンラインのカタログからインストール・更新。フィードの上のボタンで全てインストール / 全てアンインストール、インストールが終わると右下に通知。必要なプラグインも一緒にインストールし、署名とハッシュで改ざんを確認）
 
 ## ツリーの色
 
@@ -44,11 +55,11 @@
 
 | プラグイン | 内容 |
 |---|---|
-| MD Viewer | Markdown のプレビュー（表・画像にも対応、切替タブの色・透明・最小化・ボタンの位置を設定可） |
+| MD Viewer | Markdown のプレビュー（表・画像にも対応、切替タブの色・透明・最小化・ボタンの位置を設定可。右の分割画面でも表示を切り替えられる） |
 | Code Colors | 主要な言語のコードに色を付ける |
 | Runner | 起動構成を作ってプログラムを実行（テンプレート・環境変数・パラメーター・.env に対応） |
-| Code Scanner | エラー・警告を編集の1.5秒後に表示、文字列にカーソルを当てると概要を表示（Markdown・HTML・YAML・TOML なども検査） |
-| Lines | 編集画面の左に行数を表示（列の幅・色を設定可、設定画面でプレビュー。Bookmarks の印と Code Folding の開閉マークも表示） |
+| Code Scanner | エラー・警告を編集の1.5秒後に表示、文字列にカーソルを当てると概要を表示（Markdown・HTML・YAML・TOML なども検査。右の分割画面も検査。LSP Client の診断もまとめて表示） |
+| Lines | 編集画面の左に行数を表示（列の幅・行間・色を設定可、設定画面でプレビュー。Bookmarks の印と Code Folding の開閉マークも表示） |
 | Light Editer | ファイルだけを開く軽量エディタ |
 | Web Feed | 下のフィードで Google などの Web ページをタブで開く |
 | Picture/Video Viewer | 写真と動画をファイル編集画面で表示（サイズと解像度も表示、編集は不可） |
@@ -56,14 +67,14 @@
 | Interpolate Code | カッコ・引用符・リスト記号・インデントを自動で補完 |
 | Interpolate Variable | 入力中の変数名・モジュール名の候補を表示（Tab / Enter で補完） |
 | File Tab Cleaner | タブの列の一番左にボタンを追加し、押すとタブをすべて閉じる（ファイルは消えない） |
-| Shortcut | 好きなキーの組み合わせに「実行」「テーマ切り替え」「プロジェクトを保存して終了」を割り当てる |
+| Shortcut | 好きなキーの組み合わせに「実行」「テーマ切り替え」「プロジェクトを保存して終了」「コマンドパレット」を割り当てる |
 | Terminal Copy | ターミナルで文字をドラッグして選択し、マウスを離すだけでコピー |
 | Copy Manager | 上のバーにクリップのボタンを追加し、コピーした履歴から選んでもう一度コピー |
 | Scroll Assistant | 編集画面の右にコード全体を小さく表示し、ドラッグでスクロール（Code Scanner のエラー行を赤、警告行を黄色、Bookmarks の行を青、Word Highlight の行を水色で表示） |
 | Snippets | トリガーの単語と Tab で定型文を展開（自分のスニペットも登録可） |
 | Code Folding | 関数やブロックを折りたたんで隠す（⌥⌘← / ⌥⌘→） |
 | Bookmarks | 行に印を付けて、一覧や ⌥⌘↓ / ⌥⌘↑ で移動 |
-| Git Actions | ステージ・コミット・push・pull・ブランチ切り替え・stash を GUI で操作 |
+| Git Actions | ステージ・コミット・push・pull・ブランチ切り替え・stash の一覧・タグ・rebase を GUI で操作（マージや rebase の途中は続行・中止の帯を表示） |
 | Git Blame | カーソル行の作者・日付・コミットを行末に表示 |
 | Multi Cursor | 同じ文字列を検索してハイライトし、まとめて変換（通知から元に戻せる） |
 | Help Me | 上のバーに巻き戻し・やり直しのボタンを追加 |
@@ -72,8 +83,21 @@
 | CSV Viewer | CSV と TSV を表で表示して編集 |
 | Emmet | `ul>li*3` のような短い記法を Tab で HTML や CSS に展開 |
 | Word Highlight | クリックした語と同じ語の背景を強調 |
+| Bracket Colorizer | 括弧を深さごとに色分けし、対応する括弧を強調（Code Colors の色に上書き） |
+| Session Restore | 終了時に開いていたタブとカーソル位置を次に開いたときに復元 |
+| Scratch Pad | 左の大タブにメモボタンを追加し、保存しない一時的なメモを左のフィードに表示 |
+| Merge Resolver | マージ競合を色分けし、「自分の変更」「相手の変更」「両方」のボタンで解決（⌥⌘] / ⌥⌘[ で移動、競合ファイルの一覧） |
+| HTTP Client | `.http` / `.rest` ファイルのリクエストを ▶ や ⌘↩ で送信し、応答をフィードに表示（変数・履歴に対応） |
+| LSP Client | 言語サーバー（Python は Pyright など）で診断・ホバー・定義へ移動（F12）・参照（⇧F12）・名前の変更（F2）・補完 |
 
 プラグインは `plugins/` にあり、`plugins/index.json` がカタログです。アプリ本体（dmg）にはプラグインのコードを含めず、インストールしたときだけ `plugins/<id>/` の Swift をコンパイルした `plugin.dylib` をダウンロードして読み込みます。プラグインを更新したときは、再起動すると新しいコードが反映されます。
+
+### 安全のための確認
+
+- **署名とハッシュ**: カタログ（`index.json` と `index.sig`）と各プラグインの `plugin.json`（`plugin.sig`）は Ed25519 で署名してあり、本体に埋め込んだ公開鍵で確認します。`plugin.json` の `hashes` に各ファイルの SHA-256 が入っていて、ダウンロードしたファイルと読み込む前の `plugin.dylib` を照合します。一致しなければインストールも読み込みもしません
+- **互換性**: Swift のプラグインは `plugin.json` の `apiVersion` が本体の `NativePlugins.apiVersion` と一致するときだけ読み込みます。合わないものはフィードに「非対応」と表示します
+- **依存関係**: `plugin.json` の `requires` に書いたプラグイン（例: Light Editer・Code Folding・Bookmarks → Lines）を先にインストールし、依存されているプラグインを削除するときは確認を出します
+- 開発中に署名のないプラグインを試すときは、歯車メニュー →「プラグイン」の「署名のないプラグインを許可」をオンにします
 
 ## ビルド
 
@@ -85,7 +109,9 @@ Xcode のコマンドラインツール（`swiftc`）が必要です。
 
 `build/FlareStackIDE.app` と `FlareStackIDE-<バージョン>.dmg` ができます。バージョンは `VERSION` で管理しています。
 
-同時に `plugins/<id>/*.swift` を本体に合わせてコンパイルし、`plugins/<id>/plugin.dylib` を作ります（dmg には入りません）。本体を変更してビルドしたら、`plugin.dylib` も一緒にコミット・push してください。古い本体と組み合わさって読み込めないときは、アップデートを促す通知が出ます。
+同時に `plugins/<id>/*.swift` を本体に合わせてコンパイルし、`plugins/<id>/plugin.dylib` を作ります（dmg には入りません）。続けて `tools/manifest.swift` が各 `plugin.json` の `hashes`・`apiVersion` と `index.json` を更新し、`plugin.sig` / `index.sig` に署名します。本体を変更してビルドしたら、`plugin.dylib`・`plugin.json`・`*.sig`・`index.json` も一緒にコミット・push してください。古い本体と組み合わさって読み込めないときは、アップデートを促す通知が出ます。
+
+署名には秘密鍵 `~/.flarestack/plugin-signing.key`（環境変数 `FLARESTACK_SIGNING_KEY` で場所を変更可）を使います。リポジトリには入れず、なくさないように保管してください。鍵がないと署名だけ飛ばします。鍵を作り直すときは `swift tools/manifest.swift --keygen` を実行し、表示された公開鍵を `Sources/PluginTrust.swift` に書き込みます。
 
 全プラグイン入りの dmg を作るときは次のコマンドを使います。カタログにないプラグインも含め、`plugins/` の全てが初回起動時にインストールされます。
 

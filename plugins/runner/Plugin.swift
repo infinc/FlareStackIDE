@@ -95,9 +95,16 @@ final class RunnerAddon: NSObject, WindowAddon {
             self.feed = made
             return made
         }()
+        pane?.onExit = nil
         pane?.stop()
         pane?.removeFromSuperview()
         let next = TerminalPane(cwd: runner.directory(of: config).path, command: runner.command(for: config))
+        next.onExit = { [weak self, weak feed] in
+            guard let self, let feed, feed.isHidden || feed.window == nil else { return }
+            Toasts.post("実行が終了しました", message: config.name, actions: [("実行フィードを開く", { [weak self, weak feed] in
+                if let feed { self?.editor?.showBottom(feed) }
+            })], in: self.editor?.window)
+        }
         next.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(next)
         NSLayoutConstraint.activate([
@@ -115,6 +122,7 @@ final class RunnerAddon: NSObject, WindowAddon {
 
     @objc private func stopRun() {
         guard let pane, pane.running else { return }
+        pane.onExit = nil
         pane.stop()
         pane.show("\r\n\u{1B}[2m[停止しました]\u{1B}[0m\r\n")
     }
@@ -124,6 +132,7 @@ final class RunnerAddon: NSObject, WindowAddon {
     }
 
     func detach() {
+        pane?.onExit = nil
         pane?.stop()
         if let feed { editor?.removeFeed(feed) }
         feed = nil
