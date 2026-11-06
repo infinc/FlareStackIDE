@@ -300,6 +300,68 @@ enum Settings {
     }
 }
 
+final class Zoom: NSObject {
+    enum Action: String, CaseIterable {
+        case zoomIn, zoomOut, reset
+
+        var title: String {
+            switch self {
+            case .zoomIn: return "拡大"
+            case .zoomOut: return "縮小"
+            case .reset: return "実際のサイズ"
+            }
+        }
+
+        var defaultKey: String {
+            switch self {
+            case .zoomIn: return "+"
+            case .zoomOut: return "-"
+            case .reset: return "0"
+            }
+        }
+    }
+
+    static let shared = Zoom()
+    static let defaultSize: CGFloat = 13
+    private static var items: [Action: NSMenuItem] = [:]
+    private static var alternate: NSMenuItem?
+
+    static func perform(_ action: Action) {
+        switch action {
+        case .zoomIn: Settings.fontSize += 1
+        case .zoomOut: Settings.fontSize -= 1
+        case .reset: Settings.fontSize = defaultSize
+        }
+    }
+
+    static func addItems(to menu: NSMenu) {
+        for action in Action.allCases {
+            let item = menu.addItem(withTitle: action.title, action: #selector(menuClicked(_:)), keyEquivalent: action.defaultKey)
+            item.target = shared
+            item.representedObject = action.rawValue
+            items[action] = item
+        }
+        let equals = menu.addItem(withTitle: Action.zoomIn.title, action: #selector(menuClicked(_:)), keyEquivalent: "=")
+        equals.target = shared
+        equals.representedObject = Action.zoomIn.rawValue
+        equals.isHidden = true
+        equals.allowsKeyEquivalentWhenHidden = true
+        alternate = equals
+    }
+
+    static func overrideKey(_ action: Action, _ equivalent: String?, modifiers: NSEvent.ModifierFlags = []) {
+        guard let item = items[action] else { return }
+        item.keyEquivalent = equivalent ?? action.defaultKey
+        item.keyEquivalentModifierMask = equivalent == nil ? [.command] : modifiers
+        if action == .zoomIn { alternate?.keyEquivalent = equivalent == nil ? "=" : "" }
+    }
+
+    @objc private func menuClicked(_ sender: NSMenuItem) {
+        guard let action = (sender.representedObject as? String).flatMap(Action.init) else { return }
+        Self.perform(action)
+    }
+}
+
 extension NSColor {
     convenience init?(hex: String) {
         let digits = hex.trimmingCharacters(in: CharacterSet(charactersIn: "#"))
@@ -587,13 +649,14 @@ final class PreferencesView: NSView {
     private let heightLabel = NSTextField(labelWithString: "")
     private let widthSlider = NSSlider(value: 40, minValue: Settings.bigTabWidthRange.lowerBound, maxValue: Settings.bigTabWidthRange.upperBound, target: nil, action: nil)
     private let widthLabel = NSTextField(labelWithString: "")
+    private let languagePopup = NSPopUpButton()
     private var loading = false
 
     init() {
         super.init(frame: NSRect(x: 0, y: 0, width: 660, height: 430))
         let tabs = NSTabView()
         tabs.translatesAutoresizingMaskIntoConstraints = false
-        for (title, view) in [("背景色", colorPane()), ("フォント", fontPane()), ("通知", toastPane()), ("ターミナル", terminalPane()), ("大タブ", bigTabPane())] {
+        for (title, view) in [("背景色", colorPane()), ("フォント", fontPane()), ("通知", toastPane()), ("ターミナル", terminalPane()), ("大タブ", bigTabPane()), ("言語", languagePane())] {
             let item = NSTabViewItem()
             item.label = title
             item.view = view
@@ -799,6 +862,22 @@ final class PreferencesView: NSView {
         ]))
     }
 
+    private func languagePane() -> NSView {
+        languagePopup.addItems(withTitles: AppLanguage.allCases.map(\.title))
+        languagePopup.target = self
+        languagePopup.action = #selector(languageChanged)
+        let note = NSTextField(wrappingLabelWithString: "メニュー・ボタン・通知などの表示の言語です。切り替えは再起動後に反映されます。プラグインの説明ページ（README）は日本語のままです。")
+        note.font = .systemFont(ofSize: 11)
+        note.textColor = .secondaryLabelColor
+        note.preferredMaxLayoutWidth = 360
+        return Self.pane(Self.grid([
+            [Self.label("表示の言語"), languagePopup],
+            [NSGridCell.emptyContentView, note],
+        ]))
+    }
+
+    @objc private func languageChanged() { L10n.language = AppLanguage.allCases[max(languagePopup.indexOfSelectedItem, 0)] }
+
     private var surface: Surface { preview.selected }
 
     @objc private func load() {
@@ -822,6 +901,7 @@ final class PreferencesView: NSView {
         heightLabel.stringValue = "\(Int(Settings.bigTabHeight)) pt"
         widthSlider.doubleValue = Double(Settings.bigTabWidth)
         widthLabel.stringValue = "\(Int(Settings.bigTabWidth)) pt"
+        languagePopup.selectItem(at: AppLanguage.allCases.firstIndex(of: L10n.language) ?? 0)
     }
 
     private func loadColor() {
@@ -904,9 +984,10 @@ final class BaseSettingsView: NSView {
     private let interval = NSPopUpButton()
     private let account = NSTextField(labelWithString: "")
     private let unlink = NSButton(title: "連携を解除", target: nil, action: nil)
+    private let language = NSPopUpButton()
 
     init(version: String) {
-        super.init(frame: NSRect(x: 0, y: 0, width: 480, height: 330))
+        super.init(frame: NSRect(x: 0, y: 0, width: 480, height: 380))
         git.target = self
         git.action = #selector(changed)
         projectAdd.addItems(withTitles: ProjectAddMode.allCases.map(\.title))
@@ -921,6 +1002,9 @@ final class BaseSettingsView: NSView {
         unlink.bezelStyle = .rounded
         unlink.target = self
         unlink.action = #selector(unlinkClicked)
+        language.addItems(withTitles: AppLanguage.allCases.map(\.title))
+        language.target = self
+        language.action = #selector(languageChanged)
 
         func section(_ title: String) -> NSTextField {
             let label = NSTextField(labelWithString: title)
@@ -939,6 +1023,7 @@ final class BaseSettingsView: NSView {
             section("Git"), git, row([account, unlink]),
             section("プロジェクト"), row([NSTextField(labelWithString: "開いたファイル・フォルダを一覧に"), projectAdd]),
             section("保存"), row([autosave, interval]),
+            section("言語"), row([NSTextField(labelWithString: "表示の言語（再起動後に反映）"), language]),
             versionLabel,
         ])
         stack.orientation = .vertical
@@ -946,7 +1031,8 @@ final class BaseSettingsView: NSView {
         stack.spacing = 10
         stack.setCustomSpacing(18, after: stack.views[2])
         stack.setCustomSpacing(18, after: stack.views[4])
-        stack.setCustomSpacing(24, after: stack.views[6])
+        stack.setCustomSpacing(18, after: stack.views[6])
+        stack.setCustomSpacing(24, after: stack.views[8])
         stack.edgeInsets = NSEdgeInsets(top: 20, left: 24, bottom: 20, right: 24)
         stack.translatesAutoresizingMaskIntoConstraints = false
         addSubview(stack)
@@ -966,8 +1052,11 @@ final class BaseSettingsView: NSView {
         autosave.state = Settings.autosaveEnabled ? .on : .off
         interval.selectItem(at: Settings.autosaveIntervals.firstIndex(of: Settings.autosaveInterval) ?? 2)
         interval.isEnabled = Settings.autosaveEnabled
+        language.selectItem(at: AppLanguage.allCases.firstIndex(of: L10n.language) ?? 0)
         loadAccount()
     }
+
+    @objc private func languageChanged() { L10n.language = AppLanguage.allCases[max(language.indexOfSelectedItem, 0)] }
 
     private func loadAccount() {
         let saved = GitHub.savedToken != nil

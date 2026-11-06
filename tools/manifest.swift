@@ -115,6 +115,8 @@ for id in catalogIDs {
     }
     fields.append("    \"fileExtensions\": \(inline(m["fileExtensions"] as? [Any] ?? []))")
     if let requires = m["requires"] as? [Any], !requires.isEmpty { fields.append("    \"requires\": \(inline(requires))") }
+    if let category = m["category"] as? String { fields.append("    \"category\": \(json(category))") }
+    if let permissions = m["permissions"] as? [Any], !permissions.isEmpty { fields.append("    \"permissions\": \(inline(permissions))") }
     if let api = m["apiVersion"] as? Int { fields.append("    \"apiVersion\": \(api)") }
     entries.append("  {\n" + fields.joined(separator: ",\n") + "\n  }")
 }

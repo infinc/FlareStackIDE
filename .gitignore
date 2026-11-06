@@ -8,3 +8,5 @@ build/
 release.md
 debug_build.sh
 CLAUDE.md
+
+venv/

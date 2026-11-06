@@ -15,6 +15,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WelcomeDelegate {
     private var currentVersion: String { AppUpdate.shared.currentVersion }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        PluginGuard.install()
         PluginStore.installBundled()
         ButtonHover.install()
         showSplash()
@@ -43,6 +44,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WelcomeDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         editors.forEach { $0.saveAll() }
         lightEditors.forEach { $0.save() }
+        PluginGuard.cleanExit()
     }
 
     func application(_ application: NSApplication, open urls: [URL]) {
@@ -340,6 +342,8 @@ func buildMainMenu() -> NSMenu {
     palette.keyEquivalentModifierMask = CommandPalette.defaultModifiers
     CommandPalette.menuItem = palette
     viewMenu.addItem(.separator())
+    Zoom.addItems(to: viewMenu)
+    viewMenu.addItem(.separator())
     viewMenu.addItem(withTitle: "VS Code テーマを読み込む…", action: #selector(ThemeImport.importClicked(_:)), keyEquivalent: "").target = ThemeImport.shared
 
     for (title, submenu) in [(appName, appMenu), ("ファイル", fileMenu), ("編集", editMenu), ("表示", viewMenu)] {
@@ -350,6 +354,7 @@ func buildMainMenu() -> NSMenu {
     return main
 }
 
+L10n.install()
 let app = NSApplication.shared
 let delegate = AppDelegate()
 app.delegate = delegate

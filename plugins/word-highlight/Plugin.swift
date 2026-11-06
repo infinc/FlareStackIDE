@@ -50,8 +50,8 @@ enum WordFinder {
 
 final class WordHighlightAddon: NSObject, TextAddon {
     static let pluginID = "word-highlight"
-    private static let linesChanged = Notification.Name("FlareStackIDE.wordMarks")
-    private static let linesRequest = Notification.Name("FlareStackIDE.wordMarksRequest")
+    private static let linesChanged = PluginEvent.wordMarks
+    private static let linesRequest = PluginEvent.wordMarksRequest
     private weak var code: CodeEditing?
     private var lines = Set<Int>()
     private var active = false

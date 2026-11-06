@@ -38,6 +38,8 @@ final class ShortcutAddon: WindowAddon {
             editor.goBack()
         case .palette:
             editor.showCommandPalette(nil)
+        case .zoomIn, .zoomOut, .zoomReset:
+            if let zoom = action.zoom { Zoom.perform(zoom) }
         }
     }
 

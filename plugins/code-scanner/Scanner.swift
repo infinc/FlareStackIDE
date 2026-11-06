@@ -20,10 +20,10 @@ struct Diagnostic {
 }
 
 enum ExternalDiagnostics {
-    static let changed = Notification.Name("FlareStackIDE.externalDiagnostics")
-    static let filesChanged = Notification.Name("FlareStackIDE.lspFiles")
-    static let filesRequest = Notification.Name("FlareStackIDE.lspFilesRequest")
-    static let hoverShown = Notification.Name("FlareStackIDE.hoverShown")
+    static let changed = PluginEvent.externalDiagnostics
+    static let filesChanged = PluginEvent.lspFiles
+    static let filesRequest = PluginEvent.lspFilesRequest
+    static let hoverShown = PluginEvent.hoverShown
     private(set) static var files: Set<String> = []
     private static var items: [String: [[String: Any]]] = [:]
     private static var installed = false
@@ -72,8 +72,8 @@ enum ExternalDiagnostics {
 
 final class CodeScanner {
     static let pluginID = "code-scanner"
-    static let marksChanged = Notification.Name("FlareStackIDE.lineMarks")
-    static let marksRequest = Notification.Name("FlareStackIDE.lineMarksRequest")
+    static let marksChanged = PluginEvent.lineMarks
+    static let marksRequest = PluginEvent.lineMarksRequest
     private let context = JSContext()!
     private let checker: JSValue?
     private let diagnose: JSValue?

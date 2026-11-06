@@ -1,19 +1,21 @@
 {
   "id": "http-client",
   "name": "HTTP Client",
-  "version": "1.0",
+  "version": "1.1",
   "author": "FlareStackIDE",
   "symbol": "network",
   "summary": ".http ファイルに書いたリクエストを送信して応答を表示",
   "fileExtensions": [],
+  "category": "実行・ツール",
+  "permissions": ["network"],
   "files": ["plugin.dylib", "README.md"],
   "settings": [
     { "key": "timeout", "title": "タイムアウト（秒）", "type": "number", "min": 1, "max": 120, "default": "30" },
     { "key": "confirmInsecure", "title": "http（暗号化なし）で送る前に確認する", "type": "bool", "default": "true" }
   ],
-  "apiVersion": 1,
+  "apiVersion": 2,
   "hashes": {
     "README.md": "e3a968ba61587d0724eb9ed529e4a315a0efd3e73ba9cc87db7091ff3227b33d",
-    "plugin.dylib": "9c7f3320effc2d4dd35c1e7bd99a0eaffbb87f6c0b4a5d597fe0ff97cbebc2fc"
+    "plugin.dylib": "5690c2a7829b7c78c65bcd504ce9413895f6782024ab4ea6927574ef371eeebd"
   }
 }

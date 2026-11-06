@@ -58,9 +58,9 @@ final class BookmarkStore {
 }
 
 final class BookmarksAddon: NSObject, TextAddon {
-    static let marks = Notification.Name("FlareStackIDE.bookmarks")
-    static let marksRequest = Notification.Name("FlareStackIDE.bookmarksRequest")
-    static let rulerClicked = Notification.Name("FlareStackIDE.rulerClicked")
+    static let marks = PluginEvent.bookmarks
+    static let marksRequest = PluginEvent.bookmarksRequest
+    static let rulerClicked = PluginEvent.rulerClicked
     static let live = NSHashTable<BookmarksAddon>.weakObjects()
 
     private weak var code: CodeEditing?

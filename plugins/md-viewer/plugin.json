@@ -6,6 +6,7 @@
   "symbol": "doc.richtext",
   "summary": "Markdown ファイルをリアルタイムでプレビュー",
   "fileExtensions": ["md", "markdown", "mdown", "mkd"],
+  "category": "ビューア",
   "files": ["main.js", "README.md"],
   "settings": [
     { "key": "barColor", "title": "タブの背景色", "type": "color" },

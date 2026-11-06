@@ -79,12 +79,12 @@ final class LSPDocument {
 }
 
 enum LSPHub {
-    static let completionItems = Notification.Name("FlareStackIDE.completionItems")
+    static let completionItems = PluginEvent.completionItems
     static let diagnosticsChanged = Notification.Name("LSPClient.diagnosticsChanged")
-    static let externalDiagnostics = Notification.Name("FlareStackIDE.externalDiagnostics")
-    static let lspFiles = Notification.Name("FlareStackIDE.lspFiles")
-    static let lspFilesRequest = Notification.Name("FlareStackIDE.lspFilesRequest")
-    static let hoverShown = Notification.Name("FlareStackIDE.hoverShown")
+    static let externalDiagnostics = PluginEvent.externalDiagnostics
+    static let lspFiles = PluginEvent.lspFiles
+    static let lspFilesRequest = PluginEvent.lspFilesRequest
+    static let hoverShown = PluginEvent.hoverShown
     static let reopen = Notification.Name("LSPClient.reopen")
     private static var scannerCache: Bool?
     private static var servers: [String: LSPServer] = [:]
@@ -113,26 +113,25 @@ enum LSPHub {
 
     private static func key(_ root: URL, _ language: String) -> String { language + ":" + root.standardizedFileURL.path }
 
-    private static func command(for ext: String) -> [String]? {
-        if let custom = PluginStore.setting(LSPClientPlugin.pluginID, "command")?.trimmingCharacters(in: .whitespaces), !custom.isEmpty {
+    private static func command(for spec: LSPServerSpec) -> [String]? {
+        if let custom = PluginStore.setting(LSPClientPlugin.pluginID, spec.setting)?.trimmingCharacters(in: .whitespaces), !custom.isEmpty {
             let parts = custom.split(separator: " ").map(String.init)
             return LoginShell.which(parts[0]).map { [$0] + parts.dropFirst() }
         }
-        for candidate in LSPLanguage.table[ext]?.candidates ?? [] {
+        for candidate in spec.candidates {
             if let path = LoginShell.which(candidate[0]) { return [path] + candidate.dropFirst() }
         }
         return nil
     }
 
     static func server(for url: URL, root: URL) -> LSPServer? {
-        let ext = url.pathExtension.lowercased()
-        guard let language = LSPLanguage.language(for: url) else { return nil }
-        let id = key(root, language)
+        guard let spec = LSPLanguage.server(for: url), let language = LSPLanguage.language(for: url) else { return nil }
+        let id = key(root, spec.id)
         if let server = servers[id] { return server }
         guard !missing.contains(id) else { return nil }
-        guard let command = command(for: ext) else {
+        guard let command = command(for: spec) else {
             missing.insert(id)
-            Toasts.post("Python の言語サーバーが見つかりません", message: "ターミナルで pip install pyright を実行してから、プロジェクトを開き直してください")
+            Toasts.post("\(spec.name) の言語サーバーが見つかりません", message: "ターミナルで \(spec.install) を実行してから、プロジェクトを開き直してください")
             return nil
         }
         let server = LSPServer(root: root, language: language, command: command)

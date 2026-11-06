@@ -1,15 +1,16 @@
 {
   "id": "help-me",
   "name": "Help Me",
-  "version": "1.1",
+  "version": "1.2",
   "author": "FlareStackIDE",
   "symbol": "arrow.uturn.backward.circle",
   "summary": "上のバーのボタンで編集を巻き戻す・やり直す",
   "fileExtensions": [],
+  "category": "編集",
   "files": ["plugin.dylib", "README.md"],
-  "apiVersion": 1,
+  "apiVersion": 2,
   "hashes": {
     "README.md": "4c76dff7ebed13f8df903b996d97b88aa1137bfcfc716eee0a5c6a13c862d375",
-    "plugin.dylib": "73d40e584e511dbb3a9aca9dd6fd2be877ec949e0d9b0aae0419b0e715083a4a"
+    "plugin.dylib": "f21005676e151dec70e861369aac942aa2e7df0c1efa95cb209e4cf449df8015"
   }
 }

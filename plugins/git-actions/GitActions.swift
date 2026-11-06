@@ -243,6 +243,7 @@ final class GitActionsView: NSView, NSTableViewDataSource, NSTableViewDelegate {
         branchMenu.selectItem(withTitle: loaded.branch)
         branchMenu.menu?.addItem(.separator())
         branchMenu.addItem(withTitle: "新しいブランチ…")
+        branchMenu.lastItem?.representedObject = Self.newBranch
         showBanner(loaded)
         rows = []
         if !loaded.staged.isEmpty {
@@ -276,7 +277,7 @@ final class GitActionsView: NSView, NSTableViewDataSource, NSTableViewDelegate {
                 self.reload()
                 self.editor?.refreshGit()
                 self.editor?.reloadGitReport()
-                NotificationCenter.default.post(name: Notification.Name("FlareStackIDE.gitChanged"), object: nil)
+                NotificationCenter.default.post(name: PluginEvent.gitChanged, object: nil)
             }
         }
     }
@@ -517,10 +518,14 @@ final class GitActionsView: NSView, NSTableViewDataSource, NSTableViewDelegate {
         perform(["commit", "-m", text], title: "コミット", done: "コミットしました") { [weak self] in self?.message.string = "" }
     }
 
+    private static let newBranch = "git-actions.new-branch"
+
     @objc private func branchChosen() {
         guard let state, let title = branchMenu.titleOfSelectedItem, title != state.branch else { return }
         guard saved else { return branchMenu.selectItem(withTitle: state.branch) }
-        guard title == "新しいブランチ…" else { return perform(["switch", title], title: "ブランチの切り替え") }
+        guard branchMenu.selectedItem?.representedObject as? String == Self.newBranch else {
+            return perform(["switch", title], title: "ブランチの切り替え")
+        }
         branchMenu.selectItem(withTitle: state.branch)
         let alert = NSAlert()
         alert.messageText = "新しいブランチ"

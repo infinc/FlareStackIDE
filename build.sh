@@ -40,7 +40,7 @@ for dir in "$ROOT"/plugins/*/; do
     [ -e "${sources[0]}" ] || continue
     id="$(basename "$dir")"
     swiftc -target arm64-apple-macos13 -O -emit-library -module-name "FSPlugin_${id//-/_}" -I "$MODULE" \
-        "${sources[@]}" -o "$dir/plugin.dylib" -Xlinker -undefined -Xlinker dynamic_lookup
+        "${sources[@]}" "$ROOT"/PluginKit/*.swift -o "$dir/plugin.dylib" -Xlinker -undefined -Xlinker dynamic_lookup
 done
 
 progress "マニフェストと署名 (plugins/*/plugin.sig)"

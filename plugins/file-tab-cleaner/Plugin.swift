@@ -12,21 +12,65 @@ final class FileTabCleanerAddon: NSObject, TextAddon {
 
     init(code: CodeEditing) {
         self.code = code
-        button = NSButton(image: NSImage(systemSymbolName: "xmark.circle", accessibilityDescription: "タブをすべて閉じる")!
+        button = NSButton(image: NSImage(systemSymbolName: "xmark.circle", accessibilityDescription: "固定していないタブを閉じる")!
             .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 12, weight: .medium))!, target: nil, action: nil)
         super.init()
         button.isBordered = false
-        button.toolTip = "タブをすべて閉じる"
+        button.toolTip = "固定していないタブを閉じる"
         button.target = self
         button.action = #selector(clicked)
         button.translatesAutoresizingMaskIntoConstraints = false
         button.widthAnchor.constraint(equalToConstant: 22).isActive = true
         code.tabStrip?.stack.insertArrangedSubview(button, at: 0)
+        attach()
     }
 
-    @objc private func clicked() { code?.closeAllTabs() }
+    private var tabs: [TabItemView] { code?.tabStrip?.stack.arrangedSubviews.compactMap { $0 as? TabItemView } ?? [] }
 
-    func detach() { button.removeFromSuperview() }
+    private func attach() {
+        for tab in tabs where tab.onPin == nil && tab.url?.isFileURL == true {
+            tab.onPin = { [weak self, weak tab] in
+                guard let self, let tab else { return }
+                self.toggle(tab)
+            }
+        }
+    }
+
+    private func toggle(_ tab: TabItemView) {
+        tab.pinned.toggle()
+        arrange()
+        Toasts.hint(tab.pinned ? "タブを固定しました" : "固定を解除しました", under: tab)
+    }
+
+    private func arrange() {
+        guard let stack = code?.tabStrip?.stack else { return }
+        let pinned = tabs.filter(\.pinned)
+        let start = (stack.arrangedSubviews.firstIndex(of: button) ?? -1) + 1
+        for (offset, tab) in pinned.enumerated() where stack.arrangedSubviews.firstIndex(of: tab) != start + offset {
+            stack.removeArrangedSubview(tab)
+            stack.insertArrangedSubview(tab, at: start + offset)
+        }
+    }
+
+    func fileOpened() { attach() }
+
+    @objc private func clicked() {
+        guard let code else { return }
+        let kept = Set(tabs.filter(\.pinned).compactMap(\.url))
+        if let closer = code as? TabClosing {
+            closer.closeTabs(keeping: kept)
+        } else {
+            code.closeAllTabs()
+        }
+    }
+
+    func detach() {
+        button.removeFromSuperview()
+        for tab in tabs {
+            tab.onPin = nil
+            tab.pinned = false
+        }
+    }
 }
 
 @_cdecl("flarestack_plugin_load")

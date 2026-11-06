@@ -181,9 +181,21 @@ final class TabItemView: NSView, NSTextFieldDelegate {
     var onMove: (() -> Void)?
     var draggable = false
     var contextMenu: (() -> NSMenu?)?
+    var url: URL?
+    var onPin: (() -> Void)?
+    var pinned = false {
+        didSet {
+            pin.isHidden = !pinned
+            labelLeading.constant = pinned ? 22 : 10
+        }
+    }
     private var dragStart: NSEvent?
     private var reorder: DragReorder?
     private var oldTitle = ""
+    private var pressTimer: Timer?
+    private var pressed = false
+    private let pin = NSImageView()
+    private var labelLeading: NSLayoutConstraint!
     var selected = false { didSet { updateColor() } }
     var tint: NSColor? { didSet { updateColor() } }
     var plain = false { didSet { needsDisplay = true } }
@@ -201,9 +213,18 @@ final class TabItemView: NSView, NSTextFieldDelegate {
         label.lineBreakMode = .byClipping
         label.translatesAutoresizingMaskIntoConstraints = false
         addSubview(label)
+        pin.image = NSImage(systemSymbolName: "pin.fill", accessibilityDescription: "固定")?
+            .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 8, weight: .semibold))
+        pin.contentTintColor = .secondaryLabelColor
+        pin.isHidden = true
+        pin.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(pin)
         updateColor()
+        labelLeading = label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10)
         var constraints = [
-            label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
+            labelLeading!,
+            pin.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+            pin.centerYAnchor.constraint(equalTo: centerYAnchor),
             label.centerYAnchor.constraint(equalTo: centerYAnchor),
             heightAnchor.constraint(equalToConstant: 24),
         ]
@@ -236,19 +257,32 @@ final class TabItemView: NSView, NSTextFieldDelegate {
             return
         }
         dragStart = event
+        pressed = false
+        pressTimer?.invalidate()
+        if onPin != nil {
+            pressTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: false) { [weak self] _ in
+                guard let self, self.reorder == nil else { return }
+                self.pressed = true
+                self.onPin?()
+            }
+        }
         onSelect?()
     }
 
     override func mouseDragged(with event: NSEvent) {
-        guard draggable, let start = dragStart else { return }
+        guard draggable, !pressed, let start = dragStart else { return }
         if reorder == nil {
             guard abs(event.locationInWindow.x - start.locationInWindow.x) > 4 else { return }
+            pressTimer?.invalidate()
             reorder = DragReorder(view: self, event: start) { $0 is TabItemView }
         }
         reorder?.drag(event)
     }
 
     override func mouseUp(with event: NSEvent) {
+        pressTimer?.invalidate()
+        pressTimer = nil
+        pressed = false
         if let reorder {
             reorder.end()
             onMove?()
@@ -297,6 +331,23 @@ final class TabItemView: NSView, NSTextFieldDelegate {
     }
 
     @objc private func closeClicked() { onClose?() }
+
+    static func pinItem(_ pinned: Bool, _ toggle: @escaping () -> Void) -> NSMenuItem {
+        ClosureMenuItem(title: pinned ? "固定を解除" : "タブを固定", symbol: pinned ? "pin.slash" : "pin", handler: toggle)
+    }
+}
+
+final class ClosureMenuItem: NSMenuItem {
+    private var handler: (() -> Void)?
+
+    convenience init(title: String, symbol: String? = nil, handler: @escaping () -> Void) {
+        self.init(title: title, action: #selector(run), keyEquivalent: "")
+        self.handler = handler
+        target = self
+        image = symbol.flatMap { NSImage(systemSymbolName: $0, accessibilityDescription: title) }
+    }
+
+    @objc private func run() { handler?() }
 }
 
 final class TabStrip: NSView {

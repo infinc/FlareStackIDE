@@ -11,12 +11,12 @@ final class Minimap: NSView {
     private static let lineHeight: CGFloat = 3
     private static let maxColumns = 110
     private static let font = CTFontCreateWithName("Menlo" as CFString, 2.4, nil)
-    private static let marksChanged = Notification.Name("FlareStackIDE.lineMarks")
-    private static let marksRequest = Notification.Name("FlareStackIDE.lineMarksRequest")
-    private static let bookmarksChanged = Notification.Name("FlareStackIDE.bookmarks")
-    private static let bookmarksRequest = Notification.Name("FlareStackIDE.bookmarksRequest")
-    private static let wordsChanged = Notification.Name("FlareStackIDE.wordMarks")
-    private static let wordsRequest = Notification.Name("FlareStackIDE.wordMarksRequest")
+    private static let marksChanged = PluginEvent.lineMarks
+    private static let marksRequest = PluginEvent.lineMarksRequest
+    private static let bookmarksChanged = PluginEvent.bookmarks
+    private static let bookmarksRequest = PluginEvent.bookmarksRequest
+    private static let wordsChanged = PluginEvent.wordMarks
+    private static let wordsRequest = PluginEvent.wordMarksRequest
 
     private weak var textView: NSTextView?
     private weak var scroll: NSScrollView?

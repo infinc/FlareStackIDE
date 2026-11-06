@@ -1,15 +1,16 @@
 {
   "id": "emmet",
   "name": "Emmet",
-  "version": "1.1",
+  "version": "1.2",
   "author": "FlareStackIDE",
   "symbol": "chevron.left.forwardslash.chevron.right",
   "summary": "ul>li*3 のような短い記法を Tab で HTML や CSS に展開",
   "fileExtensions": [],
+  "category": "編集",
   "files": ["plugin.dylib", "README.md"],
-  "apiVersion": 1,
+  "apiVersion": 2,
   "hashes": {
     "README.md": "162e5f9c3924d6d45040c5acafc43fc17672f1440ec22387269508b59e961067",
-    "plugin.dylib": "b850f06bf05f2e5fffaa4a6bd8c9fe167593dd3e93fcaec774f3a89e4c108ec9"
+    "plugin.dylib": "5f369d45f191862d5db3698bbbc52bfc89887804a1a703f427587d3c4554a553"
   }
 }
