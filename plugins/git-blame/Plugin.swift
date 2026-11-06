@@ -72,7 +72,7 @@ private final class BlameLabel: NSTextField {
 
 final class GitBlameAddon: NSObject, TextAddon {
     static let pluginID = "git-blame"
-    private static let repositoryChanged = Notification.Name("FlareStackIDE.gitChanged")
+    private static let repositoryChanged = PluginEvent.gitChanged
     private static let relative: RelativeDateTimeFormatter = {
         let formatter = RelativeDateTimeFormatter()
         formatter.locale = Locale(identifier: "ja_JP")

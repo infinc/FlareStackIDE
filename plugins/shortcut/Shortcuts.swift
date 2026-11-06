@@ -34,7 +34,7 @@ struct Shortcut: Codable, Equatable {
 }
 
 enum ShortcutAction: String, CaseIterable {
-    case run, theme, close, palette
+    case run, theme, close, palette, zoomIn, zoomOut, zoomReset
 
     var title: String {
         switch self {
@@ -42,6 +42,18 @@ enum ShortcutAction: String, CaseIterable {
         case .run: return "実行（Runner が必要）"
         case .theme: return "テーマ切り替え"
         case .close: return "プロジェクトを保存して終了"
+        case .zoomIn: return "拡大"
+        case .zoomOut: return "縮小"
+        case .zoomReset: return "実際のサイズ"
+        }
+    }
+
+    var zoom: Zoom.Action? {
+        switch self {
+        case .zoomIn: return .zoomIn
+        case .zoomOut: return .zoomOut
+        case .zoomReset: return .reset
+        default: return nil
         }
     }
 }
@@ -72,9 +84,19 @@ enum ShortcutStore {
     }
 
     static func applyPaletteKey() {
-        guard live > 0 else { return CommandPalette.overrideKey(nil) }
-        let item = items.first { $0.action == ShortcutAction.palette.rawValue && $0.keyCode != nil }
+        guard live > 0 else {
+            CommandPalette.overrideKey(nil)
+            Zoom.Action.allCases.forEach { Zoom.overrideKey($0, nil) }
+            return
+        }
+        let current = items
+        let item = current.first { $0.action == ShortcutAction.palette.rawValue && $0.keyCode != nil }
         CommandPalette.overrideKey(item?.keyEquivalent ?? "", modifiers: NSEvent.ModifierFlags(rawValue: item?.modifiers ?? 0))
+        for action in ShortcutAction.allCases {
+            guard let zoom = action.zoom else { continue }
+            let assigned = current.first { $0.action == action.rawValue && $0.keyCode != nil }
+            Zoom.overrideKey(zoom, assigned.map { $0.keyEquivalent ?? "" }, modifiers: NSEvent.ModifierFlags(rawValue: assigned?.modifiers ?? 0))
+        }
     }
 
     private static let names: [UInt16: String] = [

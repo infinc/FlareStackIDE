@@ -37,18 +37,38 @@ final class Buffer {
     let url: URL
     var text: String
     var dirty = false
-    let editable: Bool
+    private(set) var editable: Bool
+    var format = TextFormat()
 
     init(url: URL) {
         self.url = url
-        if let data = try? Data(contentsOf: url, options: .mappedIfSafe), let s = String(data: data, encoding: .utf8) {
-            text = s
+        if let file = TextFile.read(url) {
+            text = file.text
+            format = file.format
             editable = true
         } else {
             text = "このファイルは表示できません。"
             editable = false
         }
     }
+
+    func reopen(as encoding: TextEncoding) throws {
+        guard let file = TextFile.read(url, encoding: encoding) else {
+            throw TextFile.failure("\(encoding.title) として読み込めませんでした。")
+        }
+        text = file.text
+        format = file.format
+        editable = true
+        dirty = false
+    }
+
+    func save(atomically: Bool = true) throws {
+        let data = try TextFile.write(text, to: url, format: format, atomically: atomically)
+        dirty = false
+        LocalHistory.record(url, data: data)
+    }
+
+    func diskText() -> String? { TextFile.read(url, encoding: format.encoding)?.text }
 }
 
 final class ToolStripButton: NSButton {
@@ -121,6 +141,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
     private let editorScroll = CodeScrollView.make()
     var textView: NSTextView { editorScroll.documentView as! NSTextView }
     private let fileLabel = NSTextField(labelWithString: "")
+    private let formatButton = NSButton()
     private let placeholder = NSTextField(labelWithString: "左のディレクトリからファイルを選択してください")
     private var folderButton: ToolStripButton!
     private var pluginButton: ToolStripButton!
@@ -260,7 +281,13 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
         branchView.addArrangedSubview(branchIcon)
         branchView.addArrangedSubview(branchLabel)
         branchView.isHidden = true
-        let titleStack = NSStackView(views: [name, branchView, fileLabel])
+        formatButton.isBordered = false
+        formatButton.toolTip = "文字コードと改行コード"
+        formatButton.target = self
+        formatButton.action = #selector(formatClicked)
+        formatButton.isHidden = true
+        formatButton.setContentCompressionResistancePriority(.required, for: .horizontal)
+        let titleStack = NSStackView(views: [name, branchView, fileLabel, formatButton])
         titleStack.orientation = .horizontal
         titleStack.spacing = 14
         titleStack.translatesAutoresizingMaskIntoConstraints = false
@@ -347,6 +374,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
         _ = textView.layoutManager
         CodeView.configure(textView, scroll: editorScroll)
         textView.delegate = self
+        CodeView.onScroll(editorScroll, self, #selector(editorScrolled))
 
         let editorPane = NSView()
         barHost.translatesAutoresizingMaskIntoConstraints = false
@@ -984,16 +1012,14 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
         recolorWork?.cancel()
         recolorWork = nil
         guard let layout = textView.layoutManager else { return }
-        let text = textView.string
-        layout.removeTemporaryAttribute(.foregroundColor, forCharacterRange: NSRange(location: 0, length: (text as NSString).length))
-        defer {
-            textAddons.decorate(layout)
-            windowAddons.each { $0.decorate(layout) }
-        }
-        guard let highlighter, let url = current?.url else { return }
-        for span in highlighter.spans(text, file: url) {
-            layout.addTemporaryAttribute(.foregroundColor, value: span.color, forCharacterRange: span.range)
-        }
+        CodeView.highlight(textView, with: highlighter, file: current?.url)
+        textAddons.decorate(layout)
+        windowAddons.each { $0.decorate(layout) }
+    }
+
+    @objc private func editorScrolled() {
+        guard highlighter != nil, Highlighter.needsWindow((textView.string as NSString).length) else { return }
+        scheduleRecolor()
     }
 
     private func scheduleRecolor() {
@@ -1037,6 +1063,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
     private func addTab(for url: URL, title: String) {
         if tabs[url] == nil {
             let tab = TabItemView(title: title, closable: true)
+            tab.url = url
             tab.toolTip = url.isFileURL ? url.path : title
             tab.onSelect = { [weak self] in
                 guard let self, self.selectedURL != url else { return }
@@ -1059,7 +1086,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
         if selectedURL == url { storeCurrent() }
         if let buffer = buffers[url], buffer.dirty, buffer.editable {
             do {
-                try buffer.text.write(to: url, atomically: true, encoding: .utf8)
+                try buffer.save()
             } catch {
                 if let window { NSAlert(error: error).beginSheetModal(for: window) }
                 return
@@ -1094,8 +1121,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
         if Settings.autosaveImmediate, current.editable {
             current.text = textView.string
             do {
-                try current.text.write(to: current.url, atomically: false, encoding: .utf8)
-                current.dirty = false
+                try current.save(atomically: false)
             } catch {
                 current.dirty = true
             }
@@ -1115,7 +1141,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
         }
         splitPane?.reloadExternal(changed)
         for (url, buffer) in buffers where buffer.editable && !buffer.dirty && changed(url) {
-            guard let text = CodeView.diskText(url) else { continue }
+            guard let text = buffer.diskText() else { continue }
             guard buffer === current else {
                 buffer.text = text
                 continue
@@ -1147,7 +1173,15 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
         updateCloud()
     }
 
+    private func updateFormat() {
+        guard let current, selectedURL == current.url else { return formatButton.isHidden = true }
+        formatButton.isHidden = false
+        formatButton.attributedTitle = NSAttributedString(string: current.editable ? current.format.label : L("文字コード不明"), attributes: [
+            .font: NSFont.systemFont(ofSize: 11, weight: .medium), .foregroundColor: NSColor.secondaryLabelColor])
+    }
+
     private func updateCloud() {
+        updateFormat()
         let dirty = buffers.values.contains { $0.dirty } || splitPane?.dirty == true
         cloudButton.image = Self.cloudImage(dirty ? "icloud.and.arrow.up" : "checkmark.icloud")
         cloudButton.toolTip = (!dirty ? (Settings.autosaveEnabled ? "自動保存済み" : "保存済み") : "未保存") + "（クリックで保存）"
@@ -1169,8 +1203,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
         defer { refreshGit() }
         for buffer in dirty {
             do {
-                try buffer.text.write(to: buffer.url, atomically: true, encoding: .utf8)
-                buffer.dirty = false
+                try buffer.save()
             } catch {
                 updateTitle()
                 return error
@@ -1313,6 +1346,7 @@ extension EditorWindowController {
             menu.addItem(.separator())
             add("ファイル名を変更…", #selector(renameItem(_:)), enabled: !isRoot)
             add("ファイルをコピー…", #selector(copyFileItem(_:)))
+            if LocalHistory.isTracked(node.url) { add("ローカル履歴…", #selector(historyItem(_:))) }
         }
         add("パスをコピー", #selector(copyPathItem(_:)))
         menu.addItem(.separator())
@@ -1520,19 +1554,44 @@ extension EditorWindowController {
         alert.addButton(withTitle: "キャンセル")
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         if let error = saveAll() { showError(error); return }
+        let original = node.url
+        var trashed: NSURL?
         do {
-            try FileManager.default.trashItem(at: node.url, resultingItemURL: nil)
+            try FileManager.default.trashItem(at: original, resultingItemURL: &trashed)
         } catch {
             showError(error)
             return
         }
-        let gone = node.url.standardizedFileURL.path
-        reopenTabs { url in
+        let gone = original.standardizedFileURL.path
+        let inside = { (url: URL) -> Bool in
             let path = url.standardizedFileURL.path
-            return path == gone || path.hasPrefix(gone + "/") ? nil : url
+            return path == gone || path.hasPrefix(gone + "/")
+        }
+        let closed = openURLs.filter(inside)
+        reopenTabs { inside($0) ? nil : $0 }
+        reloadTree()
+        refreshGit()
+        guard let trashed = trashed as URL? else { return }
+        Toasts.post("「\(original.lastPathComponent)」をゴミ箱に移動しました", actions: [("元に戻す", { [weak self] in
+            self?.restoreFromTrash(trashed, to: original, reopening: closed)
+        })], in: window)
+    }
+
+    private func restoreFromTrash(_ trashed: URL, to original: URL, reopening urls: [URL]) {
+        let fm = FileManager.default
+        guard !fm.fileExists(atPath: original.path) else {
+            return showMessage("「\(original.lastPathComponent)」は既に存在するため戻せません。")
+        }
+        do {
+            try fm.createDirectory(at: original.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try fm.moveItem(at: trashed, to: original)
+        } catch {
+            return showError(error)
         }
         reloadTree()
         refreshGit()
+        urls.filter { fm.fileExists(atPath: $0.path) }.forEach { open($0) }
+        Toasts.post("「\(original.lastPathComponent)」を元に戻しました", in: window)
     }
 }
 
@@ -1554,6 +1613,7 @@ extension EditorWindowController {
         let menu = NSMenu()
         menu.autoenablesItems = false
         menu.addItem(menuItem("プロジェクト名を変更…", #selector(renameProject)))
+        menu.addItem(menuItem("プロジェクトの設定…", #selector(projectSettingsClicked)))
         menu.addItem(.separator())
         let others = ProjectStore.all.filter { $0.path != project.path }
         let header = menuItem("他のプロジェクト", nil)
@@ -1572,6 +1632,33 @@ extension EditorWindowController {
             menu.addItem(item)
         }
         menu.popUp(positioning: nil, at: NSPoint(x: 0, y: projectButton.bounds.height + 4), in: projectButton)
+    }
+
+    @objc private func projectSettingsClicked() {
+        let project = project
+        Popups.show("project-settings-\(project.path)", title: "プロジェクトの設定", over: window) { ProjectSettingsView(project: project) }
+    }
+
+    func showHistory(_ url: URL) {
+        LocalHistory.show(url, editor: self)
+    }
+
+    @objc private func historyItem(_ sender: Any?) {
+        if let url = (sender as? NSMenuItem)?.representedObject as? URL ?? node(of: sender)?.url { showHistory(url) }
+    }
+
+    func restoreHistory(_ data: Data, to url: URL) {
+        if let error = saveAll() { return showError(error) }
+        if let old = try? Data(contentsOf: url) { LocalHistory.record(url, data: old, merge: false) }
+        do {
+            try data.write(to: url, options: .atomic)
+        } catch {
+            return showError(error)
+        }
+        LocalHistory.record(url, data: data, merge: false)
+        reloadExternal([url.standardizedFileURL.path])
+        refreshGit()
+        Toasts.post("「\(url.lastPathComponent)」を以前の版に戻しました", in: window)
     }
 
     @objc private func renameProject() {
@@ -1645,9 +1732,89 @@ extension EditorWindowController {
 }
 
 extension EditorWindowController {
+    @objc private func formatClicked() {
+        guard let current else { return }
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        let reopen = NSMenuItem(title: "文字コードを指定して開き直す", action: nil, keyEquivalent: "")
+        let convert = NSMenuItem(title: "文字コードを変えて保存", action: nil, keyEquivalent: "")
+        let reopenMenu = NSMenu(), convertMenu = NSMenu()
+        for encoding in TextEncoding.all {
+            let again = menuItem(encoding.title, #selector(reopenEncoding(_:)), encoding.id)
+            again.state = current.editable && current.format.encoding == encoding ? .on : .off
+            reopenMenu.addItem(again)
+            let save = menuItem(encoding.title, #selector(convertEncoding(_:)), encoding.id)
+            save.state = again.state
+            convertMenu.addItem(save)
+        }
+        reopen.submenu = reopenMenu
+        convert.submenu = convertMenu
+        convert.isEnabled = current.editable
+        menu.addItem(reopen)
+        menu.addItem(convert)
+        menu.addItem(.separator())
+        let header = menuItem("改行コード", nil)
+        header.isEnabled = false
+        menu.addItem(header)
+        for ending in LineEnding.allCases {
+            let item = menuItem(ending.title, #selector(lineEndingClicked(_:)), ending.rawValue)
+            item.state = current.editable && current.format.lineEnding == ending ? .on : .off
+            item.isEnabled = current.editable
+            menu.addItem(item)
+        }
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: formatButton.bounds.height + 4), in: formatButton)
+    }
+
+    @objc private func reopenEncoding(_ sender: NSMenuItem) {
+        guard let current, let encoding = TextEncoding.all.first(where: { $0.id == sender.representedObject as? String }) else { return }
+        storeCurrent()
+        if current.dirty {
+            let alert = NSAlert()
+            alert.messageText = "未保存の変更を破棄して開き直しますか？"
+            alert.informativeText = "「\(current.url.lastPathComponent)」を \(encoding.title) として読み込み直します。"
+            alert.addButton(withTitle: "開き直す")
+            alert.addButton(withTitle: "キャンセル")
+            guard alert.runModal() == .alertFirstButtonReturn else { return }
+        }
+        do { try current.reopen(as: encoding) } catch { return showError(error) }
+        textView.string = current.text
+        open(current.url)
+    }
+
+    private func changeFormat(_ change: (inout TextFormat) -> Void) {
+        guard let current, current.editable else { return }
+        storeCurrent()
+        let old = current.format
+        change(&current.format)
+        do {
+            try current.save()
+        } catch {
+            current.format = old
+            showError(error)
+        }
+        updateTitle()
+        refreshGit()
+    }
+
+    @objc private func convertEncoding(_ sender: NSMenuItem) {
+        guard let encoding = TextEncoding.all.first(where: { $0.id == sender.representedObject as? String }) else { return }
+        changeFormat { $0.encoding = encoding }
+    }
+
+    @objc private func lineEndingClicked(_ sender: NSMenuItem) {
+        guard let ending = (sender.representedObject as? String).flatMap(LineEnding.init) else { return }
+        changeFormat { $0.lineEnding = ending }
+    }
+
     private func tabMenu(_ url: URL) -> NSMenu {
         let menu = NSMenu()
         menu.addItem(menuItem("右に開く", #selector(openRightTab(_:)), url))
+        if LocalHistory.isTracked(url) { menu.addItem(menuItem("ローカル履歴…", #selector(historyItem(_:)), url)) }
+        if let tab = tabs[url], let pin = tab.onPin {
+            menu.addItem(.separator())
+            menu.addItem(TabItemView.pinItem(tab.pinned, pin))
+        }
+        menu.addItem(.separator())
         menu.addItem(menuItem("閉じる", #selector(closeTabItem(_:)), url))
         return menu
     }
@@ -1726,28 +1893,34 @@ extension EditorWindowController {
         showEmpty()
     }
 
-    @objc func closeAllTabs() {
+    @objc func closeAllTabs() { closeTabs(keeping: []) }
+
+    func closeTabs(keeping kept: Set<URL>) {
         storeCurrent()
-        let dirty = buffers.values.filter { $0.dirty && $0.editable }
-        for buffer in dirty {
+        let closing = tabs.keys.filter { !kept.contains($0) }
+        for url in closing {
+            guard let buffer = buffers[url], buffer.dirty, buffer.editable else { continue }
             do {
-                try buffer.text.write(to: buffer.url, atomically: true, encoding: .utf8)
-                buffer.dirty = false
+                try buffer.save()
             } catch {
                 return showError(error)
             }
         }
-        tabs.values.forEach { $0.removeFromSuperview() }
-        let closed = Array(buffers.keys)
-        tabs = [:]
-        buffers = [:]
-        closed.forEach { url in windowAddons.each { $0.bufferClosed(url) } }
+        for url in closing {
+            tabs[url]?.removeFromSuperview()
+            tabs[url] = nil
+            buffers[url] = nil
+            windowAddons.each { $0.bufferClosed(url) }
+        }
+        updateCloud()
+        guard let selectedURL, closing.contains(selectedURL) else { return }
         current = nil
+        if let next = openURLs.first { return open(next) }
         showEmpty()
     }
 }
 
-extension EditorWindowController: CodeEditing, OverlayHosting {
+extension EditorWindowController: CodeEditing, OverlayHosting, TabClosing {
     var scrollView: NSScrollView { editorScroll }
     var fileURL: URL? { current?.editable == true ? current?.url : nil }
     var tabStrip: TabStrip? { fileTabs }
@@ -1800,7 +1973,7 @@ extension EditorWindowController: CodeEditing, OverlayHosting {
     func addTopButton(_ view: NSView) {
         guard view.superview == nil else { return }
         if view.identifier == nil {
-            let name = view.toolTip ?? String(describing: type(of: view))
+            let name = L10n.original(view.toolTip) ?? String(describing: type(of: view))
             view.identifier = NSUserInterfaceItemIdentifier(Self.topPrefix + "plugin." + name)
         }
         insertTopButton(view)

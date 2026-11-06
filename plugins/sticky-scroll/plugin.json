@@ -1,15 +1,16 @@
 {
   "id": "sticky-scroll",
   "name": "Sticky Scroll",
-  "version": "1.1",
+  "version": "1.2",
   "author": "FlareStackIDE",
   "symbol": "pin",
   "summary": "今いる関数やクラスの行を上端に固定",
   "fileExtensions": [],
+  "category": "表示",
   "files": ["plugin.dylib", "README.md"],
-  "apiVersion": 1,
+  "apiVersion": 2,
   "hashes": {
     "README.md": "75c25dc0527c870d224f1bd120dc6232fddfb85404de5d5c822a2339c5695116",
-    "plugin.dylib": "00294d0fce17e6ac1eecf42b50707cfc8bad8d8d300e7f6b604fb57237115d5c"
+    "plugin.dylib": "2203f4372e98e7819b6b5a8fb9ddde71b8ea50e9b6df65035218f36f587478d8"
   }
 }

@@ -1,11 +1,12 @@
 {
   "id": "bracket-colorizer",
   "name": "Bracket Colorizer",
-  "version": "1.1",
+  "version": "1.2",
   "author": "FlareStackIDE",
   "symbol": "curlybraces",
   "summary": "括弧を深さごとに色分けし、対応する括弧を強調",
   "fileExtensions": [],
+  "category": "表示",
   "files": ["plugin.dylib", "README.md"],
   "settings": [
     { "key": "color1", "title": "深さ1の色", "type": "color", "default": "#E5B93C" },
@@ -14,9 +15,9 @@
     { "key": "matchColor", "title": "対応する括弧の背景色", "type": "color", "default": "#8E8E93" },
     { "key": "unmatched", "title": "対応のない括弧を赤くする", "type": "bool", "default": "true" }
   ],
-  "apiVersion": 1,
+  "apiVersion": 2,
   "hashes": {
     "README.md": "f25829bfcb86ec91b5dcae791c9fff5a4557afc6137b9d6ce0d0570fd8df0948",
-    "plugin.dylib": "9ed50308aa150fd43b631085ccdd1bc8b186de6e93baa0f22a210d38a34ceccc"
+    "plugin.dylib": "94e19fc0f9a312c182059dc5aa4bda329cba922267f0d71a01554120c4bad5eb"
   }
 }

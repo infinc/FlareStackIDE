@@ -10,6 +10,10 @@ protocol CodeEditing: AnyObject {
     func closeAllTabs()
 }
 
+protocol TabClosing: AnyObject {
+    func closeTabs(keeping: Set<URL>)
+}
+
 protocol OverlayHosting: AnyObject {
     func addOverlay(_ view: NSView)
     func removeOverlay(_ view: NSView)
@@ -91,7 +95,7 @@ extension NativePlugin {
 
 enum NativePlugins {
     static let binary = "plugin.dylib"
-    static let apiVersion = 1
+    static let apiVersion = 2
     private typealias Entry = @convention(c) () -> Void
     private static var loaded: [String: (plugin: NativePlugin?, version: String)] = [:]
     private static var registering: NativePlugin?
@@ -123,9 +127,14 @@ enum NativePlugins {
             if let entry = loaded[id] {
                 if entry.version != info.version, entry.plugin != nil, !restartNoted.contains(id) {
                     restartNoted.insert(id)
-                    Toasts.post("\(info.name) v\(info.version) は再起動後に反映されます", message: "\(appName) を再起動してください")
+                    Toasts.post("\(info.name) v\(info.version) は再起動後に反映されます", message: "開いているファイルは保存してから再起動します",
+                                actions: [("今すぐ再起動", { Updater.relaunch() })])
                 }
                 return entry.plugin
+            }
+            if PluginGuard.isDisabled(id) {
+                PluginGuard.notifyDisabled(info)
+                return nil
             }
             let file = PluginStore.folder(id).appendingPathComponent(binary)
             guard FileManager.default.fileExists(atPath: file.path) else { return nil }
@@ -134,6 +143,7 @@ enum NativePlugins {
                 Toasts.post("\(info.name) を読み込みませんでした", message: reason)
                 return nil
             }
+            PluginGuard.loaded(id)
             let plugin = load(file, name: info.name)
             loaded[id] = (plugin, info.version)
             return plugin

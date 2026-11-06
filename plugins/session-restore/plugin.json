@@ -1,15 +1,16 @@
 {
   "id": "session-restore",
   "name": "Session Restore",
-  "version": "1.1",
+  "version": "1.2",
   "author": "FlareStackIDE",
   "symbol": "clock.arrow.circlepath",
   "summary": "終了時に開いていたタブとカーソル位置を次回の起動時に復元",
   "fileExtensions": [],
+  "category": "ウィンドウ・タブ",
   "files": ["plugin.dylib", "README.md"],
-  "apiVersion": 1,
+  "apiVersion": 2,
   "hashes": {
     "README.md": "4902902c9feb9138a99bc235d478ea759d397e00aacd0b77fc742d7de951967b",
-    "plugin.dylib": "dccc4499d6626c99633324fb70a33e966bdc9109aef2398a3cbd4b7dd9f7fe87"
+    "plugin.dylib": "b12818c29e44c300aaa2b4d2bdd927b414263f9bc9cbf1b14e7970df9613d838"
   }
 }

@@ -1,15 +1,17 @@
 {
   "id": "web-feed",
   "name": "Web Feed",
-  "version": "1.3",
+  "version": "1.4",
   "author": "FlareStackIDE",
   "symbol": "globe",
   "summary": "下のフィードで Google などの Web ページを開く",
   "fileExtensions": [],
+  "category": "実行・ツール",
+  "permissions": ["network"],
   "files": ["plugin.dylib", "README.md"],
-  "apiVersion": 1,
+  "apiVersion": 2,
   "hashes": {
     "README.md": "a72a951b6a89b81ab13b43c4b81635f819e35fb8ac5d28cc25b729b80adf8745",
-    "plugin.dylib": "cee5fd64f40d8d1996b6861e4c1729ffbe65eeb131b7debf897e8ec900accced"
+    "plugin.dylib": "7c9916e3b6d26bff31534be4c19a37f74d91918c529eeefd3a61afce82e4b29f"
   }
 }

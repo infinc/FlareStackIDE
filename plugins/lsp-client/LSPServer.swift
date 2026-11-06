@@ -1,14 +1,63 @@
 import Foundation
 @testable import FlareStackIDE
 
+struct LSPServerSpec {
+    let id: String
+    let name: String
+    let setting: String
+    let candidates: [[String]]
+    let install: String
+}
+
 enum LSPLanguage {
-    static let table: [String: (id: String, candidates: [[String]])] = [
-        "py": ("python", [["pyright-langserver", "--stdio"], ["basedpyright-langserver", "--stdio"], ["pylsp"]]),
-        "pyi": ("python", [["pyright-langserver", "--stdio"], ["basedpyright-langserver", "--stdio"], ["pylsp"]]),
-        "pyw": ("python", [["pyright-langserver", "--stdio"], ["basedpyright-langserver", "--stdio"], ["pylsp"]]),
+    static let servers: [String: LSPServerSpec] = Dictionary(uniqueKeysWithValues: [
+        LSPServerSpec(id: "python", name: "Python", setting: "command",
+                      candidates: [["pyright-langserver", "--stdio"], ["basedpyright-langserver", "--stdio"], ["pylsp"]],
+                      install: "pip install pyright"),
+        LSPServerSpec(id: "typescript", name: "TypeScript / JavaScript", setting: "commandTypeScript",
+                      candidates: [["typescript-language-server", "--stdio"]],
+                      install: "npm install -g typescript typescript-language-server"),
+        LSPServerSpec(id: "swift", name: "Swift", setting: "commandSwift",
+                      candidates: [["sourcekit-lsp"], ["xcrun", "sourcekit-lsp"]],
+                      install: "xcode-select --install"),
+        LSPServerSpec(id: "rust", name: "Rust", setting: "commandRust",
+                      candidates: [["rust-analyzer"]], install: "rustup component add rust-analyzer"),
+        LSPServerSpec(id: "go", name: "Go", setting: "commandGo",
+                      candidates: [["gopls"]], install: "go install golang.org/x/tools/gopls@latest"),
+        LSPServerSpec(id: "clang", name: "C / C++ / Objective-C", setting: "commandC",
+                      candidates: [["clangd"], ["xcrun", "clangd"]], install: "xcode-select --install"),
+        LSPServerSpec(id: "ruby", name: "Ruby", setting: "commandRuby",
+                      candidates: [["ruby-lsp"], ["solargraph", "stdio"]], install: "gem install ruby-lsp"),
+        LSPServerSpec(id: "php", name: "PHP", setting: "commandPHP",
+                      candidates: [["intelephense", "--stdio"], ["phpactor", "language-server"]], install: "npm install -g intelephense"),
+        LSPServerSpec(id: "shell", name: "シェルスクリプト", setting: "commandShell",
+                      candidates: [["bash-language-server", "start"]], install: "npm install -g bash-language-server"),
+        LSPServerSpec(id: "lua", name: "Lua", setting: "commandLua",
+                      candidates: [["lua-language-server"]], install: "brew install lua-language-server"),
+    ].map { ($0.id, $0) })
+
+    static let table: [String: (id: String, server: String)] = [
+        "py": ("python", "python"), "pyi": ("python", "python"), "pyw": ("python", "python"),
+        "ts": ("typescript", "typescript"), "mts": ("typescript", "typescript"), "cts": ("typescript", "typescript"),
+        "tsx": ("typescriptreact", "typescript"), "js": ("javascript", "typescript"), "mjs": ("javascript", "typescript"),
+        "cjs": ("javascript", "typescript"), "jsx": ("javascriptreact", "typescript"),
+        "swift": ("swift", "swift"),
+        "rs": ("rust", "rust"),
+        "go": ("go", "go"),
+        "c": ("c", "clang"), "h": ("c", "clang"), "cpp": ("cpp", "clang"), "cc": ("cpp", "clang"), "cxx": ("cpp", "clang"),
+        "hpp": ("cpp", "clang"), "hh": ("cpp", "clang"), "hxx": ("cpp", "clang"), "m": ("objective-c", "clang"),
+        "mm": ("objective-cpp", "clang"),
+        "rb": ("ruby", "ruby"), "rake": ("ruby", "ruby"),
+        "php": ("php", "php"),
+        "sh": ("shellscript", "shell"), "bash": ("shellscript", "shell"),
+        "lua": ("lua", "lua"),
     ]
 
     static func language(for url: URL?) -> String? { url.flatMap { table[$0.pathExtension.lowercased()]?.id } }
+
+    static func server(for url: URL?) -> LSPServerSpec? {
+        url.flatMap { table[$0.pathExtension.lowercased()] }.flatMap { servers[$0.server] }
+    }
 }
 
 enum LoginShell {

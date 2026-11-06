@@ -1,15 +1,16 @@
 {
   "id": "color-preview",
   "name": "Color Preview",
-  "version": "1.1",
+  "version": "1.2",
   "author": "FlareStackIDE",
   "symbol": "paintbrush.pointed",
   "summary": "色の図・RGB・16進数で色を作り、値をコピー",
   "fileExtensions": [],
+  "category": "表示",
   "files": ["plugin.dylib", "README.md"],
-  "apiVersion": 1,
+  "apiVersion": 2,
   "hashes": {
     "README.md": "7584142423f344dfb49c135cb107f75be363d737297238b9d6877c679983ba41",
-    "plugin.dylib": "d58cf659be0962ec8562b9921af893c488bdbd49b49b34c242883f6c8700c718"
+    "plugin.dylib": "7678f2d9a50f1339d68bce4f05899075ee126fa0813bc161dd10df12173edb8a"
   }
 }

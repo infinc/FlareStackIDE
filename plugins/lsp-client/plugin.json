@@ -1,18 +1,29 @@
 {
   "id": "lsp-client",
   "name": "LSP Client",
-  "version": "1.0",
+  "version": "1.1",
   "author": "FlareStackIDE",
   "symbol": "brain",
-  "summary": "言語サーバーで診断・ホバー・定義へ移動・名前の変更・補完（Python）",
+  "summary": "言語サーバーで診断・ホバー・定義へ移動・名前の変更・補完（Python・TypeScript・Swift・Rust・Go・C/C++ など）",
   "fileExtensions": [],
+  "category": "言語・補完",
+  "permissions": ["process", "files"],
   "files": ["plugin.dylib", "README.md"],
   "settings": [
-    { "key": "command", "title": "言語サーバーのコマンド（空なら自動）", "type": "string" }
+    { "key": "command", "title": "Python のコマンド（空なら自動）", "type": "string" },
+    { "key": "commandTypeScript", "title": "TypeScript / JavaScript のコマンド（空なら自動）", "type": "string" },
+    { "key": "commandSwift", "title": "Swift のコマンド（空なら自動）", "type": "string" },
+    { "key": "commandRust", "title": "Rust のコマンド（空なら自動）", "type": "string" },
+    { "key": "commandGo", "title": "Go のコマンド（空なら自動）", "type": "string" },
+    { "key": "commandC", "title": "C / C++ / Objective-C のコマンド（空なら自動）", "type": "string" },
+    { "key": "commandRuby", "title": "Ruby のコマンド（空なら自動）", "type": "string" },
+    { "key": "commandPHP", "title": "PHP のコマンド（空なら自動）", "type": "string" },
+    { "key": "commandShell", "title": "シェルスクリプト のコマンド（空なら自動）", "type": "string" },
+    { "key": "commandLua", "title": "Lua のコマンド（空なら自動）", "type": "string" }
   ],
-  "apiVersion": 1,
+  "apiVersion": 2,
   "hashes": {
-    "README.md": "29e26338e4e9d72e15fd0484b8ffde813b40abe58d1c6dd372f23241581f15a8",
-    "plugin.dylib": "27dd96337f57ea656ed49fba163e8f9d7e5d4a95016a1a038de2f89c689eba1d"
+    "README.md": "fe9e9d5eae7cd531aa46b2f602ec0c4008766588cb6345a3a7b8d0b2d94590aa",
+    "plugin.dylib": "b7297065284d0c54814e737a74f56aea18cc2932646befb5c5af7314b420ddcd"
   }
 }

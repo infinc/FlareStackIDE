@@ -1,11 +1,13 @@
 {
   "id": "multi-cursor",
   "name": "Multi Cursor",
-  "version": "1.1",
+  "version": "1.2",
   "author": "FlareStackIDE",
   "symbol": "character.cursor.ibeam",
   "summary": "同じ文字列を検索して、開いているファイルや全てのファイルをまとめて変換",
   "fileExtensions": [],
+  "category": "編集",
+  "permissions": ["files"],
   "files": ["plugin.dylib", "README.md"],
   "settings": [
     {
@@ -15,9 +17,9 @@
       "default": "#FFD60A"
     }
   ],
-  "apiVersion": 1,
+  "apiVersion": 2,
   "hashes": {
     "README.md": "7e3702ae1775dfd66d4bfa5cf21bd5ce33894aaf0558858801e60b032c8bb2ad",
-    "plugin.dylib": "8b2482a59ab7e75c6d68e32d3cb9dcc5996298a5fc410eb66ed74de110a8ed51"
+    "plugin.dylib": "01b1a1da2fac92c1ee48062596cd4e103d543a912a48cdc8ede5c8449c418f12"
   }
 }

@@ -14,7 +14,7 @@ final class ConflictChoice: NSButton {
 }
 
 final class MergeResolverAddon: NSObject, TextAddon, CommandProviding {
-    static let gitChanged = Notification.Name("FlareStackIDE.gitChanged")
+    static let gitChanged = PluginEvent.gitChanged
     private weak var code: CodeEditing?
     private var conflicts: [Conflict] = []
     private var bars: [NSStackView] = []

@@ -24,7 +24,7 @@ final class InterpolateVariableAddon: TextAddon {
     }
 
     var priority: Int { 10 }
-    private static let completionItems = Notification.Name("FlareStackIDE.completionItems")
+    private static let completionItems = PluginEvent.completionItems
 
     @objc private func scrolled() { completer.hide() }
 

@@ -13,11 +13,11 @@ final class LineNumberRuler: NSRulerView {
     private var drawn: [(line: Int, top: CGFloat)] = []
     var keepVisible = true
 
-    private static let bookmarksChanged = Notification.Name("FlareStackIDE.bookmarks")
-    private static let bookmarksRequest = Notification.Name("FlareStackIDE.bookmarksRequest")
-    private static let foldMarks = Notification.Name("FlareStackIDE.foldMarks")
-    private static let foldMarksRequest = Notification.Name("FlareStackIDE.foldMarksRequest")
-    private static let rulerClicked = Notification.Name("FlareStackIDE.rulerClicked")
+    private static let bookmarksChanged = PluginEvent.bookmarks
+    private static let bookmarksRequest = PluginEvent.bookmarksRequest
+    private static let foldMarks = PluginEvent.foldMarks
+    private static let foldMarksRequest = PluginEvent.foldMarksRequest
+    private static let rulerClicked = PluginEvent.rulerClicked
 
     private var trailing: CGFloat { foldActive ? 18 : 8 }
 

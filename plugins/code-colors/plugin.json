@@ -6,6 +6,7 @@
   "symbol": "paintbrush.pointed",
   "summary": "主要なプログラミング言語のコードに色をつける",
   "fileExtensions": ["html", "htm", "xhtml", "vue", "svelte", "xml", "svg", "plist", "xsd", "xsl", "rss", "atom", "storyboard", "xib", "css", "scss", "less", "sass", "js", "mjs", "cjs", "jsx", "javascript", "ts", "tsx", "mts", "cts", "typescript", "json", "jsonc", "json5", "geojson", ".babelrc", ".prettierrc", ".eslintrc", "py", "pyw", "pyi", "python", "java", "kt", "kts", "kotlin", "swift", "c", "h", "cpp", "cc", "cxx", "hpp", "hh", "hxx", "ino", "c++", "m", "mm", "objc", "objective-c", "cs", "csharp", "go", "golang", "rs", "rust", "dart", "rb", "rake", "gemspec", "ruby", "gemfile", "rakefile", "podfile", "php", "lua", "sh", "bash", "zsh", "ksh", "shell", "console", ".bashrc", ".zshrc", ".profile", ".bash_profile", ".zprofile", "sql", "yaml", "yml", "toml", "http", "rest", "ini", "cfg", "conf", "properties", "env", ".env", ".gitconfig", ".editorconfig", "md", "markdown", "mdown", "mkd", "dockerfile", "docker", "makefile", "mk", "make"],
+  "category": "表示",
   "files": ["main.js", "README.md"],
   "hashes": {
     "README.md": "1ff47c1752ae505676538fdb25db9d7fb15d27ae3418bd79f4073b7dee29ab83",

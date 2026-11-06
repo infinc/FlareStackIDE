@@ -192,9 +192,29 @@ enum CodeView {
         if let rulers { textView.enclosingScrollView?.rulersVisible = rulers }
     }
 
-    static func diskText(_ url: URL) -> String? {
-        guard let data = try? Data(contentsOf: url) else { return nil }
-        return String(data: data, encoding: .utf8)
+    static func diskText(_ url: URL) -> String? { TextFile.read(url)?.text }
+
+    static func visibleRange(_ textView: NSTextView) -> NSRange? {
+        guard let layout = textView.layoutManager, let container = textView.textContainer else { return nil }
+        let rect = textView.visibleRect.offsetBy(dx: -textView.textContainerOrigin.x, dy: -textView.textContainerOrigin.y)
+        let glyphs = layout.glyphRange(forBoundingRectWithoutAdditionalLayout: rect, in: container)
+        return layout.characterRange(forGlyphRange: glyphs, actualGlyphRange: nil)
+    }
+
+    static func highlight(_ textView: NSTextView, with highlighter: Highlighter?, file: URL?) {
+        guard let layout = textView.layoutManager else { return }
+        let text = textView.string
+        layout.removeTemporaryAttribute(.foregroundColor, forCharacterRange: NSRange(location: 0, length: (text as NSString).length))
+        guard let highlighter, let file else { return }
+        let visible = Highlighter.needsWindow((text as NSString).length) ? visibleRange(textView) : nil
+        for span in highlighter.spans(text, file: file, visible: visible) {
+            layout.addTemporaryAttribute(.foregroundColor, value: span.color, forCharacterRange: span.range)
+        }
+    }
+
+    static func onScroll(_ scroll: NSScrollView, _ observer: Any, _ selector: Selector) {
+        scroll.contentView.postsBoundsChangedNotifications = true
+        NotificationCenter.default.addObserver(observer, selector: selector, name: NSView.boundsDidChangeNotification, object: scroll.contentView)
     }
 
     static func style(_ textView: NSTextView) {
@@ -261,6 +281,7 @@ final class SplitPane: NSView, NSTextViewDelegate {
             bodyHost.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
         host(scroll, in: bodyHost)
+        CodeView.onScroll(scroll, self, #selector(scrolled))
         applyPlugins()
         applySettings()
     }
@@ -281,6 +302,7 @@ final class SplitPane: NSView, NSTextViewDelegate {
         buffers[url] = buffer
         if tabs[url] == nil {
             let tab = TabItemView(title: url.lastPathComponent, closable: true)
+            tab.url = url
             tab.toolTip = url.path
             tab.draggable = true
             tab.tint = tabColor?(url)
@@ -327,6 +349,7 @@ final class SplitPane: NSView, NSTextViewDelegate {
         left.target = self
         left.representedObject = url
         menu.addItem(left)
+        if let tab = tabs[url], let pin = tab.onPin { menu.addItem(TabItemView.pinItem(tab.pinned, pin)) }
         let close = NSMenuItem(title: "閉じる", action: #selector(closeItem(_:)), keyEquivalent: "")
         close.target = self
         close.representedObject = url
@@ -348,7 +371,7 @@ final class SplitPane: NSView, NSTextViewDelegate {
         if current?.url == url { storeCurrent() }
         if let buffer = buffers[url], buffer.dirty, buffer.editable {
             do {
-                try buffer.text.write(to: url, atomically: true, encoding: .utf8)
+                try buffer.save()
             } catch {
                 if let window { NSAlert(error: error).beginSheetModal(for: window) }
                 return
@@ -412,7 +435,7 @@ final class SplitPane: NSView, NSTextViewDelegate {
 
     func reloadExternal(_ changed: (URL) -> Bool) {
         for (url, buffer) in buffers where buffer.editable && !buffer.dirty && changed(url) {
-            guard let text = CodeView.diskText(url) else { continue }
+            guard let text = buffer.diskText() else { continue }
             if buffer === current {
                 guard text != textView.string, !textView.hasMarkedText() else { continue }
                 addons.each { $0.dismiss() }
@@ -432,8 +455,7 @@ final class SplitPane: NSView, NSTextViewDelegate {
         storeCurrent()
         for buffer in buffers.values where buffer.dirty && buffer.editable {
             do {
-                try buffer.text.write(to: buffer.url, atomically: true, encoding: .utf8)
-                buffer.dirty = false
+                try buffer.save()
             } catch {
                 return error
             }
@@ -535,13 +557,20 @@ final class SplitPane: NSView, NSTextViewDelegate {
         recolorWork?.cancel()
         recolorWork = nil
         guard let layout = textView.layoutManager else { return }
-        let text = textView.string
-        layout.removeTemporaryAttribute(.foregroundColor, forCharacterRange: NSRange(location: 0, length: (text as NSString).length))
-        defer { addons.decorate(layout) }
-        guard let highlighter, let url = current?.url else { return }
-        for span in highlighter.spans(text, file: url) {
-            layout.addTemporaryAttribute(.foregroundColor, value: span.color, forCharacterRange: span.range)
-        }
+        CodeView.highlight(textView, with: highlighter, file: current?.url)
+        addons.decorate(layout)
+    }
+
+    private func scheduleRecolor() {
+        recolorWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.recolor() }
+        recolorWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12, execute: work)
+    }
+
+    @objc private func scrolled() {
+        guard highlighter != nil, Highlighter.needsWindow((textView.string as NSString).length) else { return }
+        scheduleRecolor()
     }
 
     func detachAddons() { addons.detachAll() }
@@ -557,20 +586,34 @@ final class SplitPane: NSView, NSTextViewDelegate {
 
     func textDidChange(_ notification: Notification) {
         addons.each { $0.textChanged() }
-        if highlighter != nil {
-            recolorWork?.cancel()
-            let work = DispatchWorkItem { [weak self] in self?.recolor() }
-            recolorWork = work
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.12, execute: work)
-        }
+        if highlighter != nil { scheduleRecolor() }
         guard let current, current.editable else { return }
         current.text = textView.string
         ext?.update(text: current.text)
         if Settings.autosaveImmediate {
-            current.dirty = (try? current.text.write(to: current.url, atomically: false, encoding: .utf8)) == nil
+            current.dirty = (try? current.save(atomically: false)) == nil
         } else {
             current.dirty = true
         }
+        onChange?()
+    }
+}
+
+extension SplitPane: TabClosing {
+    func closeTabs(keeping kept: Set<URL>) {
+        guard !kept.isEmpty else { return closeAll() }
+        storeCurrent()
+        let closing = urls.filter { !kept.contains($0) }
+        for url in closing {
+            guard let buffer = buffers[url], buffer.dirty, buffer.editable else { continue }
+            do {
+                try buffer.save()
+            } catch {
+                if let window { NSAlert(error: error).beginSheetModal(for: window) }
+                return
+            }
+        }
+        closing.forEach(remove)
         onChange?()
     }
 }

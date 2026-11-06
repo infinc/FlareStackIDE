@@ -1,18 +1,20 @@
 {
   "id": "git-blame",
   "name": "Git Blame",
-  "version": "1.2",
+  "version": "1.3",
   "author": "FlareStackIDE",
   "symbol": "person.text.rectangle",
   "summary": "カーソル行の作者・日付・コミットを行末に表示",
   "fileExtensions": [],
+  "category": "Git",
+  "permissions": ["process"],
   "files": ["plugin.dylib", "README.md"],
   "settings": [
     { "key": "textColor", "title": "文字色", "type": "color" }
   ],
-  "apiVersion": 1,
+  "apiVersion": 2,
   "hashes": {
     "README.md": "b3c8fc500b3720a44e30019f496b13472075728539634bfa74b681e2f4e6a166",
-    "plugin.dylib": "e5242a36cde9d228d72c7037430b21ed6f5fd5c1561db9bd425d5063beeb5344"
+    "plugin.dylib": "4ff7a2bd6bfd7a2a5080d2a64d1400159f32f36dad9c7de3f2aee8f871904a5b"
   }
 }

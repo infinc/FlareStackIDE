@@ -20,6 +20,56 @@ struct PluginInfo: Codable {
     var hashes: [String: String]?
     var apiVersion: Int?
     var requires: [String]?
+    var permissions: [String]?
+    var category: String?
+
+    var isNative: Bool { files?.contains(NativePlugins.binary) ?? (apiVersion != nil) }
+}
+
+enum PluginPermission {
+    static let titles: [String: String] = [
+        "network": "インターネットへの接続",
+        "files": "ファイルの読み書き",
+        "process": "外部コマンドの実行",
+        "clipboard": "クリップボードの読み取り",
+    ]
+
+    static func title(_ key: String) -> String { titles[key] ?? key }
+
+    static func list(_ info: PluginInfo) -> [String] { (info.permissions ?? []).map(title) }
+
+    static func summary(_ info: PluginInfo) -> String {
+        var parts = list(info)
+        if info.isNative { parts.insert("Swift のコード（Mac 上で本体と同じ操作ができます）", at: 0) }
+        return parts.isEmpty ? "特別な権限は使いません" : parts.joined(separator: "、")
+    }
+
+    private static func key(_ id: String) -> String { "Plugins.Granted.\(id)" }
+
+    static func granted(_ id: String) -> Set<String> {
+        if let saved = UserDefaults.standard.stringArray(forKey: key(id)) { return Set(saved) }
+        return Set(PluginStore.installed(id)?.permissions ?? [])
+    }
+
+    static func grant(_ info: PluginInfo) { UserDefaults.standard.set(info.permissions ?? [], forKey: key(info.id)) }
+
+    static func revoke(_ id: String) { UserDefaults.standard.removeObject(forKey: key(id)) }
+
+    static func added(_ info: PluginInfo) -> [String] {
+        let have = PluginStore.isInstalled(info.id) ? granted(info.id) : []
+        return (info.permissions ?? []).filter { !have.contains($0) }
+    }
+
+    static func confirm(_ info: PluginInfo, _ keys: [String]) -> Bool {
+        let alert = NSAlert()
+        let updating = PluginStore.isInstalled(info.id)
+        alert.messageText = updating ? "\(info.name) が新しい権限を求めています" : "\(info.name) に次の権限を許可しますか？"
+        alert.informativeText = keys.map { "・" + title($0) }.joined(separator: "\n")
+            + (info.isNative ? "\n\nSwift で動くプラグインのため、Mac 上で本体と同じ操作ができます。" : "")
+        alert.addButton(withTitle: updating ? "許可して更新" : "許可してインストール")
+        alert.addButton(withTitle: "キャンセル")
+        return alert.runModal() == .alertFirstButtonReturn
+    }
 }
 
 struct PluginSetting: Codable {
@@ -60,6 +110,8 @@ enum PluginStore {
     private static var detailsCache: [String: String] = [:]
     private static var highlighters: [String: Highlighter] = [:]
     private static var notified: [String: String] = [:]
+    private static var preapproved: Set<String> = []
+    static let otherCategory = "その他"
 
     static var source: URL {
         var text = UserDefaults.standard.string(forKey: "Plugins.Source") ?? defaultSource
@@ -245,7 +297,8 @@ enum PluginStore {
     private static func notifyUpdates() {
         for id in installedIDs where hasUpdate(id) {
             guard let local = installed(id), let latest = latestVersion(id), !isBusy(id) else { continue }
-            if Settings.pluginAutoUpdate {
+            let grows = remote.first { $0.id == id }.map { !PluginPermission.added($0).isEmpty } ?? false
+            if Settings.pluginAutoUpdate && !grows {
                 update(id)
             } else if notified[id] != latest {
                 notified[id] = latest
@@ -302,6 +355,10 @@ enum PluginStore {
             fetch("\(id)/\(PluginTrust.signatureFile)") { signatureResult in
                 let signature = try? signatureResult.get()
                 do { try PluginTrust.checkManifest(data, signature: signature, name: info.name) } catch { return finish(error) }
+                let asked = PluginPermission.added(info)
+                if !asked.isEmpty, preapproved.remove(id) == nil, !PluginPermission.confirm(info, asked) {
+                    return finish(failure("\(info.name) の権限が許可されなかったため、インストールしませんでした"))
+                }
                 let missing = (info.requires ?? []).filter { !isInstalled($0) }
                 installChain(missing, visiting: visiting.union([id])) { error in
                     if let error {
@@ -348,6 +405,7 @@ enum PluginStore {
                 try fm.createDirectory(at: directory, withIntermediateDirectories: true)
                 if fm.fileExists(atPath: folder(id).path) { try fm.removeItem(at: folder(id)) }
                 try fm.moveItem(at: staging, to: folder(id))
+                PluginPermission.grant(info)
                 finish(nil)
             } catch {
                 finish(error)
@@ -359,7 +417,20 @@ enum PluginStore {
         guard isValidID(id) else { return }
         try FileManager.default.removeItem(at: folder(id))
         detailsCache[id] = nil
+        PluginPermission.revoke(id)
         changed()
+    }
+
+    static func preapprove(_ ids: [String]) { preapproved.formUnion(ids) }
+
+    static func category(_ id: String) -> String {
+        installed(id)?.category ?? remote.first { $0.id == id }?.category ?? otherCategory
+    }
+
+    static var categories: [String] {
+        var seen: [String] = []
+        for info in catalog where !seen.contains(category(info.id)) { seen.append(category(info.id)) }
+        return seen.filter { $0 != otherCategory } + (seen.contains(otherCategory) ? [otherCategory] : [])
     }
 
     static func details(_ id: String, completion: @escaping (String) -> Void) {
@@ -377,10 +448,11 @@ enum PluginStore {
         }
     }
 
-    static func search(_ query: String) -> [PluginInfo] {
+    static func search(_ query: String, category: String? = nil) -> [PluginInfo] {
         let words = query.lowercased().split(separator: " ").map(String.init)
         return catalog.filter { info in
-            let text = [info.name, info.summary, info.author, info.fileExtensions.joined(separator: " ")]
+            guard category == nil || self.category(info.id) == category else { return false }
+            let text = [info.id, info.name, info.summary, info.author, self.category(info.id), info.fileExtensions.joined(separator: " ")]
                 .joined(separator: " ").lowercased()
             return words.allSatisfy(text.contains)
         }
@@ -391,7 +463,7 @@ enum PluginStore {
         for id in installedIDs {
             guard let info = installed(id), info.fileExtensions.contains(where: keys.contains) else { continue }
             if let cached = highlighters[id] { return cached }
-            if let made = Highlighter(folder: folder(id)) {
+            if let made = Highlighter(folder: folder(id), name: info.name) {
                 highlighters[id] = made
                 return made
             }
@@ -445,11 +517,13 @@ enum PluginStore {
     }
 }
 
-final class PluginRow: NSView, HoverRefreshing {
+extension Array {
+    subscript(safe index: Int) -> Element? { indices.contains(index) ? self[index] : nil }
+}
+
+final class PluginRow: NSView {
     var onOpen: (() -> Void)?
     var onAction: (() -> Void)?
-    private var tracking: NSTrackingArea?
-    private var hovered = false { didSet { needsDisplay = true } }
 
     init(info: PluginInfo) {
         super.init(frame: .zero)
@@ -486,11 +560,12 @@ final class PluginRow: NSView, HoverRefreshing {
         texts.spacing = 2
         texts.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         texts.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        let button = NSButton(title: PluginStore.actionTitle(info.id), target: self, action: #selector(actionClicked))
+        let action = PluginStore.actionTitle(info.id)
+        let button = NSButton(title: action, target: self, action: #selector(actionClicked))
         button.controlSize = .small
         button.bezelStyle = .rounded
         button.font = .systemFont(ofSize: 11)
-        button.isEnabled = !PluginStore.isBusy(info.id) && button.title != "非対応"
+        button.isEnabled = !PluginStore.isBusy(info.id) && action != "非対応"
         button.setContentHuggingPriority(.required, for: .horizontal)
         button.setContentCompressionResistancePriority(.required, for: .horizontal)
 
@@ -514,30 +589,8 @@ final class PluginRow: NSView, HoverRefreshing {
 
     required init?(coder: NSCoder) { fatalError() }
 
-    override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-        if let tracking { removeTrackingArea(tracking) }
-        let area = NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeInKeyWindow], owner: self)
-        addTrackingArea(area)
-        tracking = area
-    }
-
-    override func mouseEntered(with event: NSEvent) { hovered = true }
-    override func mouseExited(with event: NSEvent) { hovered = false }
-
-    func refreshHover() {
-        let visible = ButtonHover.isUnderMouse(self)
-        if hovered != visible { hovered = visible }
-    }
-
     override func mouseUp(with event: NSEvent) {
         if bounds.contains(convert(event.locationInWindow, from: nil)) { onOpen?() }
-    }
-
-    override func draw(_ dirtyRect: NSRect) {
-        guard hovered else { return }
-        NSColor.selectedContentBackgroundColor.withAlphaComponent(0.25).setFill()
-        NSBezierPath(roundedRect: bounds.insetBy(dx: 4, dy: 1), xRadius: 6, yRadius: 6).fill()
     }
 
     @objc private func actionClicked() { onAction?() }
@@ -547,11 +600,18 @@ final class PluginList: NSView {
     var onOpen: ((String) -> Void)?
     var onError: ((Error) -> Void)?
     private let search = NSSearchField()
+    private let categoryPopup = NSPopUpButton()
     private let list = NSStackView()
+    private static let categoryKey = "Plugins.Category"
 
     init() {
         super.init(frame: .zero)
         search.placeholderString = "プラグインを検索"
+        categoryPopup.controlSize = .small
+        categoryPopup.font = .systemFont(ofSize: 11)
+        categoryPopup.target = self
+        categoryPopup.action = #selector(categoryChanged)
+        categoryPopup.translatesAutoresizingMaskIntoConstraints = false
         search.sendsSearchStringImmediately = true
         search.target = self
         search.action = #selector(reload)
@@ -575,6 +635,7 @@ final class PluginList: NSView {
         scroll.translatesAutoresizingMaskIntoConstraints = false
         addSubview(search)
         addSubview(refresh)
+        addSubview(categoryPopup)
         addSubview(scroll)
         NSLayoutConstraint.activate([
             search.topAnchor.constraint(equalTo: topAnchor, constant: 8),
@@ -582,7 +643,10 @@ final class PluginList: NSView {
             refresh.leadingAnchor.constraint(equalTo: search.trailingAnchor, constant: 6),
             refresh.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
             refresh.centerYAnchor.constraint(equalTo: search.centerYAnchor),
-            scroll.topAnchor.constraint(equalTo: search.bottomAnchor, constant: 6),
+            categoryPopup.topAnchor.constraint(equalTo: search.bottomAnchor, constant: 6),
+            categoryPopup.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+            categoryPopup.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -8),
+            scroll.topAnchor.constraint(equalTo: categoryPopup.bottomAnchor, constant: 4),
             scroll.leadingAnchor.constraint(equalTo: leadingAnchor),
             scroll.trailingAnchor.constraint(equalTo: trailingAnchor),
             scroll.bottomAnchor.constraint(equalTo: bottomAnchor),
@@ -611,6 +675,25 @@ final class PluginList: NSView {
 
     @objc private func refreshClicked() { PluginStore.refreshCatalog() }
 
+    @objc private func categoryChanged() {
+        let index = categoryPopup.indexOfSelectedItem
+        UserDefaults.standard.set(index > 0 ? PluginStore.categories[safe: index - 1] : nil, forKey: Self.categoryKey)
+        reload()
+    }
+
+    private var selectedCategory: String? {
+        guard let saved = UserDefaults.standard.string(forKey: Self.categoryKey), PluginStore.categories.contains(saved) else { return nil }
+        return saved
+    }
+
+    private func fillCategories() {
+        let categories = PluginStore.categories
+        categoryPopup.removeAllItems()
+        categoryPopup.addItem(withTitle: "すべてのカテゴリ")
+        categoryPopup.addItems(withTitles: categories)
+        categoryPopup.selectItem(at: selectedCategory.flatMap { categories.firstIndex(of: $0) }.map { $0 + 1 } ?? 0)
+    }
+
     private static func confirm(_ title: String, _ message: String, _ button: String, in window: NSWindow?) -> Bool {
         let alert = NSAlert()
         alert.messageText = title
@@ -626,7 +709,10 @@ final class PluginList: NSView {
             Toasts.post("インストールできるプラグインはありません", in: window)
             return
         }
-        guard Self.confirm("全てのプラグインをインストールしますか？", "\(targets.count) 個のプラグインをインストールします", "全てインストール", in: window) else { return }
+        let asked = Set(targets.flatMap { $0.permissions ?? [] })
+        let note = asked.isEmpty ? "" : "\n\n次の権限を許可します:\n" + asked.sorted().map { "・" + PluginPermission.title($0) }.joined(separator: "\n")
+        guard Self.confirm("全てのプラグインをインストールしますか？", "\(targets.count) 個のプラグインをインストールします" + note, "全てインストール", in: window) else { return }
+        PluginStore.preapprove(targets.map(\.id))
         let group = DispatchGroup()
         var failed: [String] = []
         for info in targets {
@@ -669,14 +755,20 @@ final class PluginList: NSView {
         if let error = PluginStore.catalogError {
             list.addArrangedSubview(header("プラグイン一覧を取得できませんでした: \(error.localizedDescription)"))
         }
-        let found = PluginStore.search(search.stringValue)
+        fillCategories()
+        let found = PluginStore.search(search.stringValue, category: selectedCategory)
         if found.isEmpty {
             if !PluginStore.loading { list.addArrangedSubview(header("一致するプラグインはありません")) }
             return
         }
         let installed = found.filter { PluginStore.isInstalled($0.id) }
         let available = found.filter { !PluginStore.isInstalled($0.id) }
-        for (title, plugins) in [("インストール済み", installed), ("利用可能", available)] where !plugins.isEmpty {
+        var sections = [("インストール済み", installed)]
+        for category in PluginStore.categories {
+            let plugins = available.filter { PluginStore.category($0.id) == category }
+            sections.append((selectedCategory == nil ? "利用可能 — \(category)" : "利用可能", plugins))
+        }
+        for (title, plugins) in sections where !plugins.isEmpty {
             list.addArrangedSubview(header(title))
             for info in plugins {
                 let row = PluginRow(info: info)
@@ -698,9 +790,6 @@ final class PluginList: NSView {
                 row.widthAnchor.constraint(equalTo: list.widthAnchor).isActive = true
             }
         }
-        DispatchQueue.main.async { [weak self] in
-            self?.list.arrangedSubviews.compactMap { $0 as? PluginRow }.forEach { $0.refreshHover() }
-        }
     }
 }
 
@@ -710,6 +799,7 @@ final class PluginPage: NSView {
     private let icon = NSImageView()
     private let name = NSTextField(labelWithString: "")
     private let meta = NSTextField(labelWithString: "")
+    private let access = NSTextField(wrappingLabelWithString: "")
     private let button = NSButton(title: "", target: nil, action: nil)
     private let remove = NSButton(title: "アンインストール", target: nil, action: nil)
     private let text = NSTextView()
@@ -728,7 +818,10 @@ final class PluginPage: NSView {
         remove.action = #selector(removeClicked)
         let buttons = NSStackView(views: [button, remove])
         buttons.spacing = 8
-        let titles = NSStackView(views: [name, meta, buttons])
+        access.font = .systemFont(ofSize: 11)
+        access.textColor = .secondaryLabelColor
+        access.preferredMaxLayoutWidth = 460
+        let titles = NSStackView(views: [name, meta, access, buttons])
         titles.orientation = .vertical
         titles.alignment = .leading
         titles.spacing = 6
@@ -778,9 +871,11 @@ final class PluginPage: NSView {
         icon.image = PluginStore.symbol(info.symbol, size: 40)
         name.stringValue = info.name
         let notes = [PluginStore.requirementNames(info), PluginStore.compatibility(info)].compactMap { $0 }
-        meta.stringValue = (["v\(info.version)", info.author, state] + notes).joined(separator: "　·　")
-        button.title = PluginStore.actionTitle(id, long: true)
-        button.isEnabled = !PluginStore.isBusy(id) && button.title != "非対応"
+        meta.stringValue = (["v\(info.version)", info.author, PluginStore.category(id), state] + notes).joined(separator: "　·　")
+        access.stringValue = "権限: " + PluginPermission.summary(info)
+        let action = PluginStore.actionTitle(id, long: true)
+        button.title = action
+        button.isEnabled = !PluginStore.isBusy(id) && action != "非対応"
         remove.isHidden = !PluginStore.hasUpdate(id)
         remove.isEnabled = button.isEnabled
         PluginStore.details(id) { [weak self] markdown in
@@ -804,15 +899,25 @@ final class Highlighter {
     private let context = JSContext()!
     private let function: JSValue
     private let paletteFunction: JSValue?
+    private let name: String
     private var palette: [NSColor] = []
     private var paletteDark: Bool?
+    private var failures = 0
+    private var reported = false
     static let limit = 400_000
+    static let windowThreshold = 150_000
+    private static let windowMargin = 20_000
+    private static let maxFailures = 3
 
-    init?(folder: URL) {
+    init?(folder: URL, name: String) {
         let file = folder.appendingPathComponent("main.js")
         guard let script = try? String(contentsOf: file, encoding: .utf8) else { return nil }
+        self.name = name
         context.evaluateScript(script, withSourceURL: file)
-        guard context.exception == nil, let highlight = context.objectForKeyedSubscript("highlight"), highlight.isObject else { return nil }
+        guard context.exception == nil, let highlight = context.objectForKeyedSubscript("highlight"), highlight.isObject else {
+            PluginFault.report(name, context.exception?.toString() ?? "highlight が見つかりません")
+            return nil
+        }
         function = highlight
         paletteFunction = context.objectForKeyedSubscript("palette").flatMap { $0.isObject ? $0 : nil }
     }
@@ -826,26 +931,64 @@ final class Highlighter {
         return palette
     }
 
-    func spans(_ text: String, file: URL) -> [(range: NSRange, color: NSColor)] {
-        let length = (text as NSString).length
-        guard length <= Self.limit else { return [] }
+    static func needsWindow(_ length: Int) -> Bool { length > windowThreshold }
+
+    func spans(_ text: String, file: URL, visible: NSRange? = nil) -> [(range: NSRange, color: NSColor)] {
+        guard failures < Self.maxFailures else { return [] }
+        let whole = text as NSString
+        let length = whole.length
+        var source = text
+        var offset = 0
+        if Self.needsWindow(length) {
+            guard let visible else { return [] }
+            let start = max(visible.location - Self.windowMargin, 0)
+            let end = min(NSMaxRange(visible) + Self.windowMargin, length)
+            let range = whole.lineRange(for: NSRange(location: start, length: max(end - start, 0)))
+            source = whole.substring(with: range)
+            offset = range.location
+        }
         var palette = colors(dark: Settings.editorIsDark)
         if let custom = Settings.tokenPalette {
             for (i, color) in custom.enumerated() where palette.indices.contains(i) { if let color { palette[i] = color } }
         }
         context.exception = nil
-        let result = function.call(withArguments: [text, file.pathExtension.lowercased(), file.lastPathComponent.lowercased()])
-        guard context.exception == nil, let numbers = result?.toArray() as? [NSNumber] else { return [] }
+        let result = function.call(withArguments: [source, file.pathExtension.lowercased(), file.lastPathComponent.lowercased()])
+        if let exception = context.exception {
+            failures += 1
+            if !reported {
+                reported = true
+                PluginFault.report(name, exception.toString(), stopped: failures >= Self.maxFailures)
+            } else if failures >= Self.maxFailures {
+                PluginFault.report(name, exception.toString(), stopped: true)
+            }
+            return []
+        }
+        failures = 0
+        guard let numbers = result?.toArray() as? [NSNumber] else { return [] }
         var spans: [(range: NSRange, color: NSColor)] = []
         spans.reserveCapacity(numbers.count / 3)
         var i = 0
         while i + 2 < numbers.count {
-            let start = numbers[i].intValue, count = numbers[i + 1].intValue, kind = numbers[i + 2].intValue
+            let start = numbers[i].intValue + offset, count = numbers[i + 1].intValue, kind = numbers[i + 2].intValue
             i += 3
-            guard start >= 0, count > 0, start + count <= length, palette.indices.contains(kind) else { continue }
+            guard start >= offset, count > 0, start + count <= length, palette.indices.contains(kind) else { continue }
             spans.append((NSRange(location: start, length: count), palette[kind]))
         }
         return spans
+    }
+}
+
+enum PluginFault {
+    private static var shown: Set<String> = []
+
+    static func report(_ name: String, _ message: String, stopped: Bool = false) {
+        let key = name + (stopped ? ".stopped" : "")
+        guard !shown.contains(key) else { return }
+        shown.insert(key)
+        DispatchQueue.main.async {
+            Toasts.post(stopped ? "\(name) を一時的に止めました" : "\(name) でエラーが起きました",
+                        message: (stopped ? "エラーが続いたため、再起動するまで使いません。\n" : "") + message)
+        }
     }
 }
 
@@ -919,9 +1062,12 @@ final class PluginManagerView: NSView {
         name.font = .systemFont(ofSize: 13, weight: .semibold)
         var detail = "v\(info.version)　·　\(info.author)"
         if PluginStore.hasUpdate(info.id), let latest = PluginStore.latestVersion(info.id) { detail += "　·　v\(latest) があります" }
+        let stopped = PluginGuard.isDisabled(info.id)
+        if stopped { detail += "　·　続けて終了したため停止中" }
         let meta = NSTextField(labelWithString: detail)
         meta.font = .systemFont(ofSize: 11)
-        meta.textColor = PluginStore.hasUpdate(info.id) ? .systemOrange : .secondaryLabelColor
+        meta.textColor = PluginStore.hasUpdate(info.id) || stopped ? .systemOrange : .secondaryLabelColor
+        meta.toolTip = "権限: " + PluginPermission.summary(info)
         let texts = NSStackView(views: [name, meta])
         texts.orientation = .vertical
         texts.alignment = .leading
@@ -935,6 +1081,7 @@ final class PluginManagerView: NSView {
             update.keyEquivalent = ""
             views.append(update)
         }
+        if stopped { views.append(PluginActionButton(title: "有効にする") { PluginGuard.enable(info.id) }) }
         let settings = PluginActionButton(title: "設定") { [weak self] in
             Popups.show("plugin-settings-\(info.id)", title: "\(info.name) の設定", over: self?.window) { PluginSettingsView(id: info.id) }
         }
@@ -1170,6 +1317,7 @@ final class ScriptExtension: NSObject, EditorExtension, WKNavigationDelegate {
         let result = renderer.call(withArguments: [latest, settings])
         let html: String
         if let exception = context.exception {
+            PluginFault.report(barTitle.stringValue, exception.toString())
             html = "<pre style=\"color:#d33;white-space:pre-wrap\">\(Self.escape(exception.toString()))</pre>"
         } else {
             html = result?.toString() ?? ""
@@ -1372,7 +1520,7 @@ final class PluginSettingsView: NSView {
         }
         for (setting, check) in checks { check.state = PluginStore.setting(id, setting.key) == "true" ? .on : .off }
         for (setting, popup) in popups {
-            if let value = PluginStore.setting(id, setting.key) { popup.selectItem(withTitle: value) }
+            if let value = PluginStore.setting(id, setting.key), let index = setting.options?.firstIndex(of: value) { popup.selectItem(at: index) }
         }
     }
 
@@ -1400,6 +1548,6 @@ final class PluginSettingsView: NSView {
     @objc private func changed() {
         for (setting, field) in fields { Settings.setPluginValue(id, setting.key, field.stringValue) }
         for (setting, check) in checks { Settings.setPluginValue(id, setting.key, check.state == .on ? "true" : "false") }
-        for (setting, popup) in popups { Settings.setPluginValue(id, setting.key, popup.titleOfSelectedItem) }
+        for (setting, popup) in popups { Settings.setPluginValue(id, setting.key, setting.options?[safe: popup.indexOfSelectedItem]) }
     }
 }

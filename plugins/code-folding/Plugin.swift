@@ -50,9 +50,9 @@ final class FoldChip: NSButton {
 
 final class CodeFoldingAddon: NSObject, TextAddon {
     static let pluginID = "code-folding"
-    private static let marks = Notification.Name("FlareStackIDE.foldMarks")
-    private static let marksRequest = Notification.Name("FlareStackIDE.foldMarksRequest")
-    private static let rulerClicked = Notification.Name("FlareStackIDE.rulerClicked")
+    private static let marks = PluginEvent.foldMarks
+    private static let marksRequest = PluginEvent.foldMarksRequest
+    private static let rulerClicked = PluginEvent.rulerClicked
 
     private weak var code: CodeEditing?
     private let finder: FoldRegions
