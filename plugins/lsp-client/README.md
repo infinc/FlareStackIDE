@@ -34,6 +34,12 @@ Language Server Protocol（LSP）の言語サーバーとつないで、コー�
 
 どの操作もコマンドパレット（⌘⇧P）の「LSP: …」から実行でき、Shortcut プラグインでキーを割り当てることもできます。「LSP: 言語サーバーを再起動」でサーバーを起動し直せます。
 
+## Swift のプロジェクト
+
+sourcekit-lsp はビルドの設定がないと1ファイルだけで解析するため、同じモジュールの別ファイルにある型が「Cannot find 'X' in scope」と誤ってエラーになります。プロジェクトに `Package.swift`・`compile_commands.json`（ルートか `build/`）・`compile_flags.txt`・`buildServer.json` のどれもないときは、フォルダごとに1つのモジュールとみなした `compile_commands.json` を `~/Library/Application Support/FlareStackIDE/LSP/` に作って sourcekit-lsp に渡します。別のモジュールを `import` するなど、これで足りないときはビルドツールで `compile_commands.json` を出力してください。
+
+言語サーバーの起動・通信・診断の変換はバックグラウンドで行うので、大きなファイルでも入力が止まりません。
+
 言語サーバーはプロジェクトと言語の組ごとに1つ起動し、そのプロジェクトのウィンドウをすべて閉じると終了します。
 
 ## Code Scanner と一緒に使うとき

@@ -92,6 +92,7 @@ enum LSPHub {
     private(set) static var documents: [String: LSPDocument] = [:]
     private(set) static var diagnostics: [String: [(range: NSRange, severity: Int, message: String, source: String)]] = [:]
     private static var installed = false
+    private static let convertQueue = DispatchQueue(label: "\(appName).lsp.diagnostics", qos: .userInitiated)
 
     static func install() {
         guard !installed else { return }
@@ -113,8 +114,8 @@ enum LSPHub {
 
     private static func key(_ root: URL, _ language: String) -> String { language + ":" + root.standardizedFileURL.path }
 
-    private static func command(for spec: LSPServerSpec) -> [String]? {
-        if let custom = PluginStore.setting(LSPClientPlugin.pluginID, spec.setting)?.trimmingCharacters(in: .whitespaces), !custom.isEmpty {
+    private static func command(for spec: LSPServerSpec, custom: String?) -> [String]? {
+        if let custom = custom?.trimmingCharacters(in: .whitespaces), !custom.isEmpty {
             let parts = custom.split(separator: " ").map(String.init)
             return LoginShell.which(parts[0]).map { [$0] + parts.dropFirst() }
         }
@@ -129,14 +130,18 @@ enum LSPHub {
         let id = key(root, spec.id)
         if let server = servers[id] { return server }
         guard !missing.contains(id) else { return nil }
-        guard let command = command(for: spec) else {
-            missing.insert(id)
-            Toasts.post("\(spec.name) の言語サーバーが見つかりません", message: "ターミナルで \(spec.install) を実行してから、プロジェクトを開き直してください")
-            return nil
+        let custom = PluginStore.setting(LSPClientPlugin.pluginID, spec.setting)
+        let server = LSPServer(root: root, language: language)
+        server.onNotification = { [weak server] method, params in
+            if method == "textDocument/publishDiagnostics", let server { publish(params, from: server) }
         }
-        let server = LSPServer(root: root, language: language, command: command)
-        server.onNotification = { method, params in
-            if method == "textDocument/publishDiagnostics" { publish(params, from: server) }
+        server.onFailure = { [weak server] in
+            guard let server, servers[id] === server else { return }
+            servers[id] = nil
+            missing.insert(id)
+            documents = documents.filter { $0.value.server !== server }
+            postFiles()
+            Toasts.post("\(spec.name) の言語サーバーが見つかりません", message: "ターミナルで \(spec.install) を実行してから、プロジェクトを開き直してください")
         }
         server.onExit = { [weak server] in
             guard let server else { return }
@@ -145,11 +150,12 @@ enum LSPHub {
             postFiles()
             Toasts.post("\(server.displayName) が終了しました", message: "ファイルを開き直すと再起動します")
         }
-        guard server.start() else {
-            missing.insert(id)
-            return nil
-        }
         servers[id] = server
+        let swift = spec.id == "swift"
+        server.start {
+            guard let command = command(for: spec, custom: custom) else { return nil }
+            return swift ? command + SwiftWorkspace.arguments(root: root) : command
+        }
         return server
     }
 
@@ -202,22 +208,31 @@ enum LSPHub {
     private static func publish(_ params: [String: Any], from server: LSPServer) {
         guard let url = LSPText.url(params["uri"] as? String), let doc = documents[url.path], doc.server === server else { return }
         if let version = (params["version"] as? NSNumber)?.intValue, version < doc.version { return }
-        let text = doc.text as NSString
-        let starts = LSPText.lineStarts(text)
-        let items = (params["diagnostics"] as? [[String: Any]] ?? []).compactMap { item -> (range: NSRange, severity: Int, message: String, source: String)? in
-            guard let message = item["message"] as? String else { return nil }
-            let severity = (item["severity"] as? NSNumber)?.intValue ?? 1
-            guard severity <= 2 else { return nil }
-            let range = LSPText.range(item["range"] as? [String: Any], in: text, starts: starts)
-            return (range, severity, message, item["source"] as? String ?? server.displayName)
+        let text = doc.text
+        let version = doc.version
+        let name = server.displayName
+        let raw = params["diagnostics"] as? [[String: Any]] ?? []
+        convertQueue.async {
+            let ns = text as NSString
+            let starts = LSPText.lineStarts(ns)
+            let items = raw.compactMap { item -> (range: NSRange, severity: Int, message: String, source: String)? in
+                guard let message = item["message"] as? String else { return nil }
+                let severity = (item["severity"] as? NSNumber)?.intValue ?? 1
+                guard severity <= 2 else { return nil }
+                let range = LSPText.range(item["range"] as? [String: Any], in: ns, starts: starts)
+                return (range, severity, message, item["source"] as? String ?? name)
+            }
+            let payload: [[String: Any]] = items.map {
+                ["start": $0.range.location, "length": $0.range.length, "severity": $0.severity == 1 ? "error" : "warning",
+                 "message": $0.message, "source": $0.source]
+            }
+            DispatchQueue.main.async {
+                guard documents[url.path] === doc, doc.version == version else { return }
+                diagnostics[url.path] = items
+                NotificationCenter.default.post(name: externalDiagnostics, object: url, userInfo: ["items": payload, "version": version])
+                NotificationCenter.default.post(name: diagnosticsChanged, object: url)
+            }
         }
-        diagnostics[url.path] = items
-        let payload: [[String: Any]] = items.map {
-            ["start": $0.range.location, "length": $0.range.length, "severity": $0.severity == 1 ? "error" : "warning",
-             "message": $0.message, "source": $0.source]
-        }
-        NotificationCenter.default.post(name: externalDiagnostics, object: url, userInfo: ["items": payload, "version": doc.version])
-        NotificationCenter.default.post(name: diagnosticsChanged, object: url)
     }
 }
 

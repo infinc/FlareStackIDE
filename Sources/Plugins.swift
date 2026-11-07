@@ -111,6 +111,10 @@ enum PluginStore {
     private static var highlighters: [String: Highlighter] = [:]
     private static var notified: [String: String] = [:]
     private static var preapproved: Set<String> = []
+    private static var installedCache: [String: PluginInfo?] = [:]
+    private static var installedIDsCache: [String]?
+    private static var changePending = false
+    private static let fileQueue = DispatchQueue(label: "\(appName).plugins.files", qos: .userInitiated, attributes: .concurrent)
     static let otherCategory = "その他"
 
     static var source: URL {
@@ -142,9 +146,20 @@ enum PluginStore {
         return (try? JSONDecoder().decode([PluginInfo].self, from: data)) ?? []
     }
 
+    private static func invalidate() {
+        installedCache = [:]
+        installedIDsCache = nil
+    }
+
     private static func changed() {
+        invalidate()
         highlighters = [:]
-        NotificationCenter.default.post(name: .pluginsChanged, object: nil)
+        guard !changePending else { return }
+        changePending = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            changePending = false
+            NotificationCenter.default.post(name: .pluginsChanged, object: nil)
+        }
     }
 
     private static func failure(_ message: String) -> Error {
@@ -187,6 +202,7 @@ enum PluginStore {
             try? fm.copyItem(at: source, to: folder(id))
         }
         try? stamp.write(to: marker, atomically: true, encoding: .utf8)
+        invalidate()
         guard !rejected.isEmpty else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
             Toasts.post("同梱のプラグイン \(rejected.count) 個をインストールしませんでした", message: rejected.joined(separator: "\n"))
@@ -223,6 +239,13 @@ enum PluginStore {
     }
 
     static func installed(_ id: String) -> PluginInfo? {
+        if let cached = installedCache[id] { return cached }
+        let found = readInstalled(id)
+        installedCache[id] = .some(found)
+        return found
+    }
+
+    private static func readInstalled(_ id: String) -> PluginInfo? {
         guard let data = try? Data(contentsOf: manifest(id)),
               let info = try? JSONDecoder().decode(PluginInfo.self, from: data),
               (info.files ?? ["main.js"]).allSatisfy({ FileManager.default.fileExists(atPath: folder(id).appendingPathComponent($0).path) })
@@ -235,8 +258,11 @@ enum PluginStore {
     static func isBusy(_ id: String) -> Bool { busy.contains(id) }
 
     static var installedIDs: [String] {
+        if let installedIDsCache { return installedIDsCache }
         let names = (try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? []
-        return names.filter { isValidID($0) && isInstalled($0) }.sorted()
+        let ids = names.filter { isValidID($0) && isInstalled($0) }.sorted()
+        installedIDsCache = ids
+        return ids
     }
 
     static var catalog: [PluginInfo] {
@@ -382,33 +408,41 @@ enum PluginStore {
             return finish(error)
         }
         let group = DispatchGroup()
+        let queue = DispatchQueue(label: "\(appName).plugins.install.\(id)", qos: .userInitiated)
         var firstError: Error?
         for file in files {
             group.enter()
             fetch("\(id)/\(file)") { result in
-                defer { group.leave() }
-                do {
-                    let target = staging.appendingPathComponent(file)
-                    let content = try result.get()
-                    try PluginTrust.checkFile(file, data: content, hashes: info.hashes, name: info.name)
-                    try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
-                    try content.write(to: target)
-                } catch {
-                    if firstError == nil { firstError = error }
+                queue.async {
+                    defer { group.leave() }
+                    do {
+                        let target = staging.appendingPathComponent(file)
+                        let content = try result.get()
+                        try PluginTrust.checkFile(file, data: content, hashes: info.hashes, name: info.name)
+                        try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+                        try content.write(to: target)
+                    } catch {
+                        if firstError == nil { firstError = error }
+                    }
                 }
             }
         }
-        group.notify(queue: .main) {
+        group.notify(queue: queue) {
             defer { try? fm.removeItem(at: staging) }
-            if let firstError { return finish(firstError) }
-            do {
-                try fm.createDirectory(at: directory, withIntermediateDirectories: true)
-                if fm.fileExists(atPath: folder(id).path) { try fm.removeItem(at: folder(id)) }
-                try fm.moveItem(at: staging, to: folder(id))
-                PluginPermission.grant(info)
-                finish(nil)
-            } catch {
-                finish(error)
+            var outcome = firstError
+            if outcome == nil {
+                do {
+                    try fm.createDirectory(at: directory, withIntermediateDirectories: true)
+                    if fm.fileExists(atPath: folder(id).path) { try fm.removeItem(at: folder(id)) }
+                    try fm.moveItem(at: staging, to: folder(id))
+                } catch {
+                    outcome = error
+                }
+            }
+            DispatchQueue.main.async {
+                invalidate()
+                if outcome == nil { PluginPermission.grant(info) }
+                finish(outcome)
             }
         }
     }
@@ -419,6 +453,34 @@ enum PluginStore {
         detailsCache[id] = nil
         PluginPermission.revoke(id)
         changed()
+    }
+
+    static func uninstall(_ ids: [String], completion: @escaping (_ failed: [String]) -> Void) {
+        let targets = ids.filter { isValidID($0) && !busy.contains($0) }
+        guard !targets.isEmpty else { return completion([]) }
+        busy.formUnion(targets)
+        changed()
+        let folders = targets.map(folder)
+        let lock = NSLock()
+        var failed: Set<String> = []
+        fileQueue.async {
+            DispatchQueue.concurrentPerform(iterations: folders.count) { index in
+                do { try FileManager.default.removeItem(at: folders[index]) } catch {
+                    lock.lock()
+                    failed.insert(targets[index])
+                    lock.unlock()
+                }
+            }
+            DispatchQueue.main.async {
+                busy.subtract(targets)
+                for id in targets where !failed.contains(id) {
+                    detailsCache[id] = nil
+                    PluginPermission.revoke(id)
+                }
+                changed()
+                completion(targets.filter(failed.contains))
+            }
+        }
     }
 
     static func preapprove(_ ids: [String]) { preapproved.formUnion(ids) }
@@ -738,14 +800,14 @@ final class PluginList: NSView {
             return
         }
         guard Self.confirm("全てのプラグインをアンインストールしますか？", "\(targets.count) 個のプラグインをアンインストールします", "全てアンインストール", in: window) else { return }
-        var failed: [String] = []
-        for id in targets {
-            do { try PluginStore.uninstall(id) } catch { failed.append(PluginStore.info(id)?.name ?? id) }
-        }
-        if failed.isEmpty {
-            Toasts.post("\(targets.count) 個のプラグインをアンインストールしました", in: window)
-        } else {
-            Toasts.post("\(failed.count) 個のプラグインのアンインストールに失敗しました", message: failed.joined(separator: "、"), in: window)
+        let names = Dictionary(uniqueKeysWithValues: targets.map { ($0, PluginStore.info($0)?.name ?? $0) })
+        PluginStore.uninstall(targets) { [weak self] failed in
+            if failed.isEmpty {
+                Toasts.post("\(targets.count) 個のプラグインをアンインストールしました", in: self?.window)
+            } else {
+                Toasts.post("\(failed.count) 個のプラグインのアンインストールに失敗しました",
+                            message: failed.map { names[$0] ?? $0 }.joined(separator: "、"), in: self?.window)
+            }
         }
     }
 

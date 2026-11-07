@@ -43,6 +43,34 @@ for dir in "$ROOT"/plugins/*/; do
         "${sources[@]}" "$ROOT"/PluginKit/*.swift -o "$dir/plugin.dylib" -Xlinker -undefined -Xlinker dynamic_lookup
 done
 
+json() { local s="${1//\\/\\\\}"; s="${s//\"/\\\"}"; printf '"%s"' "$s"; }
+jsonlist() { local out="" a; for a in "$@"; do out+="${out:+,}$(json "$a")"; done; printf '%s' "$out"; }
+SDK="$(xcrun --show-sdk-path)"
+FIRST=1
+emit() {
+    local args="$1" f
+    shift
+    for f in "$@"; do
+        [ "$FIRST" -eq 1 ] || printf ','
+        FIRST=0
+        printf '\n{"directory":%s,"file":%s,"arguments":[%s]}' "$(json "$ROOT")" "$(json "$f")" "$args"
+    done
+}
+{
+    printf '['
+    emit "$(jsonlist swiftc -target arm64-apple-macos13 -sdk "$SDK" -enable-testing -module-name "$NAME" "$ROOT"/Sources/*.swift)" "$ROOT"/Sources/*.swift
+    kit=("$ROOT"/PluginKit/*.swift)
+    for dir in "$ROOT"/plugins/*/; do
+        sources=("$dir"*.swift)
+        [ -e "${sources[0]}" ] || continue
+        id="$(basename "$dir")"
+        emit "$(jsonlist swiftc -target arm64-apple-macos13 -sdk "$SDK" -module-name "FSPlugin_${id//-/_}" -I "$MODULE" "${sources[@]}" ${kit[@]+"${kit[@]}"})" \
+            "${sources[@]}" ${kit[@]+"${kit[@]}"}
+        kit=()
+    done
+    printf '\n]\n'
+} > "$ROOT/build/compile_commands.json"
+
 progress "マニフェストと署名 (plugins/*/plugin.sig)"
 swift "$ROOT/tools/manifest.swift" "$ROOT" >/dev/null
 

@@ -34,7 +34,7 @@
   {
     "id": "code-scanner",
     "name": "Code Scanner",
-    "version": "1.7",
+    "version": "1.8",
     "author": "FlareStackIDE",
     "symbol": "exclamationmark.triangle",
     "summary": "コードのエラーと警告を編集の1.5秒後に表示",
@@ -378,7 +378,7 @@
   {
     "id": "lsp-client",
     "name": "LSP Client",
-    "version": "1.1",
+    "version": "1.2",
     "author": "FlareStackIDE",
     "symbol": "brain",
     "summary": "言語サーバーで診断・ホバー・定義へ移動・名前の変更・補完（Python・TypeScript・Swift・Rust・Go・C/C++ など）",

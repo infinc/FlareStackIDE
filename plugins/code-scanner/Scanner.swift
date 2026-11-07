@@ -45,16 +45,40 @@ enum ExternalDiagnostics {
 
     static func handles(_ url: URL?) -> Bool { url.map { files.contains($0.standardizedFileURL.path) } ?? false }
 
-    static func diagnostics(for url: URL, text: String) -> [Diagnostic] {
-        guard let raw = items[url.standardizedFileURL.path], !raw.isEmpty else { return [] }
+    static func raw(_ url: URL) -> [[String: Any]] { items[url.standardizedFileURL.path] ?? [] }
+
+    private static func lineStarts(_ text: NSString) -> [Int] {
+        var starts = [0]
+        var index = 0
+        while index < text.length {
+            let found = text.range(of: "\n", options: .literal, range: NSRange(location: index, length: text.length - index))
+            if found.location == NSNotFound { break }
+            starts.append(found.location + 1)
+            index = found.location + 1
+        }
+        return starts
+    }
+
+    private static func line(of offset: Int, in starts: [Int]) -> Int {
+        var low = 0, high = starts.count - 1
+        while low < high {
+            let mid = (low + high + 1) / 2
+            if starts[mid] <= offset { low = mid } else { high = mid - 1 }
+        }
+        return low + 1
+    }
+
+    static func diagnostics(raw: [[String: Any]], url: URL, text: String) -> [Diagnostic] {
+        guard !raw.isEmpty else { return [] }
         let ns = text as NSString
+        let starts = lineStarts(ns)
         return raw.compactMap { item in
             guard let start = (item["start"] as? NSNumber)?.intValue, let length = (item["length"] as? NSNumber)?.intValue,
                   let message = item["message"] as? String, start >= 0, start <= ns.length else { return nil }
             var range = NSRange(location: start, length: max(min(length, ns.length - start), 0))
             if range.length == 0, ns.length > 0 { range = NSRange(location: min(start, ns.length - 1), length: 1) }
             let lineRange = ns.lineRange(for: NSRange(location: range.location, length: 0))
-            let line = ns.substring(to: lineRange.location).reduce(1) { $1 == "\n" ? $0 + 1 : $0 }
+            let line = line(of: lineRange.location, in: starts)
             let severity: Diagnostic.Severity = (item["severity"] as? String) == "warning" ? .warning : .error
             let snippet = ns.substring(with: lineRange).trimmingCharacters(in: .whitespacesAndNewlines)
             return Diagnostic(url: url, range: range, line: line, column: range.location - lineRange.location + 1, severity: severity,
@@ -62,8 +86,8 @@ enum ExternalDiagnostics {
         }
     }
 
-    static func merge(_ own: [Diagnostic], url: URL, text: String) -> [Diagnostic] {
-        let external = diagnostics(for: url, text: text)
+    static func merge(_ own: [Diagnostic], raw: [[String: Any]], url: URL, text: String) -> [Diagnostic] {
+        let external = diagnostics(raw: raw, url: url, text: text)
         guard !external.isEmpty else { return own }
         let kept = own.filter { mine in !external.contains { NSIntersectionRange($0.range, mine.range).length > 0 && $0.message == mine.message } }
         return (kept + external).sorted { ($0.severity == .error ? 0 : 1, $0.line) < ($1.severity == .error ? 0 : 1, $1.line) }

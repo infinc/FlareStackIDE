@@ -1,7 +1,7 @@
 {
   "id": "lsp-client",
   "name": "LSP Client",
-  "version": "1.1",
+  "version": "1.2",
   "author": "FlareStackIDE",
   "symbol": "brain",
   "summary": "言語サーバーで診断・ホバー・定義へ移動・名前の変更・補完（Python・TypeScript・Swift・Rust・Go・C/C++ など）",
@@ -23,7 +23,7 @@
   ],
   "apiVersion": 2,
   "hashes": {
-    "README.md": "fe9e9d5eae7cd531aa46b2f602ec0c4008766588cb6345a3a7b8d0b2d94590aa",
-    "plugin.dylib": "b7297065284d0c54814e737a74f56aea18cc2932646befb5c5af7314b420ddcd"
+    "README.md": "8c3122af65e83ba9c9ae06ee24fef866ccc2af880c38c9e6cc917198e8ac8879",
+    "plugin.dylib": "8423b14e7029496db8576557144f8db9ad7a6b43674263214ab2aa104d2c168e"
   }
 }

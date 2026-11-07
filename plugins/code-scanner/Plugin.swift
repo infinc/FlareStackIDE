@@ -22,8 +22,13 @@ final class CodeScannerAddon: WindowAddon {
     private let problemsView = ProblemsView()
     private var feed: FeedView?
     private var revision = 0
+    private var shown: [URL: [Diagnostic]] = [:]
+    private var applyPending = false
+    private var applyToken = 0
+    private var redMarks: [NSRange]?
     private lazy var hover = DiagnosticHover(editor: editor)
     private static let all = NSHashTable<CodeScannerAddon>.weakObjects()
+    static let mergeQueue = DispatchQueue(label: "\(appName).code-scanner.merge", qos: .userInitiated, attributes: .concurrent)
     private let splits = NSHashTable<SplitScannerAddon>.weakObjects()
 
     static func owner(of window: NSWindow?) -> CodeScannerAddon? {
@@ -52,21 +57,25 @@ final class CodeScannerAddon: WindowAddon {
         schedule(delay: 0)
     }
 
-    @objc private func externalChanged() { DispatchQueue.main.async { [weak self] in self?.apply() } }
+    @objc private func externalChanged() { scheduleApply() }
 
     @objc private func lspFilesChanged() {
         DispatchQueue.main.async { [weak self] in
-            self?.apply()
+            self?.scheduleApply()
             self?.schedule(delay: 0)
         }
     }
 
-    private func merged(_ url: URL?) -> [Diagnostic] {
-        guard let url, let editor else { return [] }
-        let own = diagnostics[url] ?? []
-        let text = editor.fileURL == url ? editor.textView.string : editor.openTexts.first { $0.url == url }?.text ?? ""
-        return ExternalDiagnostics.merge(own, url: url, text: text)
+    private func scheduleApply() {
+        guard !applyPending else { return }
+        applyPending = true
+        DispatchQueue.main.async { [weak self] in
+            self?.applyPending = false
+            self?.apply()
+        }
     }
+
+    private func merged(_ url: URL?) -> [Diagnostic] { url.flatMap { shown[$0] } ?? [] }
 
     @objc private func marksRequested() { postMarks() }
 
@@ -131,6 +140,29 @@ final class CodeScannerAddon: WindowAddon {
 
     private func apply() {
         guard let editor else { return }
+        applyToken += 1
+        let token = applyToken
+        let current = editor.fileURL
+        var urls = editor.openURLs
+        if let current, !urls.contains(current) { urls.insert(current, at: 0) }
+        let texts = urls.count > 1 ? Dictionary(editor.openTexts.map { ($0.url, $0.text) }, uniquingKeysWith: { first, _ in first }) : [:]
+        let currentText = editor.textView.string
+        let inputs = urls.map { url in
+            (url: url, own: diagnostics[url] ?? [], raw: ExternalDiagnostics.raw(url), text: url == current ? currentText : texts[url] ?? "")
+        }
+        Self.mergeQueue.async { [weak self] in
+            var results: [URL: [Diagnostic]] = [:]
+            for input in inputs { results[input.url] = ExternalDiagnostics.merge(input.own, raw: input.raw, url: input.url, text: input.text) }
+            DispatchQueue.main.async {
+                guard let self, self.applyToken == token else { return }
+                self.shown = results
+                self.show()
+            }
+        }
+    }
+
+    private func show() {
+        guard let editor else { return }
         let textView = editor.textView
         let url = editor.fileURL
         let mine = merged(url)
@@ -139,28 +171,35 @@ final class CodeScannerAddon: WindowAddon {
         refreshProblems()
 
         let length = (textView.string as NSString).length
-        let valid = mine.filter { NSMaxRange($0.range) <= length }
-        (textView.layoutManager as? DiagnosticLayoutManager)?.marks = valid.map(\.mark)
+        let marks = mine.filter { NSMaxRange($0.range) <= length }.map(\.mark)
+        (textView.layoutManager as? DiagnosticLayoutManager)?.marks = marks
         hover.hide()
-        editor.recolor()
+        let red = marks.filter { $0.color == .systemRed }.map(\.range)
+        if red != redMarks {
+            redMarks = red
+            editor.recolor()
+        }
         textView.needsDisplay = true
         postMarks()
     }
 
     func fileOpened() {
         revision += 1
+        redMarks = nil
         apply()
         schedule(delay: 0)
     }
 
     func textChanged() {
         revision += 1
+        redMarks = nil
         hover.hide()
         schedule(delay: Self.idleDelay)
     }
 
     func bufferClosed(_ url: URL) {
         diagnostics[url] = nil
+        shown[url] = nil
         refreshProblems()
     }
 
@@ -195,6 +234,9 @@ final class SplitScannerAddon: TextAddon {
     private var work: DispatchWorkItem?
     private var revision = 0
     private(set) var items: [Diagnostic] = []
+    private(set) var shown: [Diagnostic] = []
+    private var applyPending = false
+    private var applyToken = 0
     private lazy var hover = DiagnosticHover(editor: pane)
 
     init(pane: SplitPane, scanner: CodeScanner) {
@@ -220,18 +262,22 @@ final class SplitScannerAddon: TextAddon {
 
     private var owner: CodeScannerAddon? { CodeScannerAddon.owner(of: pane?.window) }
 
-    @objc private func externalChanged() { DispatchQueue.main.async { [weak self] in self?.apply() } }
+    @objc private func externalChanged() { scheduleApply() }
 
     @objc private func lspFilesChanged() {
         DispatchQueue.main.async { [weak self] in
-            self?.apply()
+            self?.scheduleApply()
             self?.schedule(delay: 0)
         }
     }
 
-    var shown: [Diagnostic] {
-        guard let pane, let url = pane.fileURL else { return [] }
-        return ExternalDiagnostics.merge(items, url: url, text: pane.textView.string)
+    private func scheduleApply() {
+        guard !applyPending else { return }
+        applyPending = true
+        DispatchQueue.main.async { [weak self] in
+            self?.applyPending = false
+            self?.apply()
+        }
     }
 
     @objc private func marksRequested() { postMarks() }
@@ -270,8 +316,29 @@ final class SplitScannerAddon: TextAddon {
 
     private func apply() {
         guard let pane else { return }
+        applyToken += 1
+        let token = applyToken
+        guard let url = pane.fileURL else {
+            items = []
+            shown = []
+            return show()
+        }
+        let own = items
+        let raw = ExternalDiagnostics.raw(url)
+        let text = pane.textView.string
+        CodeScannerAddon.mergeQueue.async { [weak self] in
+            let result = ExternalDiagnostics.merge(own, raw: raw, url: url, text: text)
+            DispatchQueue.main.async {
+                guard let self, self.applyToken == token, self.pane?.fileURL == url else { return }
+                self.shown = result
+                self.show()
+            }
+        }
+    }
+
+    private func show() {
+        guard let pane else { return }
         let textView = pane.textView
-        if pane.fileURL == nil { items = [] }
         badge.isHidden = pane.fileURL == nil
         let all = shown
         badge.update(errors: all.filter { $0.severity == .error }.count, warnings: all.filter { $0.severity == .warning }.count)
@@ -311,6 +378,7 @@ final class SplitScannerAddon: TextAddon {
         hover.stop()
         NotificationCenter.default.removeObserver(self)
         items = []
+        shown = []
         owner?.refreshProblems()
         guard let pane else { return }
         NotificationCenter.default.post(name: CodeScanner.marksChanged, object: pane.textView, userInfo: ["errors": Set<Int>(), "warnings": Set<Int>()])

@@ -61,12 +61,13 @@ enum LSPLanguage {
 }
 
 enum LoginShell {
+    private static let lock = NSLock()
     private static var cachedPath: String?
 
-    private static func run(_ script: String) -> String? {
+    static func run(_ executable: String, _ arguments: [String]) -> String? {
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/zsh")
-        process.arguments = ["-lc", script]
+        process.executableURL = URL(fileURLWithPath: executable)
+        process.arguments = arguments
         let pipe = Pipe()
         process.standardOutput = pipe
         process.standardError = FileHandle.nullDevice
@@ -79,8 +80,10 @@ enum LoginShell {
     }
 
     static var path: String {
+        lock.lock()
+        defer { lock.unlock() }
         if let cachedPath { return cachedPath }
-        let found = run("printf '%s\\n' \"$PATH\"") ?? "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+        let found = run("/bin/zsh", ["-lc", "printf '%s\\n' \"$PATH\""]) ?? "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
         cachedPath = found
         return found
     }
@@ -95,16 +98,91 @@ enum LoginShell {
     }
 }
 
+enum SwiftWorkspace {
+    private static let markers = ["Package.swift", "compile_commands.json", "compile_flags.txt", "buildServer.json", ".bsp",
+                                  "build/compile_commands.json", "build/compile_flags.txt"]
+    private static let skipped: Set<String> = ["build", "DerivedData", "node_modules", "Pods", "Carthage", "venv"]
+    private static let limit = 5000
+    private static let sdk: String = LoginShell.run("/usr/bin/xcrun", ["--show-sdk-path"]) ?? ""
+
+    static func arguments(root: URL) -> [String] {
+        let fm = FileManager.default
+        guard !markers.contains(where: { fm.fileExists(atPath: root.appendingPathComponent($0).path) }),
+              let database = generate(root: root) else { return [] }
+        return ["--compilation-db-search-path", relative(database.deletingLastPathComponent(), from: root)]
+    }
+
+    private static func generate(root: URL) -> URL? {
+        let fm = FileManager.default
+        guard let walker = fm.enumerator(at: root, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles, .skipsPackageDescendants])
+        else { return nil }
+        var groups: [URL: [String]] = [:]
+        var count = 0
+        for case let url as URL in walker {
+            if (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true {
+                if skipped.contains(url.lastPathComponent) { walker.skipDescendants() }
+                continue
+            }
+            guard url.pathExtension == "swift" else { continue }
+            groups[url.deletingLastPathComponent().standardizedFileURL, default: []].append(url.standardizedFileURL.path)
+            count += 1
+            if count >= limit { break }
+        }
+        guard !groups.isEmpty else { return nil }
+        let sdkArgs = sdk.isEmpty ? [] : ["-sdk", sdk]
+        var entries: [[String: Any]] = []
+        for (directory, files) in groups {
+            let sorted = files.sorted()
+            let arguments = ["swiftc", "-module-name", moduleName(directory, root: root)] + sdkArgs + sorted
+            entries += sorted.map { ["directory": root.path, "file": $0, "arguments": arguments] }
+        }
+        let folder = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent(appName).appendingPathComponent("LSP")
+            .appendingPathComponent(String(format: "%08x", stableHash(root.standardizedFileURL.path)))
+        let file = folder.appendingPathComponent("compile_commands.json")
+        do {
+            try fm.createDirectory(at: folder, withIntermediateDirectories: true)
+            try JSONSerialization.data(withJSONObject: entries).write(to: file, options: .atomic)
+        } catch {
+            return nil
+        }
+        return file
+    }
+
+    private static func moduleName(_ directory: URL, root: URL) -> String {
+        let generic: Set<String> = ["Sources", "Source", "src"]
+        let base = directory.path == root.standardizedFileURL.path || generic.contains(directory.lastPathComponent)
+            ? root.lastPathComponent : directory.lastPathComponent
+        let name = String(base.map { $0.isLetter || $0.isNumber || $0 == "_" ? $0 : "_" })
+        return name.first?.isNumber == false ? name : "_" + name
+    }
+
+    private static func stableHash(_ text: String) -> UInt32 {
+        text.utf8.reduce(2166136261 as UInt32) { ($0 ^ UInt32($1)) &* 16777619 }
+    }
+
+    private static func relative(_ target: URL, from base: URL) -> String {
+        let to = target.standardizedFileURL.pathComponents
+        let from = base.standardizedFileURL.pathComponents
+        var shared = 0
+        while shared < min(to.count, from.count), to[shared] == from[shared] { shared += 1 }
+        return (Array(repeating: "..", count: from.count - shared) + to[shared...]).joined(separator: "/")
+    }
+}
+
 final class LSPServer {
     let root: URL
     let language: String
-    let command: [String]
+    private(set) var command: [String] = []
     var onNotification: ((String, [String: Any]) -> Void)?
     var onExit: (() -> Void)?
-    private(set) var displayName: String
+    var onFailure: (() -> Void)?
+    private(set) var displayName = "LSP"
     private let process = Process()
     private let input = Pipe()
     private let output = Pipe()
+    private let readQueue = DispatchQueue(label: "\(appName).lsp.read", qos: .userInitiated)
+    private let writeQueue = DispatchQueue(label: "\(appName).lsp.write", qos: .userInitiated)
     private var buffer = Data()
     private var nextID = 1
     private var handlers: [Int: (Any?) -> Void] = [:]
@@ -113,16 +191,25 @@ final class LSPServer {
     private var stopping = false
     private(set) var capabilities: [String: Any] = [:]
 
-    init(root: URL, language: String, command: [String]) {
+    init(root: URL, language: String) {
         self.root = root
         self.language = language
-        self.command = command
-        displayName = (command.first.map { ($0 as NSString).lastPathComponent } ?? "LSP")
-            .replacingOccurrences(of: "-langserver", with: "").capitalized
     }
 
-    func start() -> Bool {
+    func start(resolve: @escaping () -> [String]?) {
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let command = resolve()
+            DispatchQueue.main.async {
+                guard let self, !self.stopping else { return }
+                guard let command, self.launch(command) else { return self.onFailure?() ?? () }
+            }
+        }
+    }
+
+    private func launch(_ command: [String]) -> Bool {
         guard let executable = command.first else { return false }
+        self.command = command
+        displayName = (executable as NSString).lastPathComponent.replacingOccurrences(of: "-langserver", with: "").capitalized
         process.executableURL = URL(fileURLWithPath: executable)
         process.arguments = Array(command.dropFirst())
         process.currentDirectoryURL = root
@@ -135,7 +222,7 @@ final class LSPServer {
         process.terminationHandler = { [weak self] _ in DispatchQueue.main.async { self?.exited() } }
         output.fileHandleForReading.readabilityHandler = { [weak self] handle in
             let data = handle.availableData
-            DispatchQueue.main.async { self?.received(data) }
+            self?.readQueue.async { self?.received(data) }
         }
         do { try process.run() } catch { return false }
         _ = fcntl(input.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
@@ -205,15 +292,26 @@ final class LSPServer {
     }
 
     private func send(_ message: [String: Any]) {
-        guard process.isRunning, let body = try? JSONSerialization.data(withJSONObject: message) else { return }
-        var data = Data("Content-Length: \(body.count)\r\n\r\n".utf8)
-        data.append(body)
-        try? input.fileHandleForWriting.write(contentsOf: data)
+        guard process.isRunning else { return }
+        let process = process
+        let handle = input.fileHandleForWriting
+        writeQueue.async {
+            guard process.isRunning, let body = try? JSONSerialization.data(withJSONObject: message) else { return }
+            var data = Data("Content-Length: \(body.count)\r\n\r\n".utf8)
+            data.append(body)
+            try? handle.write(contentsOf: data)
+        }
     }
 
     private func received(_ data: Data) {
         guard !data.isEmpty else { return }
         buffer.append(data)
+        var messages: [[String: Any]] = []
+        defer {
+            if !messages.isEmpty {
+                DispatchQueue.main.async { [weak self] in messages.forEach { self?.handle($0) } }
+            }
+        }
         while let separator = buffer.range(of: Data("\r\n\r\n".utf8)) {
             let header = String(decoding: buffer[buffer.startIndex..<separator.lowerBound], as: UTF8.self)
             guard let line = header.split(separator: "\r\n").first(where: { $0.lowercased().hasPrefix("content-length:") }),
@@ -227,7 +325,7 @@ final class LSPServer {
             let body = buffer[start..<end]
             buffer.removeSubrange(buffer.startIndex..<end)
             buffer = Data(buffer)
-            if let message = try? JSONSerialization.jsonObject(with: body) as? [String: Any] { handle(message) }
+            if let message = try? JSONSerialization.jsonObject(with: body) as? [String: Any] { messages.append(message) }
         }
     }
 
