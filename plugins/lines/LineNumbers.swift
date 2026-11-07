@@ -4,8 +4,6 @@ import AppKit
 final class LineNumberRuler: NSRulerView {
     static let pluginID = "lines"
     private weak var textView: NSTextView?
-    private var starts: [Int] = [0]
-    private var startsLength = -1
     private var bookmarks: Set<Int> = []
     private var foldActive = false
     private var foldOpen: Set<Int> = []
@@ -110,28 +108,11 @@ final class LineNumberRuler: NSRulerView {
         NSRect(x: rect.maxX - 1, y: rect.minY, width: 1, height: rect.height).fill()
     }
 
-    @objc func textChanged() {
-        startsLength = -1
-        needsDisplay = true
-    }
+    @objc func textChanged() { needsDisplay = true }
 
     @objc private func redraw() { needsDisplay = true }
 
-    private func lineStarts() -> [Int] {
-        guard let text = textView?.string as NSString? else { return [0] }
-        if startsLength == text.length { return starts }
-        var result = [0]
-        var i = 0
-        while i < text.length {
-            let r = text.range(of: "\n", options: .literal, range: NSRange(location: i, length: text.length - i))
-            if r.location == NSNotFound { break }
-            result.append(r.location + 1)
-            i = r.location + 1
-        }
-        starts = result
-        startsLength = text.length
-        return result
-    }
+    private func lineStarts() -> [Int] { textView.map(LineIndex.starts(of:)) ?? [0] }
 
     override var isOpaque: Bool { true }
 

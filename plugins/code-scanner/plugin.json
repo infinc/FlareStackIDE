@@ -1,7 +1,7 @@
 {
   "id": "code-scanner",
   "name": "Code Scanner",
-  "version": "1.8",
+  "version": "1.9",
   "author": "FlareStackIDE",
   "symbol": "exclamationmark.triangle",
   "summary": "コードのエラーと警告を編集の1.5秒後に表示",
@@ -9,10 +9,10 @@
   "category": "言語・補完",
   "permissions": ["process", "files"],
   "files": ["plugin.dylib", "main.js", "README.md"],
-  "apiVersion": 2,
+  "apiVersion": 3,
   "hashes": {
     "README.md": "84e7e2a903a9795470fafb3a7251bfe73a1a562fdc79aa146d479371d8b4264f",
     "main.js": "04a09ed61e1c7113380615fb44fd3b665b6e93521c973b078c59586edd37a21e",
-    "plugin.dylib": "cfabe8c17c110c097d64dff854052b0affe9c029ba195b6165e484cc0c2f8ef2"
+    "plugin.dylib": "846f2b850f8cb761917aba417a1232de0c805841f7aa8713ce75701db8aed252"
   }
 }

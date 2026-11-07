@@ -92,16 +92,8 @@ final class Minimap: NSView {
     }
 
     @objc func contentChanged() {
-        guard let text = textView?.string as NSString? else { return }
-        var result = [0]
-        var i = 0
-        while i < text.length {
-            let r = text.range(of: "\n", options: .literal, range: NSRange(location: i, length: text.length - i))
-            if r.location == NSNotFound { break }
-            result.append(r.location + 1)
-            i = r.location + 1
-        }
-        starts = result
+        guard let textView else { return }
+        starts = LineIndex.starts(of: textView)
         cache = [:]
         needsDisplay = true
         positionChanged()

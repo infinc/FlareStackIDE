@@ -47,18 +47,6 @@ enum ExternalDiagnostics {
 
     static func raw(_ url: URL) -> [[String: Any]] { items[url.standardizedFileURL.path] ?? [] }
 
-    private static func lineStarts(_ text: NSString) -> [Int] {
-        var starts = [0]
-        var index = 0
-        while index < text.length {
-            let found = text.range(of: "\n", options: .literal, range: NSRange(location: index, length: text.length - index))
-            if found.location == NSNotFound { break }
-            starts.append(found.location + 1)
-            index = found.location + 1
-        }
-        return starts
-    }
-
     private static func line(of offset: Int, in starts: [Int]) -> Int {
         var low = 0, high = starts.count - 1
         while low < high {
@@ -71,7 +59,7 @@ enum ExternalDiagnostics {
     static func diagnostics(raw: [[String: Any]], url: URL, text: String) -> [Diagnostic] {
         guard !raw.isEmpty else { return [] }
         let ns = text as NSString
-        let starts = lineStarts(ns)
+        let starts = LineIndex.starts(ns)
         return raw.compactMap { item in
             guard let start = (item["start"] as? NSNumber)?.intValue, let length = (item["length"] as? NSNumber)?.intValue,
                   let message = item["message"] as? String, start >= 0, start <= ns.length else { return nil }
@@ -188,14 +176,7 @@ final class CodeScanner {
 
     private static func convert(_ raw: [[String: Any]], text: String, url: URL) -> [Diagnostic] {
         let ns = text as NSString
-        var starts = [0]
-        var i = 0
-        while i < ns.length {
-            let r = ns.range(of: "\n", options: [], range: NSRange(location: i, length: ns.length - i))
-            if r.location == NSNotFound { break }
-            starts.append(r.location + 1)
-            i = r.location + 1
-        }
+        let starts = LineIndex.starts(ns)
         let word = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "_$"))
         var seen = Set<String>()
         var result: [Diagnostic] = []

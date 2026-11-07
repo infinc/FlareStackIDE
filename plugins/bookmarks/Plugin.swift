@@ -90,19 +90,7 @@ final class BookmarksAddon: NSObject, TextAddon {
 
     var window: NSWindow? { code?.textView.window }
 
-    private static func lineStarts(_ text: NSString) -> [Int] {
-        var result = [0]
-        var i = 0
-        while i < text.length {
-            let found = text.range(of: "\n", options: .literal, range: NSRange(location: i, length: text.length - i))
-            if found.location == NSNotFound { break }
-            result.append(found.location + 1)
-            i = found.location + 1
-        }
-        return result
-    }
-
-    private func reloadStarts() { starts = Self.lineStarts((code?.textView.string ?? "") as NSString) }
+    private func reloadStarts() { starts = code.map { LineIndex.starts(of: $0.textView) } ?? [0] }
 
     private func lineIndex(_ location: Int) -> Int {
         var lo = 0, hi = starts.count - 1

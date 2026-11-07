@@ -1,7 +1,7 @@
 {
   "id": "copy-manager",
   "name": "Copy Manager",
-  "version": "1.3",
+  "version": "1.4",
   "author": "FlareStackIDE",
   "symbol": "paperclip",
   "summary": "コピーした履歴を保存して、選んでもう一度コピー",
@@ -9,7 +9,7 @@
   "category": "編集",
   "permissions": ["clipboard"],
   "files": ["plugin.dylib", "README.md"],
-  "apiVersion": 2,
+  "apiVersion": 3,
   "hashes": {
     "README.md": "291f64c3b4c053ce8d36762edff203f6eaee15eac9e33134e09d8367a60886ce",
     "plugin.dylib": "f4b0da8cfc913f52d1ee04851e873432edd9e3200f0b29136e62e28fa43a61e3"

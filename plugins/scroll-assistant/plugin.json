@@ -1,16 +1,16 @@
 {
   "id": "scroll-assistant",
   "name": "Scroll Assistant",
-  "version": "1.5",
+  "version": "1.6",
   "author": "FlareStackIDE",
   "symbol": "sidebar.right",
   "summary": "編集画面の右にコード全体を小さく表示してスクロール",
   "fileExtensions": [],
   "category": "表示",
   "files": ["plugin.dylib", "README.md"],
-  "apiVersion": 2,
+  "apiVersion": 3,
   "hashes": {
     "README.md": "7a9a453d459e5925b8689100ffde55f4f8f202812949e2c700bd1c2ff4e4e860",
-    "plugin.dylib": "446938b0449401c1e7c4f4c339e9fdca1cc9db68e9831d5e57799dfc7884e0d8"
+    "plugin.dylib": "752df3d1ba2ad5dba357e4dea02b3bdb06dcd29b9b9036fedd98ff6738fbfc62"
   }
 }

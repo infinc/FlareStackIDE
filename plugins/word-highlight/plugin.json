@@ -1,7 +1,7 @@
 {
   "id": "word-highlight",
   "name": "Word Highlight",
-  "version": "1.2",
+  "version": "1.3",
   "author": "FlareStackIDE",
   "symbol": "highlighter",
   "summary": "クリックした語と同じ語の背景をファイル内で強調",
@@ -16,7 +16,7 @@
       "default": "#6E9EFF"
     }
   ],
-  "apiVersion": 2,
+  "apiVersion": 3,
   "hashes": {
     "README.md": "7cb7bcb82c452c31c493e3940e7491599463aca755949621b1fb617fdd0a2f7b",
     "plugin.dylib": "68c655944c0bda44057d760d0cf24ffc3ec48c9250607a29edde2f79c23f2b6e"
