@@ -79,27 +79,9 @@ final class CodeFoldingAddon: NSObject, TextAddon {
         fileOpened()
     }
 
-    private func reloadStarts() {
-        let text = (code?.textView.string ?? "") as NSString
-        var result = [0]
-        var i = 0
-        while i < text.length {
-            let found = text.range(of: "\n", options: .literal, range: NSRange(location: i, length: text.length - i))
-            if found.location == NSNotFound { break }
-            result.append(found.location + 1)
-            i = found.location + 1
-        }
-        starts = result
-    }
+    private func reloadStarts() { starts = code.map { LineIndex.starts(of: $0.textView) } ?? [0] }
 
-    private func line(of location: Int) -> Int {
-        var lo = 0, hi = starts.count - 1
-        while lo < hi {
-            let mid = (lo + hi + 1) / 2
-            if starts[mid] <= location { lo = mid } else { hi = mid - 1 }
-        }
-        return lo + 1
-    }
+    private func line(of location: Int) -> Int { LineIndex.line(of: location, in: starts) + 1 }
 
     private func range(of region: FoldRegion) -> NSRange? {
         guard let textView = code?.textView, region.start < region.end, region.end <= starts.count else { return nil }

@@ -632,12 +632,8 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
         window?.makeKeyAndOrderFront(nil)
         guard let line, current?.url == url else { return }
         let text = textView.string as NSString
-        var start = 0
-        for _ in 1..<line {
-            let next = text.range(of: "\n", options: .literal, range: NSRange(location: start, length: text.length - start))
-            if next.location == NSNotFound { break }
-            start = next.location + 1
-        }
+        let starts = LineIndex.starts(of: textView)
+        let start = starts[min(max(line - 1, 0), starts.count - 1)]
         let lineRange = text.lineRange(for: NSRange(location: min(start, text.length), length: 0))
         let found = text.range(of: query, options: .caseInsensitive, range: lineRange)
         let target = found.location == NSNotFound ? NSRange(location: lineRange.location, length: 0) : found

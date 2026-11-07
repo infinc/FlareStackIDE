@@ -1,14 +1,14 @@
 {
   "id": "snippets",
   "name": "Snippets",
-  "version": "1.3",
+  "version": "1.4",
   "author": "FlareStackIDE",
   "symbol": "text.insert",
   "summary": "トリガーの単語と Tab で定型文を展開",
   "fileExtensions": [],
   "category": "編集",
   "files": ["plugin.dylib", "snippets.json", "README.md"],
-  "apiVersion": 2,
+  "apiVersion": 3,
   "hashes": {
     "README.md": "ee14767d29911bccb1a015ff4e9fa15ebb4093bbffad97e6a64f7db95bf3a17d",
     "plugin.dylib": "0f3d3b724b989061429d899b4d508ceefadf477e81b05e608e01b3f5d070c897",

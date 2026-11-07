@@ -9,17 +9,7 @@ final class LSPClientPlugin: NativePlugin {
 }
 
 enum LSPText {
-    static func lineStarts(_ text: NSString) -> [Int] {
-        var starts = [0]
-        var i = 0
-        while i < text.length {
-            let r = text.range(of: "\n", options: .literal, range: NSRange(location: i, length: text.length - i))
-            if r.location == NSNotFound { break }
-            starts.append(r.location + 1)
-            i = r.location + 1
-        }
-        return starts
-    }
+    static func lineStarts(_ text: NSString) -> [Int] { LineIndex.starts(text) }
 
     static func offset(_ position: [String: Any]?, in text: NSString, starts: [Int]) -> Int {
         let line = (position?["line"] as? NSNumber)?.intValue ?? 0
@@ -36,13 +26,8 @@ enum LSPText {
     }
 
     static func position(_ offset: Int, in text: NSString) -> [String: Int] {
-        let starts = lineStarts(text)
-        var low = 0, high = starts.count - 1
-        while low < high {
-            let mid = (low + high + 1) / 2
-            if starts[mid] <= offset { low = mid } else { high = mid - 1 }
-        }
-        return ["line": low, "character": offset - starts[low]]
+        let found = LineIndex.position(of: offset, in: text)
+        return ["line": found.line, "character": found.character]
     }
 
     static func url(_ uri: String?) -> URL? {

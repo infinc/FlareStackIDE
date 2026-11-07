@@ -1,7 +1,7 @@
 {
   "id": "lsp-client",
   "name": "LSP Client",
-  "version": "1.2",
+  "version": "1.3",
   "author": "FlareStackIDE",
   "symbol": "brain",
   "summary": "言語サーバーで診断・ホバー・定義へ移動・名前の変更・補完（Python・TypeScript・Swift・Rust・Go・C/C++ など）",
@@ -21,9 +21,9 @@
     { "key": "commandShell", "title": "シェルスクリプト のコマンド（空なら自動）", "type": "string" },
     { "key": "commandLua", "title": "Lua のコマンド（空なら自動）", "type": "string" }
   ],
-  "apiVersion": 2,
+  "apiVersion": 3,
   "hashes": {
     "README.md": "8c3122af65e83ba9c9ae06ee24fef866ccc2af880c38c9e6cc917198e8ac8879",
-    "plugin.dylib": "8423b14e7029496db8576557144f8db9ad7a6b43674263214ab2aa104d2c168e"
+    "plugin.dylib": "bc58af893ef77159a10c8a5b7d75ae810b68b1d276c35a2ecf13a0431242c9f5"
   }
 }

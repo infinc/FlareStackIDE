@@ -95,7 +95,7 @@ extension NativePlugin {
 
 enum NativePlugins {
     static let binary = "plugin.dylib"
-    static let apiVersion = 2
+    static let apiVersion = 3
     private typealias Entry = @convention(c) () -> Void
     private static var loaded: [String: (plugin: NativePlugin?, version: String)] = [:]
     private static var registering: NativePlugin?

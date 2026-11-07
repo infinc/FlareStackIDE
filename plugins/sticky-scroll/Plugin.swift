@@ -83,13 +83,7 @@ final class StickyScrollAddon: NSObject, TextAddon {
         starts = [0]
         scopes = []
         if ns.length <= Highlighter.limit {
-            var position = 0
-            while position < ns.length {
-                let next = ns.range(of: "\n", options: .literal, range: NSRange(location: position, length: ns.length - position))
-                if next.location == NSNotFound { break }
-                position = NSMaxRange(next)
-                starts.append(position)
-            }
+            starts = LineIndex.starts(of: textView)
             scopes = StickyScopes.find(in: text)
         }
         refresh()

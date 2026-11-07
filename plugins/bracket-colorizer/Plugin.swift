@@ -177,7 +177,7 @@ final class BracketColorizerAddon: TextAddon, TextDecorating {
     func textChanged() {
         scan = nil
         work?.cancel()
-        let item = DispatchWorkItem { [weak self] in self?.refresh() }
+        let item = DispatchWorkItem { [weak self] in if self?.scan == nil { self?.refresh() } }
         work = item
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2, execute: item)
     }
