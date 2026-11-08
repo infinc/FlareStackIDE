@@ -1,7 +1,8 @@
 import AppKit
 
 let appName = "FlareStackIDE"
-let releasesURL = URL(string: "https://api.github.com/repos/infinc/FlareStackIDE/releases/latest")!
+let repositoryPath = "infinc/FlareStackIDE"
+let releasesURL = URL(string: "https://api.github.com/repos/\(repositoryPath)/releases/latest")!
 
 struct Release: Decodable {
     struct Asset: Decodable {

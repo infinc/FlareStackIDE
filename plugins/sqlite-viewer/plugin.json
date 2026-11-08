@@ -1,0 +1,22 @@
+{
+  "id": "sqlite-viewer",
+  "name": "SQLite Viewer",
+  "version": "1.0",
+  "author": "FlareStackIDE",
+  "symbol": "cylinder.split.1x2",
+  "summary": "SQLite のテーブルを表で表示して SQL を実行",
+  "fileExtensions": ["sqlite", "sqlite3", "db", "db3", "s3db", "sl3"],
+  "category": "ビューア",
+  "permissions": ["files"],
+  "loadOnOpen": true,
+  "files": ["plugin.dylib", "README.md"],
+  "settings": [
+    { "key": "limit", "title": "表示する行数の上限", "type": "number", "min": 100, "max": 10000, "default": "1000" },
+    { "key": "allowWrite", "title": "書き込みを許可（INSERT・UPDATE・DELETE など）", "type": "bool", "default": "false" }
+  ],
+  "apiVersion": 3,
+  "hashes": {
+    "README.md": "63de25e5c39feb511a96ad35760b8decb19d179df62d86f2234bc5d3e3fe42af",
+    "plugin.dylib": "41ecb18314c10e8a4a4e2839f7cdc69d2bb9d46871d5715a9cac9ba9097fdf6c"
+  }
+}

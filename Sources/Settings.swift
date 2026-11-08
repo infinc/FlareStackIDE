@@ -985,9 +985,10 @@ final class BaseSettingsView: NSView {
     private let account = NSTextField(labelWithString: "")
     private let unlink = NSButton(title: "連携を解除", target: nil, action: nil)
     private let language = NSPopUpButton()
+    private let crashReport = NSButton(checkboxWithTitle: "プラグインのクラッシュを GitHub の Issue に自動で報告する", target: nil, action: nil)
 
     init(version: String) {
-        super.init(frame: NSRect(x: 0, y: 0, width: 480, height: 380))
+        super.init(frame: NSRect(x: 0, y: 0, width: 560, height: 520))
         git.target = self
         git.action = #selector(changed)
         projectAdd.addItems(withTitles: ProjectAddMode.allCases.map(\.title))
@@ -1005,6 +1006,15 @@ final class BaseSettingsView: NSView {
         language.addItems(withTitles: AppLanguage.allCases.map(\.title))
         language.target = self
         language.action = #selector(languageChanged)
+        crashReport.target = self
+        crashReport.action = #selector(changed)
+        let crashNote = NSTextField(wrappingLabelWithString: "次の起動時に、公開の Issue へプラグイン名・版・macOS の版・クラッシュした関数名を送ります。ファイルの内容やパスは送りません。")
+        crashNote.font = .systemFont(ofSize: 11)
+        crashNote.textColor = .secondaryLabelColor
+        crashNote.preferredMaxLayoutWidth = 500
+        let exportButton = NSButton(title: "書き出す…", target: SettingsTransfer.shared, action: #selector(SettingsTransfer.exportClicked(_:)))
+        let importButton = NSButton(title: "読み込む…", target: SettingsTransfer.shared, action: #selector(SettingsTransfer.importClicked(_:)))
+        [exportButton, importButton].forEach { $0.bezelStyle = .rounded }
 
         func section(_ title: String) -> NSTextField {
             let label = NSTextField(labelWithString: title)
@@ -1024,6 +1034,8 @@ final class BaseSettingsView: NSView {
             section("プロジェクト"), row([NSTextField(labelWithString: "開いたファイル・フォルダを一覧に"), projectAdd]),
             section("保存"), row([autosave, interval]),
             section("言語"), row([NSTextField(labelWithString: "表示の言語（再起動後に反映）"), language]),
+            section("設定ファイル"), row([NSTextField(labelWithString: "外観・エディタ・プラグインの設定を1つのファイルに"), exportButton, importButton]),
+            section("クラッシュ報告"), crashReport, crashNote,
             versionLabel,
         ])
         stack.orientation = .vertical
@@ -1032,7 +1044,9 @@ final class BaseSettingsView: NSView {
         stack.setCustomSpacing(18, after: stack.views[2])
         stack.setCustomSpacing(18, after: stack.views[4])
         stack.setCustomSpacing(18, after: stack.views[6])
-        stack.setCustomSpacing(24, after: stack.views[8])
+        stack.setCustomSpacing(18, after: stack.views[8])
+        stack.setCustomSpacing(18, after: stack.views[10])
+        stack.setCustomSpacing(24, after: stack.views[13])
         stack.edgeInsets = NSEdgeInsets(top: 20, left: 24, bottom: 20, right: 24)
         stack.translatesAutoresizingMaskIntoConstraints = false
         addSubview(stack)
@@ -1053,6 +1067,7 @@ final class BaseSettingsView: NSView {
         interval.selectItem(at: Settings.autosaveIntervals.firstIndex(of: Settings.autosaveInterval) ?? 2)
         interval.isEnabled = Settings.autosaveEnabled
         language.selectItem(at: AppLanguage.allCases.firstIndex(of: L10n.language) ?? 0)
+        crashReport.state = CrashReport.automatic ? .on : .off
         loadAccount()
     }
 
@@ -1077,6 +1092,7 @@ final class BaseSettingsView: NSView {
         Settings.autosaveEnabled = autosave.state == .on
         Settings.autosaveInterval = Settings.autosaveIntervals[max(interval.indexOfSelectedItem, 0)]
         interval.isEnabled = Settings.autosaveEnabled
+        CrashReport.automatic = crashReport.state == .on
     }
 
     @objc private func unlinkClicked() {

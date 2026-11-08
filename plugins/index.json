@@ -220,7 +220,7 @@
   {
     "id": "picture-video-viewer",
     "name": "Picture/Video Viewer",
-    "version": "1.3",
+    "version": "1.4",
     "author": "FlareStackIDE",
     "symbol": "photo.on.rectangle",
     "summary": "写真と動画をファイル編集画面で表示",
@@ -231,7 +231,7 @@
   {
     "id": "pdf-viewer",
     "name": "PDF Viewer",
-    "version": "1.3",
+    "version": "1.4",
     "author": "FlareStackIDE",
     "symbol": "doc.text.image",
     "summary": "PDF をファイル編集画面で表示",
@@ -287,7 +287,7 @@
   {
     "id": "csv-viewer",
     "name": "CSV Viewer",
-    "version": "1.3",
+    "version": "1.4",
     "author": "FlareStackIDE",
     "symbol": "tablecells",
     "summary": "CSV と TSV を表で表示して編集",
@@ -395,6 +395,51 @@
     "symbol": "number.square",
     "summary": "テキストとして開けないファイルを16進数で表示",
     "fileExtensions": [],
+    "category": "ビューア",
+    "apiVersion": 3
+  },
+  {
+    "id": "zen-mode",
+    "name": "Zen Mode",
+    "version": "1.0",
+    "author": "FlareStackIDE",
+    "symbol": "rectangle.center.inset.filled",
+    "summary": "タブ・アイコン列・フィードを隠して編集画面だけを表示",
+    "fileExtensions": [],
+    "category": "ウィンドウ・タブ",
+    "apiVersion": 3
+  },
+  {
+    "id": "indent-guides",
+    "name": "Indent Guides",
+    "version": "1.0",
+    "author": "FlareStackIDE",
+    "symbol": "text.alignleft",
+    "summary": "インデントの深さごとに縦の線を引く",
+    "fileExtensions": [],
+    "category": "表示",
+    "apiVersion": 3
+  },
+  {
+    "id": "sqlite-viewer",
+    "name": "SQLite Viewer",
+    "version": "1.0",
+    "author": "FlareStackIDE",
+    "symbol": "cylinder.split.1x2",
+    "summary": "SQLite のテーブルを表で表示して SQL を実行",
+    "fileExtensions": ["sqlite", "sqlite3", "db", "db3", "s3db", "sl3"],
+    "category": "ビューア",
+    "permissions": ["files"],
+    "apiVersion": 3
+  },
+  {
+    "id": "font-preview",
+    "name": "Font Preview",
+    "version": "1.0",
+    "author": "FlareStackIDE",
+    "symbol": "textformat",
+    "summary": "フォントファイルの見本・文字・グリフを表示",
+    "fileExtensions": ["ttf", "otf", "ttc", "otc", "dfont", "woff", "woff2"],
     "category": "ビューア",
     "apiVersion": 3
   }

@@ -1,0 +1,20 @@
+{
+  "id": "zen-mode",
+  "name": "Zen Mode",
+  "version": "1.0",
+  "author": "FlareStackIDE",
+  "symbol": "rectangle.center.inset.filled",
+  "summary": "タブ・アイコン列・フィードを隠して編集画面だけを表示",
+  "fileExtensions": [],
+  "category": "ウィンドウ・タブ",
+  "files": ["plugin.dylib", "README.md"],
+  "settings": [
+    { "key": "fullScreen", "title": "集中モードで全画面にする", "type": "bool", "default": "false" },
+    { "key": "width", "title": "本文の幅（文字数。自動 = 中央に寄せない）", "type": "number", "min": 60, "max": 200 }
+  ],
+  "apiVersion": 3,
+  "hashes": {
+    "README.md": "ef3c2344fe1b9b4294a3b24544eb40bf905eb08c6eb0ade1e658244a3dd2e692",
+    "plugin.dylib": "7a804521274af66816d8fb0e163b571ef13c7863abcb5b0993ae64ce13fb0d14"
+  }
+}

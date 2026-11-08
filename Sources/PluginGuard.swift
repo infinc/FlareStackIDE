@@ -54,13 +54,17 @@ enum PluginGuard {
             PluginGuard.record(exception.callStackReturnAddresses.map { UnsafeMutableRawPointer(bitPattern: $0.uintValue) })
         }
         guard !ids.isEmpty else { return }
+        CrashReport.collect(ids)
         DispatchQueue.main.asyncAfter(deadline: .now() + 3) { reportPrevious(ids) }
     }
+
+    static func crashCount(_ id: String) -> Int { UserDefaults.standard.integer(forKey: countKey(id)) }
 
     private static func reportPrevious(_ ids: [String]) {
         for id in ids where !isDisabled(id) {
             let name = PluginStore.info(id)?.name ?? id
-            Toasts.post("前回 \(name) が原因で \(appName) が終了しました", message: "もう一度終了すると、このプラグインを自動で止めます")
+            Toasts.post("前回 \(name) が原因で \(appName) が終了しました", message: "もう一度終了すると、このプラグインを自動で止めます",
+                        actions: CrashReport.actions(for: id))
         }
     }
 
@@ -85,7 +89,7 @@ enum PluginGuard {
         guard !notified.contains(info.id) else { return }
         notified.insert(info.id)
         Toasts.post("\(info.name) を止めています", message: "このプラグインが原因で \(appName) が続けて終了したため、読み込んでいません",
-                    actions: [("有効にする", { enable(info.id) })])
+                    actions: [("有効にする", { enable(info.id) })] + CrashReport.actions(for: info.id))
     }
 
     private static func match(_ frame: UnsafeMutableRawPointer?) -> Bool {

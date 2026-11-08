@@ -22,6 +22,7 @@ struct PluginInfo: Codable {
     var requires: [String]?
     var permissions: [String]?
     var category: String?
+    var loadOnOpen: Bool?
 
     var isNative: Bool { files?.contains(NativePlugins.binary) ?? (apiVersion != nil) }
 }
@@ -320,17 +321,64 @@ enum PluginStore {
         }
     }
 
+    static var updatableIDs: [String] { installedIDs.filter { hasUpdate($0) && !isBusy($0) } }
+
+    static func updateAll(_ ids: [String]? = nil) {
+        let targets = (ids ?? updatableIDs).filter { hasUpdate($0) && !isBusy($0) }
+        guard !targets.isEmpty else { return }
+        if targets.count == 1 { return update(targets[0]) }
+        let group = DispatchGroup()
+        var done: [String] = []
+        var failed: [(String, Error)] = []
+        for id in targets {
+            group.enter()
+            install(id) { error in
+                let name = info(id)?.name ?? id
+                if let error { failed.append((name, error)) } else { done.append("\(name) v\(installed(id)?.version ?? "")") }
+                group.leave()
+            }
+        }
+        group.notify(queue: .main) {
+            if !done.isEmpty { Toasts.post("\(done.count) 個のプラグインを更新しました", message: done.sorted().joined(separator: "\n")) }
+            if !failed.isEmpty {
+                Toasts.post("\(failed.count) 個のプラグインの更新に失敗しました",
+                            message: failed.map { "\($0.0): \($0.1.localizedDescription)" }.joined(separator: "\n"))
+            }
+        }
+    }
+
+    private static var updateTimer: Timer?
+    private static let updateInterval: TimeInterval = 6 * 60 * 60
+
+    static func startPeriodicCheck() {
+        guard updateTimer == nil else { return }
+        let timer = Timer(timeInterval: updateInterval, repeats: true) { _ in refreshCatalog() }
+        timer.tolerance = 600
+        RunLoop.main.add(timer, forMode: .common)
+        updateTimer = timer
+    }
+
     private static func notifyUpdates() {
-        for id in installedIDs where hasUpdate(id) {
-            guard let local = installed(id), let latest = latestVersion(id), !isBusy(id) else { continue }
+        var automatic: [String] = []
+        var manual: [String] = []
+        for id in updatableIDs {
             let grows = remote.first { $0.id == id }.map { !PluginPermission.added($0).isEmpty } ?? false
             if Settings.pluginAutoUpdate && !grows {
-                update(id)
-            } else if notified[id] != latest {
+                automatic.append(id)
+            } else if let latest = latestVersion(id), notified[id] != latest {
                 notified[id] = latest
-                Toasts.post("\(local.name) のアップデートがあります", message: "v\(local.version) → v\(latest)",
-                            actions: [("アップデート", { update(id) })])
+                manual.append(id)
             }
+        }
+        updateAll(automatic)
+        guard !manual.isEmpty else { return }
+        let lines = manual.compactMap { id in installed(id).map { "\($0.name)　v\($0.version) → v\(latestVersion(id) ?? "")" } }
+        if manual.count == 1, let local = installed(manual[0]) {
+            Toasts.post("\(local.name) のアップデートがあります", message: "v\(local.version) → v\(latestVersion(manual[0]) ?? "")",
+                        actions: [("アップデート", { update(manual[0]) })])
+        } else {
+            Toasts.post("\(manual.count) 個のプラグインにアップデートがあります", message: lines.joined(separator: "\n"),
+                        actions: [("すべてアップデート", { updateAll(manual) })])
         }
     }
 
@@ -1058,6 +1106,7 @@ final class PluginManagerView: NSView {
     private let auto = NSButton(checkboxWithTitle: "プラグインを自動でアップデートする", target: nil, action: nil)
     private let unsigned = NSButton(checkboxWithTitle: "署名のないプラグインを許可（開発用。改ざんを検出できません）", target: nil, action: nil)
     private let status = NSTextField(labelWithString: "")
+    private let updateAll = NSButton(title: "すべてアップデート", target: nil, action: nil)
     private let list = NSStackView()
 
     init() {
@@ -1070,9 +1119,12 @@ final class PluginManagerView: NSView {
         unsigned.translatesAutoresizingMaskIntoConstraints = false
         let check = NSButton(title: "更新を確認", target: self, action: #selector(checkClicked))
         check.bezelStyle = .rounded
+        updateAll.bezelStyle = .rounded
+        updateAll.target = self
+        updateAll.action = #selector(updateAllClicked)
         status.font = .systemFont(ofSize: 11)
         status.textColor = .secondaryLabelColor
-        let top = NSStackView(views: [auto, NSView(), status, check])
+        let top = NSStackView(views: [auto, NSView(), status, updateAll, check])
         top.translatesAutoresizingMaskIntoConstraints = false
         list.orientation = .vertical
         list.alignment = .leading
@@ -1164,6 +1216,7 @@ final class PluginManagerView: NSView {
         auto.state = Settings.pluginAutoUpdate ? .on : .off
         unsigned.state = PluginTrust.allowUnsigned ? .on : .off
         status.stringValue = PluginStore.loading ? "確認中…" : PluginStore.catalogError != nil ? "確認できませんでした" : ""
+        updateAll.isHidden = PluginStore.updatableIDs.isEmpty
         list.arrangedSubviews.forEach { $0.removeFromSuperview() }
         let installed = PluginStore.installedIDs.compactMap(PluginStore.installed)
         if installed.isEmpty {
@@ -1193,6 +1246,8 @@ final class PluginManagerView: NSView {
     }
 
     @objc private func checkClicked() { PluginStore.refreshCatalog() }
+
+    @objc private func updateAllClicked() { PluginStore.updateAll() }
 }
 
 private final class PluginActionButton: NSButton {

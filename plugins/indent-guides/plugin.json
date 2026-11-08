@@ -1,0 +1,22 @@
+{
+  "id": "indent-guides",
+  "name": "Indent Guides",
+  "version": "1.0",
+  "author": "FlareStackIDE",
+  "symbol": "text.alignleft",
+  "summary": "インデントの深さごとに縦の線を引く",
+  "fileExtensions": [],
+  "category": "表示",
+  "files": ["plugin.dylib", "README.md"],
+  "settings": [
+    { "key": "size", "title": "インデントの幅", "type": "choice", "options": ["自動", "2", "4", "8"], "default": "自動" },
+    { "key": "color", "title": "線の色", "type": "color" },
+    { "key": "highlightActive", "title": "カーソルのあるブロックの線を強調", "type": "bool", "default": "true" },
+    { "key": "activeColor", "title": "強調した線の色", "type": "color" }
+  ],
+  "apiVersion": 3,
+  "hashes": {
+    "README.md": "1253edee5f086773d25f9cb6d8191d98fb2fe716532d00539ef2450fe35c33ad",
+    "plugin.dylib": "8dfdca14fb0ae32e2ff7eb5c6d14b9a46f6efd1754707b6cce9baa66f82bfc3e"
+  }
+}
