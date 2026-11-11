@@ -1,4 +1,5 @@
 import AppKit
+import UniformTypeIdentifiers
 @testable import FlareStackIDE
 
 enum GitCommand {
@@ -38,6 +39,9 @@ struct GitState {
     var stashes: [(ref: String, subject: String)] = []
     var tags: [String] = []
     var conflicts: [String] = []
+    var ahead = 0
+    var behind = 0
+    var lastCommit: String?
 
     static func load(from dir: URL) -> GitState? {
         guard let root = Git.run(["rev-parse", "--show-toplevel"], in: dir)?.trimmingCharacters(in: .whitespacesAndNewlines), !root.isEmpty else { return nil }
@@ -53,6 +57,13 @@ struct GitState {
         }
         state.tags = lines(["tag", "--sort=-creatordate"])
         state.conflicts = lines(["diff", "--name-only", "--diff-filter=U"])
+        if upstream != nil, let counts = Git.run(["rev-list", "--left-right", "--count", "HEAD...@{u}"], in: top)?
+            .split(whereSeparator: { $0 == "\t" || $0 == " " || $0 == "\n" }).compactMap({ Int($0) }), counts.count == 2 {
+            state.ahead = counts[0]
+            state.behind = counts[1]
+        }
+        state.lastCommit = Git.run(["log", "-1", "--format=%h %s"], in: top)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if state.lastCommit?.isEmpty == true { state.lastCommit = nil }
         if let dir = Git.run(["rev-parse", "--absolute-git-dir"], in: top)?.trimmingCharacters(in: .whitespacesAndNewlines) {
             let exists = { FileManager.default.fileExists(atPath: (dir as NSString).appendingPathComponent($0)) }
             state.operation = exists("rebase-merge") || exists("rebase-apply") ? "rebase" : exists("MERGE_HEAD") ? "merge" : nil
@@ -87,26 +98,116 @@ struct GitState {
     }
 }
 
+final class GitTint: NSView {
+    var fill: NSColor { didSet { needsDisplay = true } }
+    var radius: CGFloat
+    var stroke: NSColor?
+
+    init(fill: NSColor, radius: CGFloat = 6, stroke: NSColor? = nil) {
+        self.fill = fill
+        self.radius = radius
+        self.stroke = stroke
+        super.init(frame: .zero)
+        wantsLayer = true
+        translatesAutoresizingMaskIntoConstraints = false
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override var wantsUpdateLayer: Bool { true }
+
+    override func updateLayer() {
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            layer?.backgroundColor = fill.cgColor
+            layer?.cornerRadius = radius
+            layer?.borderWidth = stroke == nil ? 0 : 1
+            layer?.borderColor = stroke?.cgColor
+        }
+    }
+}
+
+final class GitMessageView: NSTextView {
+    var placeholder = ""
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        guard string.isEmpty else { return }
+        let origin = NSPoint(x: textContainerInset.width + (textContainer?.lineFragmentPadding ?? 0), y: textContainerInset.height)
+        (placeholder as NSString).draw(at: origin, withAttributes: [.font: font ?? .systemFont(ofSize: 12), .foregroundColor: NSColor.placeholderTextColor])
+    }
+
+    override func didChangeText() {
+        super.didChangeText()
+        needsDisplay = true
+    }
+}
+
 final class GitActionsView: NSView, NSTableViewDataSource, NSTableViewDelegate {
     private enum Row {
-        case header(String, staged: Bool)
+        case header(String, count: Int, staged: Bool)
         case file(GitChange)
     }
 
     private weak var editor: EditorWindowController?
     private let branchMenu = NSPopUpButton()
-    private let banner = NSStackView()
+    private let syncLabel = NSTextField(labelWithString: "")
+    private let banner = GitTint(fill: NSColor.systemOrange.withAlphaComponent(0.14), radius: 7, stroke: NSColor.systemOrange.withAlphaComponent(0.35))
+    private let bannerRow = NSStackView()
     private let bannerLabel = NSTextField(labelWithString: "")
     private let table = NSTableView()
-    private let message = NSTextView()
+    private let message = GitMessageView()
     private let commitButton = NSButton(title: "コミット", target: nil, action: nil)
-    private let empty = NSTextField(labelWithString: "Git リポジトリではありません")
+    private let commitSummary = NSTextField(labelWithString: "")
+    private let lastCommit = NSTextField(labelWithString: "")
+    private let clean = NSStackView()
+    private let empty = NSStackView()
     private let body = NSView()
+    private var pullButton: NSButton!
+    private var pushButton: NSButton!
     private var actionButtons: [NSButton] = []
     private var rows: [Row] = []
     private var state: GitState?
     private var busy = false
     private var pendingAction: (() -> Void)?
+
+    private static func symbol(_ name: String, _ size: CGFloat = 11, _ weight: NSFont.Weight = .medium) -> NSImage? {
+        NSImage(systemSymbolName: name, accessibilityDescription: nil)?.withSymbolConfiguration(.init(pointSize: size, weight: weight))
+    }
+
+    private func toolButton(_ title: String, _ symbol: String, _ tip: String, _ action: Selector) -> NSButton {
+        let button = NSButton(title: title, image: Self.symbol(symbol) ?? NSImage(), target: self, action: action)
+        button.bezelStyle = .accessoryBarAction
+        button.showsBorderOnlyWhileMouseInside = true
+        button.imagePosition = title.isEmpty ? .imageOnly : .imageLeading
+        button.imageHugsTitle = true
+        button.controlSize = .small
+        button.font = .systemFont(ofSize: 11, weight: .medium)
+        button.toolTip = tip
+        return button
+    }
+
+    private func divider() -> NSView {
+        let line = GitTint(fill: .separatorColor, radius: 0)
+        line.widthAnchor.constraint(equalToConstant: 1).isActive = true
+        line.heightAnchor.constraint(equalToConstant: 16).isActive = true
+        return line
+    }
+
+    private static func placeholder(_ symbol: String, _ title: String, _ detail: String, into stack: NSStackView) {
+        let icon = NSImageView(image: Self.symbol(symbol, 28, .light) ?? NSImage())
+        icon.contentTintColor = .tertiaryLabelColor
+        let head = NSTextField(labelWithString: title)
+        head.font = .systemFont(ofSize: 13, weight: .semibold)
+        head.textColor = .secondaryLabelColor
+        let sub = NSTextField(labelWithString: detail)
+        sub.font = .systemFont(ofSize: 11)
+        sub.textColor = .tertiaryLabelColor
+        [icon, head, sub].forEach(stack.addArrangedSubview)
+        stack.orientation = .vertical
+        stack.spacing = 4
+        stack.setCustomSpacing(8, after: icon)
+        stack.translatesAutoresizingMaskIntoConstraints = false
+    }
 
     init(editor: EditorWindowController) {
         self.editor = editor
@@ -114,44 +215,60 @@ final class GitActionsView: NSView, NSTableViewDataSource, NSTableViewDelegate {
         branchMenu.target = self
         branchMenu.action = #selector(branchChosen)
         branchMenu.controlSize = .small
-        branchMenu.font = .systemFont(ofSize: 11)
-        let actions: [(String, Selector)] = [("Fetch", #selector(fetch)), ("Pull", #selector(pull)), ("Push", #selector(push)),
-                                             ("Stash", #selector(stash)), ("Stash Pop", #selector(stashPop))]
-        actionButtons = actions.map { title, action in
-            let button = NSButton(title: title, target: self, action: action)
-            button.controlSize = .small
-            button.font = .systemFont(ofSize: 11)
-            return button
-        }
-        let menus = [("Stash 一覧", #selector(stashMenu(_:))), ("タグ", #selector(tagMenu(_:))), ("Rebase", #selector(rebaseMenu(_:)))].map { title, action in
-            let button = NSButton(title: title + " ▾", target: self, action: action)
-            button.controlSize = .small
-            button.font = .systemFont(ofSize: 11)
-            return button
-        }
-        actionButtons += menus
-        let toolbarRow = NSStackView(views: [branchMenu] + actionButtons)
-        toolbarRow.spacing = 6
-        toolbarRow.edgeInsets = NSEdgeInsets(top: 6, left: 10, bottom: 6, right: 10)
+        branchMenu.bezelStyle = .accessoryBarAction
+        branchMenu.font = .systemFont(ofSize: 12, weight: .semibold)
+        branchMenu.toolTip = "ブランチを切り替え"
+        let branchIcon = NSImageView(image: Self.symbol("arrow.triangle.branch", 12, .semibold) ?? NSImage())
+        branchIcon.contentTintColor = .controlAccentColor
+        syncLabel.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
+        syncLabel.textColor = .secondaryLabelColor
+
+        let fetchButton = toolButton("Fetch", "arrow.triangle.2.circlepath", "すべてのリモートから取得", #selector(fetch))
+        pullButton = toolButton("Pull", "arrow.down.circle", "Pull（fast-forward のみ）", #selector(pull))
+        pushButton = toolButton("Push", "arrow.up.circle", "Push", #selector(push))
+        let stashButton = toolButton("", "tray.and.arrow.down", "Stash（新規ファイルも含む）", #selector(stash))
+        let popButton = toolButton("", "tray.and.arrow.up", "Stash Pop", #selector(stashPop))
+        let stashList = toolButton("Stash", "chevron.down", "Stash 一覧", #selector(stashMenu(_:)))
+        let tagButton = toolButton("タグ", "chevron.down", "タグ", #selector(tagMenu(_:)))
+        let rebaseButton = toolButton("Rebase", "chevron.down", "Rebase", #selector(rebaseMenu(_:)))
+        [stashList, tagButton, rebaseButton].forEach { $0.imagePosition = .imageTrailing }
+        actionButtons = [fetchButton, pullButton, pushButton, stashButton, popButton, stashList, tagButton, rebaseButton]
+
+        let spacer = NSView()
+        spacer.setContentHuggingPriority(.init(1), for: .horizontal)
+        let toolbarRow = NSStackView(views: [branchIcon, branchMenu, syncLabel, spacer,
+                                             fetchButton, pullButton, pushButton, divider(),
+                                             stashButton, popButton, stashList, divider(), tagButton, rebaseButton])
+        toolbarRow.spacing = 4
+        toolbarRow.setCustomSpacing(2, after: branchIcon)
+        toolbarRow.setCustomSpacing(8, after: branchMenu)
+        toolbarRow.edgeInsets = NSEdgeInsets(top: 6, left: 12, bottom: 6, right: 10)
         toolbarRow.alignment = .centerY
+        toolbarRow.translatesAutoresizingMaskIntoConstraints = false
+        let toolbarLine = GitTint(fill: .separatorColor, radius: 0)
+
+        let warn = NSImageView(image: Self.symbol("exclamationmark.triangle.fill", 12) ?? NSImage())
+        warn.contentTintColor = .systemOrange
         bannerLabel.font = .systemFont(ofSize: 11, weight: .semibold)
-        bannerLabel.textColor = .systemOrange
-        banner.spacing = 6
-        banner.edgeInsets = NSEdgeInsets(top: 6, left: 10, bottom: 0, right: 10)
+        bannerLabel.textColor = .labelColor
+        bannerRow.spacing = 6
+        bannerRow.alignment = .centerY
+        bannerRow.edgeInsets = NSEdgeInsets(top: 4, left: 10, bottom: 4, right: 6)
+        bannerRow.translatesAutoresizingMaskIntoConstraints = false
+        bannerRow.addArrangedSubview(warn)
+        banner.addSubview(bannerRow)
         banner.isHidden = true
-        let toolbar = NSStackView(views: [banner, toolbarRow])
-        toolbar.orientation = .vertical
-        toolbar.alignment = .leading
-        toolbar.spacing = 0
-        toolbar.translatesAutoresizingMaskIntoConstraints = false
 
         let column = NSTableColumn(identifier: .init("file"))
         table.addTableColumn(column)
         table.headerView = nil
         table.dataSource = self
         table.delegate = self
-        table.rowSizeStyle = .small
+        table.rowSizeStyle = .custom
+        table.rowHeight = 26
+        table.intercellSpacing = NSSize(width: 0, height: 0)
         table.backgroundColor = .clear
+        table.style = .plain
         table.selectionHighlightStyle = .none
         table.target = self
         table.action = #selector(rowClicked)
@@ -162,60 +279,112 @@ final class GitActionsView: NSView, NSTableViewDataSource, NSTableViewDelegate {
         list.autohidesScrollers = true
         list.drawsBackground = false
         list.translatesAutoresizingMaskIntoConstraints = false
+        Self.placeholder("checkmark.seal", "作業ツリーはクリーンです", "コミットしていない変更はありません", into: clean)
+        clean.isHidden = true
 
+        let card = GitTint(fill: NSColor.labelColor.withAlphaComponent(0.04), radius: 10, stroke: NSColor.separatorColor)
+        let cardTitle = NSTextField(labelWithString: "コミット")
+        cardTitle.font = .systemFont(ofSize: 12, weight: .bold)
+        commitSummary.font = .systemFont(ofSize: 11)
+        commitSummary.textColor = .secondaryLabelColor
+        commitSummary.lineBreakMode = .byTruncatingTail
+        message.placeholder = "メッセージ（⌘↩ でコミット）"
         message.isRichText = false
         message.font = .systemFont(ofSize: 12)
         message.drawsBackground = false
-        message.textContainerInset = NSSize(width: 4, height: 4)
+        message.textContainerInset = NSSize(width: 6, height: 6)
         message.isAutomaticQuoteSubstitutionEnabled = false
         message.isAutomaticDashSubstitutionEnabled = false
         message.autoresizingMask = [.width]
+        let messageBox = GitTint(fill: .textBackgroundColor, radius: 6, stroke: .separatorColor)
         let messageScroll = NSScrollView()
         messageScroll.documentView = message
         messageScroll.hasVerticalScroller = true
         messageScroll.autohidesScrollers = true
-        messageScroll.borderType = .lineBorder
         messageScroll.drawsBackground = false
         messageScroll.translatesAutoresizingMaskIntoConstraints = false
+        messageBox.addSubview(messageScroll)
         commitButton.target = self
         commitButton.action = #selector(commit)
-        commitButton.controlSize = .small
+        commitButton.bezelStyle = .rounded
+        commitButton.controlSize = .regular
+        commitButton.bezelColor = .controlAccentColor
+        commitButton.image = Self.symbol("checkmark", 11, .bold)
+        commitButton.imagePosition = .imageLeading
+        commitButton.keyEquivalent = "\r"
+        commitButton.keyEquivalentModifierMask = .command
         commitButton.translatesAutoresizingMaskIntoConstraints = false
-        let title = NSTextField(labelWithString: "コミットメッセージ")
-        title.font = .systemFont(ofSize: 11, weight: .semibold)
-        title.textColor = .secondaryLabelColor
-        title.translatesAutoresizingMaskIntoConstraints = false
+        lastCommit.font = .systemFont(ofSize: 10)
+        lastCommit.textColor = .tertiaryLabelColor
+        lastCommit.lineBreakMode = .byTruncatingTail
+        lastCommit.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        [cardTitle, commitSummary, messageBox, commitButton, lastCommit].forEach {
+            $0.translatesAutoresizingMaskIntoConstraints = false
+            card.addSubview($0)
+        }
 
         body.translatesAutoresizingMaskIntoConstraints = false
-        [toolbar, list, title, messageScroll, commitButton].forEach(body.addSubview)
-        empty.textColor = .tertiaryLabelColor
-        empty.translatesAutoresizingMaskIntoConstraints = false
+        [toolbarRow, toolbarLine, banner, list, clean, card].forEach(body.addSubview)
+        Self.placeholder("externaldrive.badge.questionmark", "Git リポジトリではありません", "プロジェクトのフォルダで git init すると使えます", into: empty)
         empty.isHidden = true
         addSubview(body)
         addSubview(empty)
+        let listUnderToolbar = list.topAnchor.constraint(equalTo: toolbarLine.bottomAnchor, constant: 4)
+        listUnderToolbar.priority = .defaultHigh
         NSLayoutConstraint.activate([
             body.topAnchor.constraint(equalTo: topAnchor),
             body.leadingAnchor.constraint(equalTo: leadingAnchor),
             body.trailingAnchor.constraint(equalTo: trailingAnchor),
             body.bottomAnchor.constraint(equalTo: bottomAnchor),
-            toolbar.topAnchor.constraint(equalTo: body.topAnchor),
-            toolbar.leadingAnchor.constraint(equalTo: body.leadingAnchor),
-            list.topAnchor.constraint(equalTo: toolbar.bottomAnchor),
+            toolbarRow.topAnchor.constraint(equalTo: body.topAnchor),
+            toolbarRow.leadingAnchor.constraint(equalTo: body.leadingAnchor),
+            toolbarRow.trailingAnchor.constraint(equalTo: body.trailingAnchor),
+            toolbarLine.topAnchor.constraint(equalTo: toolbarRow.bottomAnchor),
+            toolbarLine.leadingAnchor.constraint(equalTo: body.leadingAnchor),
+            toolbarLine.trailingAnchor.constraint(equalTo: body.trailingAnchor),
+            toolbarLine.heightAnchor.constraint(equalToConstant: 1),
+            banner.topAnchor.constraint(equalTo: toolbarLine.bottomAnchor, constant: 8),
+            banner.leadingAnchor.constraint(equalTo: body.leadingAnchor, constant: 10),
+            banner.trailingAnchor.constraint(lessThanOrEqualTo: list.trailingAnchor),
+            bannerRow.topAnchor.constraint(equalTo: banner.topAnchor),
+            bannerRow.bottomAnchor.constraint(equalTo: banner.bottomAnchor),
+            bannerRow.leadingAnchor.constraint(equalTo: banner.leadingAnchor),
+            bannerRow.trailingAnchor.constraint(equalTo: banner.trailingAnchor),
+            listUnderToolbar,
             list.leadingAnchor.constraint(equalTo: body.leadingAnchor),
             list.bottomAnchor.constraint(equalTo: body.bottomAnchor),
-            list.trailingAnchor.constraint(equalTo: messageScroll.leadingAnchor, constant: -12),
-            title.topAnchor.constraint(equalTo: toolbar.bottomAnchor, constant: 2),
-            title.leadingAnchor.constraint(equalTo: messageScroll.leadingAnchor),
-            messageScroll.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 4),
-            messageScroll.trailingAnchor.constraint(equalTo: body.trailingAnchor, constant: -10),
-            messageScroll.widthAnchor.constraint(equalToConstant: 300),
-            messageScroll.bottomAnchor.constraint(equalTo: commitButton.topAnchor, constant: -6),
-            commitButton.trailingAnchor.constraint(equalTo: messageScroll.trailingAnchor),
-            commitButton.bottomAnchor.constraint(equalTo: body.bottomAnchor, constant: -8),
+            list.trailingAnchor.constraint(equalTo: card.leadingAnchor, constant: -10),
+            clean.centerXAnchor.constraint(equalTo: list.centerXAnchor),
+            clean.centerYAnchor.constraint(equalTo: list.centerYAnchor),
+            card.topAnchor.constraint(equalTo: toolbarLine.bottomAnchor, constant: 8),
+            card.trailingAnchor.constraint(equalTo: body.trailingAnchor, constant: -10),
+            card.bottomAnchor.constraint(equalTo: body.bottomAnchor, constant: -8),
+            card.widthAnchor.constraint(equalToConstant: 300),
+            cardTitle.topAnchor.constraint(equalTo: card.topAnchor, constant: 10),
+            cardTitle.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 12),
+            commitSummary.firstBaselineAnchor.constraint(equalTo: cardTitle.firstBaselineAnchor),
+            commitSummary.leadingAnchor.constraint(equalTo: cardTitle.trailingAnchor, constant: 8),
+            commitSummary.trailingAnchor.constraint(lessThanOrEqualTo: card.trailingAnchor, constant: -12),
+            messageBox.topAnchor.constraint(equalTo: cardTitle.bottomAnchor, constant: 8),
+            messageBox.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 10),
+            messageBox.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -10),
+            messageBox.bottomAnchor.constraint(equalTo: commitButton.topAnchor, constant: -8),
+            messageScroll.topAnchor.constraint(equalTo: messageBox.topAnchor, constant: 1),
+            messageScroll.leadingAnchor.constraint(equalTo: messageBox.leadingAnchor, constant: 1),
+            messageScroll.trailingAnchor.constraint(equalTo: messageBox.trailingAnchor, constant: -1),
+            messageScroll.bottomAnchor.constraint(equalTo: messageBox.bottomAnchor, constant: -1),
+            commitButton.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -10),
+            commitButton.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -10),
+            lastCommit.centerYAnchor.constraint(equalTo: commitButton.centerYAnchor),
+            lastCommit.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 12),
+            lastCommit.trailingAnchor.constraint(lessThanOrEqualTo: commitButton.leadingAnchor, constant: -8),
             empty.centerXAnchor.constraint(equalTo: centerXAnchor),
             empty.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
+        bannerTop = list.topAnchor.constraint(equalTo: banner.bottomAnchor, constant: 4)
     }
+
+    private var bannerTop: NSLayoutConstraint?
 
     required init?(coder: NSCoder) { fatalError() }
 
@@ -244,17 +413,34 @@ final class GitActionsView: NSView, NSTableViewDataSource, NSTableViewDelegate {
         branchMenu.menu?.addItem(.separator())
         branchMenu.addItem(withTitle: "新しいブランチ…")
         branchMenu.lastItem?.representedObject = Self.newBranch
+        if let upstream = loaded.upstream {
+            syncLabel.stringValue = loaded.ahead == 0 && loaded.behind == 0 ? "\(upstream) と同期済み" : "\(upstream)  ↑\(loaded.ahead) ↓\(loaded.behind)"
+            syncLabel.textColor = loaded.behind > 0 ? .systemOrange : .secondaryLabelColor
+        } else {
+            syncLabel.stringValue = "上流なし（Push で origin に設定）"
+            syncLabel.textColor = .tertiaryLabelColor
+        }
+        pullButton.title = loaded.behind > 0 ? "Pull \(loaded.behind)" : "Pull"
+        pushButton.title = loaded.ahead > 0 ? "Push \(loaded.ahead)" : "Push"
+        pushButton.contentTintColor = loaded.ahead > 0 ? .controlAccentColor : nil
+        pullButton.contentTintColor = loaded.behind > 0 ? .systemOrange : nil
         showBanner(loaded)
         rows = []
         if !loaded.staged.isEmpty {
-            rows.append(.header("ステージ済み (\(loaded.staged.count))", staged: true))
+            rows.append(.header("ステージ済み", count: loaded.staged.count, staged: true))
             rows += loaded.staged.map { .file($0) }
         }
         if !loaded.unstaged.isEmpty {
-            rows.append(.header("変更 (\(loaded.unstaged.count))", staged: false))
+            rows.append(.header("変更", count: loaded.unstaged.count, staged: false))
             rows += loaded.unstaged.map { .file($0) }
         }
+        clean.isHidden = !rows.isEmpty
         table.reloadData()
+        let count = loaded.staged.count
+        commitButton.title = count > 0 ? "コミット（\(count)）" : "コミット"
+        commitSummary.stringValue = count > 0 ? "\(count) 件 → \(loaded.branch)" : "ステージしたファイルはありません"
+        lastCommit.stringValue = loaded.lastCommit.map { "前回: \($0)" } ?? ""
+        lastCommit.toolTip = lastCommit.stringValue
     }
 
     private func perform(_ args: [String], title: String, done: String? = nil, then: (() -> Void)? = nil) {
@@ -308,14 +494,18 @@ final class GitActionsView: NSView, NSTableViewDataSource, NSTableViewDelegate {
 
     private func smallButton(_ title: String, _ action: Selector) -> NSButton {
         let button = NSButton(title: title, target: self, action: action)
+        button.bezelStyle = .accessoryBarAction
         button.controlSize = .small
-        button.font = .systemFont(ofSize: 11)
+        button.font = .systemFont(ofSize: 11, weight: .medium)
         return button
     }
 
     private func showBanner(_ state: GitState) {
-        banner.arrangedSubviews.forEach { $0.removeFromSuperview() }
-        guard let operation = state.operation else { return banner.isHidden = true }
+        bannerRow.arrangedSubviews.dropFirst().forEach { $0.removeFromSuperview() }
+        guard let operation = state.operation else {
+            bannerTop?.isActive = false
+            return banner.isHidden = true
+        }
         let left = state.conflicts.isEmpty ? "" : "（競合 \(state.conflicts.count) 件）"
         bannerLabel.stringValue = (operation == "rebase" ? "rebase の途中です" : "マージの途中です") + left
         var views: [NSView] = [bannerLabel]
@@ -324,8 +514,9 @@ final class GitActionsView: NSView, NSTableViewDataSource, NSTableViewDelegate {
         } else {
             views += [smallButton("マージを完了", #selector(mergeContinue)), smallButton("マージを中止", #selector(mergeAbort))]
         }
-        views.forEach(banner.addArrangedSubview)
+        views.forEach(bannerRow.addArrangedSubview)
         banner.isHidden = false
+        bannerTop?.isActive = true
     }
 
     private func popUp(_ menu: NSMenu, from sender: NSButton) {
@@ -575,47 +766,105 @@ final class GitActionsView: NSView, NSTableViewDataSource, NSTableViewDelegate {
 
     func numberOfRows(in tableView: NSTableView) -> Int { rows.count }
 
-    private func iconButton(_ symbol: String, _ tip: String, _ action: Selector, row: Int) -> NSButton {
-        let button = NSButton(image: NSImage(systemSymbolName: symbol, accessibilityDescription: tip)!, target: self, action: action)
-        button.isBordered = false
+    private func iconButton(_ symbol: String, _ tip: String, _ action: Selector, row: Int, tint: NSColor = .secondaryLabelColor) -> NSButton {
+        let button = NSButton(image: Self.symbol(symbol, 11, .semibold) ?? NSImage(), target: self, action: action)
+        button.bezelStyle = .accessoryBarAction
+        button.showsBorderOnlyWhileMouseInside = true
+        button.contentTintColor = tint
         button.toolTip = tip
         button.tag = row
         button.setContentHuggingPriority(.required, for: .horizontal)
         return button
     }
 
+    private func badge(_ change: GitChange) -> NSView {
+        let box = GitTint(fill: change.color.withAlphaComponent(0.18), radius: 4)
+        let letter = NSTextField(labelWithString: change.letter)
+        letter.font = .monospacedSystemFont(ofSize: 10, weight: .heavy)
+        letter.textColor = change.color
+        letter.alignment = .center
+        letter.translatesAutoresizingMaskIntoConstraints = false
+        box.addSubview(letter)
+        NSLayoutConstraint.activate([
+            box.widthAnchor.constraint(equalToConstant: 18),
+            box.heightAnchor.constraint(equalToConstant: 16),
+            letter.centerXAnchor.constraint(equalTo: box.centerXAnchor),
+            letter.centerYAnchor.constraint(equalTo: box.centerYAnchor),
+        ])
+        return box
+    }
+
+    func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
+        if case .header = rows[row] { return row == 0 ? 28 : 34 }
+        return 24
+    }
+
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         let leading: [NSView]
         let trailing: [NSView]
         switch rows[row] {
-        case .header(let title, let staged):
+        case .header(let title, let count, let staged):
+            let icon = NSImageView(image: Self.symbol(staged ? "checkmark.circle.fill" : "pencil.circle.fill", 12) ?? NSImage())
+            icon.contentTintColor = staged ? .systemGreen : .systemOrange
             let label = NSTextField(labelWithString: title)
-            label.font = .systemFont(ofSize: 11, weight: .semibold)
-            label.textColor = .secondaryLabelColor
-            let all = staged ? iconButton("minus", "すべてステージ解除", #selector(unstageAll), row: row)
-                : iconButton("plus", "すべてステージ", #selector(stageAll), row: row)
-            leading = [label]
+            label.font = .systemFont(ofSize: 11, weight: .bold)
+            label.textColor = .labelColor
+            let pill = GitTint(fill: NSColor.secondaryLabelColor.withAlphaComponent(0.15), radius: 7)
+            let number = NSTextField(labelWithString: "\(count)")
+            number.font = .monospacedDigitSystemFont(ofSize: 10, weight: .semibold)
+            number.textColor = .secondaryLabelColor
+            number.translatesAutoresizingMaskIntoConstraints = false
+            pill.addSubview(number)
+            NSLayoutConstraint.activate([
+                pill.heightAnchor.constraint(equalToConstant: 14),
+                pill.widthAnchor.constraint(greaterThanOrEqualToConstant: 20),
+                number.centerYAnchor.constraint(equalTo: pill.centerYAnchor),
+                number.leadingAnchor.constraint(equalTo: pill.leadingAnchor, constant: 6),
+                number.trailingAnchor.constraint(equalTo: pill.trailingAnchor, constant: -6),
+            ])
+            let all = NSButton(title: staged ? "すべて解除" : "すべてステージ", image: Self.symbol(staged ? "minus" : "plus", 10, .bold) ?? NSImage(),
+                               target: self, action: staged ? #selector(unstageAll) : #selector(stageAll))
+            all.bezelStyle = .accessoryBarAction
+            all.showsBorderOnlyWhileMouseInside = true
+            all.controlSize = .small
+            all.font = .systemFont(ofSize: 10, weight: .medium)
+            all.imagePosition = .imageLeading
+            all.contentTintColor = .secondaryLabelColor
+            leading = [icon, label, pill]
             trailing = [all]
         case .file(let change):
-            let letter = NSTextField(labelWithString: change.letter)
-            letter.font = .monospacedSystemFont(ofSize: 11, weight: .bold)
-            letter.textColor = change.color
-            let path = NSTextField(labelWithString: change.path)
-            path.font = .systemFont(ofSize: 11)
-            path.lineBreakMode = .byTruncatingMiddle
-            path.toolTip = change.path
-            path.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-            leading = [letter, path]
+            let name = (change.path as NSString).lastPathComponent
+            let folder = (change.path as NSString).deletingLastPathComponent
+            let type = UTType(filenameExtension: (name as NSString).pathExtension) ?? .data
+            let icon = NSImageView(image: NSWorkspace.shared.icon(for: type))
+            icon.imageScaling = .scaleProportionallyUpOrDown
+            icon.widthAnchor.constraint(equalToConstant: 14).isActive = true
+            icon.heightAnchor.constraint(equalToConstant: 14).isActive = true
+            let title = NSTextField(labelWithString: name)
+            title.font = .systemFont(ofSize: 12)
+            title.textColor = change.kind == .deleted ? .secondaryLabelColor : .labelColor
+            title.lineBreakMode = .byTruncatingMiddle
+            title.setContentCompressionResistancePriority(.init(400), for: .horizontal)
+            let path = NSTextField(labelWithString: folder)
+            path.font = .systemFont(ofSize: 10)
+            path.textColor = .tertiaryLabelColor
+            path.lineBreakMode = .byTruncatingHead
+            path.setContentCompressionResistancePriority(.init(300), for: .horizontal)
+            let stack = NSStackView(views: [badge(change), icon, title, path])
+            stack.spacing = 6
+            stack.toolTip = change.path
+            leading = [stack]
             trailing = change.staged ? [iconButton("minus", "ステージ解除", #selector(unstage(_:)), row: row)]
-                : [iconButton("arrow.uturn.backward", change.kind == .untracked ? "削除" : "変更を破棄", #selector(discard(_:)), row: row),
-                   iconButton("plus", "ステージ", #selector(stage(_:)), row: row)]
+                : [iconButton("arrow.uturn.backward", change.kind == .untracked ? "削除" : "変更を破棄", #selector(discard(_:)), row: row, tint: .systemRed),
+                   iconButton("plus", "ステージ", #selector(stage(_:)), row: row, tint: .systemGreen)]
         }
         let spacer = NSView()
-        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        spacer.setContentHuggingPriority(.init(1), for: .horizontal)
         let stack = NSStackView(views: leading + [spacer] + trailing)
         stack.orientation = .horizontal
         stack.spacing = 6
-        stack.edgeInsets = NSEdgeInsets(top: 0, left: 10, bottom: 0, right: 6)
+        stack.alignment = .centerY
+        stack.edgeInsets = NSEdgeInsets(top: 0, left: 12, bottom: 0, right: 6)
         return stack
     }
 }

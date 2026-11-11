@@ -22,7 +22,7 @@
   {
     "id": "runner",
     "name": "Runner",
-    "version": "1.7",
+    "version": "1.8",
     "author": "FlareStackIDE",
     "symbol": "play.circle",
     "summary": "起動構成を作ってプログラムを実行",
@@ -196,7 +196,7 @@
   {
     "id": "git-actions",
     "name": "Git Actions",
-    "version": "1.4",
+    "version": "1.5",
     "author": "FlareStackIDE",
     "symbol": "arrow.triangle.pull",
     "summary": "ステージ・コミット・push・pull・ブランチ切り替えを GUI で",
