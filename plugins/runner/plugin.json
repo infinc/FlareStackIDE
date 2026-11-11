@@ -1,7 +1,7 @@
 {
   "id": "runner",
   "name": "Runner",
-  "version": "1.7",
+  "version": "1.8",
   "author": "FlareStackIDE",
   "symbol": "play.circle",
   "summary": "起動構成を作ってプログラムを実行",
@@ -11,7 +11,7 @@
   "files": ["plugin.dylib", "README.md"],
   "apiVersion": 3,
   "hashes": {
-    "README.md": "ddd0ac182646004a22ae730dc1ea7ebfa8e32b0de4b142eff05c58bf3008c161",
-    "plugin.dylib": "c2c36463177a670f4fcb2dc9a4ec0e05203e4bb45621f7859822d06fabf94982"
+    "README.md": "e9775f4a17e79b19ab930992ee54d68f13fbf54d9de610012e2ec49ba9e999a0",
+    "plugin.dylib": "431c12c4931404b89d89391d045900b50be639480517b0c054ee47f60639e774"
   }
 }

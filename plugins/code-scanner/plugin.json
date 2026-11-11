@@ -11,8 +11,8 @@
   "files": ["plugin.dylib", "main.js", "README.md"],
   "apiVersion": 3,
   "hashes": {
-    "README.md": "84e7e2a903a9795470fafb3a7251bfe73a1a562fdc79aa146d479371d8b4264f",
+    "README.md": "37ca4e2c778c5247c08bb1eee350940c990910d19a7dda8ea303f8ff889f8143",
     "main.js": "04a09ed61e1c7113380615fb44fd3b665b6e93521c973b078c59586edd37a21e",
-    "plugin.dylib": "846f2b850f8cb761917aba417a1232de0c805841f7aa8713ce75701db8aed252"
+    "plugin.dylib": "7efcc0b653c4cb171cd2d2e410fa0e2d209b2eaa5ed7e05eedfb533eea34e971"
   }
 }

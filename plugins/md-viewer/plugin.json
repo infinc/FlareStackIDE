@@ -15,7 +15,7 @@
     { "key": "barPosition", "title": "透明表示のボタンの位置", "type": "choice", "options": ["右下", "右上", "左下", "左上"], "default": "右下" }
   ],
   "hashes": {
-    "README.md": "2c6eb0213289beb578c6181b630168a5e6b7876a0bd2f7f711b97e2cad2d95f3",
+    "README.md": "2c62788fba02287abe0f4bd01f359dc4d850b8ec711d1a80619ebdd022df812a",
     "main.js": "48614062d25dec320cba737b5508e8fba2fb2b6860569b21dd41f9c24072d0bd"
   }
 }

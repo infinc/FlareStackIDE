@@ -1,0 +1,20 @@
+{
+  "id": "font-preview",
+  "name": "Font Preview",
+  "version": "1.0",
+  "author": "FlareStackIDE",
+  "symbol": "textformat",
+  "summary": "フォントファイルの見本・文字・グリフを表示",
+  "fileExtensions": ["ttf", "otf", "ttc", "otc", "dfont", "woff", "woff2"],
+  "category": "ビューア",
+  "loadOnOpen": true,
+  "files": ["plugin.dylib", "README.md"],
+  "settings": [
+    { "key": "sample", "title": "見本の文字", "type": "string", "default": "The quick brown fox jumps over the lazy dog. 0123456789" }
+  ],
+  "apiVersion": 3,
+  "hashes": {
+    "README.md": "6336290de41a7588b238425693be82b69cf33d832469df626827811e83bf9253",
+    "plugin.dylib": "7df5572f810d9a53c6eaddd5c4779245998be29e4b0f68aa1187bf2fecffc263"
+  }
+}

@@ -17,7 +17,7 @@
   ],
   "apiVersion": 3,
   "hashes": {
-    "README.md": "f25829bfcb86ec91b5dcae791c9fff5a4557afc6137b9d6ce0d0570fd8df0948",
-    "plugin.dylib": "f20a28a9e2c1db28c23df31fa958008bcca35009e3c5da2da2548b16c8822e56"
+    "README.md": "37b34cae7507302599812560ec5277fe58c962c0654fee4b5baddfa862414673",
+    "plugin.dylib": "8825afdc912a65dba05fcdd10ea8fc8c1aef5b7cd877f7e02e99831543839a0b"
   }
 }

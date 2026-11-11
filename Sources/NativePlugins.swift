@@ -100,6 +100,7 @@ enum NativePlugins {
     private static var loaded: [String: (plugin: NativePlugin?, version: String)] = [:]
     private static var registering: NativePlugin?
     private static var restartNoted: Set<String> = []
+    private static var requested: Set<String> = []
 
     static func register(_ plugin: NativePlugin) { registering = plugin }
 
@@ -124,6 +125,7 @@ enum NativePlugins {
     static var active: [NativePlugin] {
         loadOrder.compactMap { id in
             guard let info = PluginStore.installed(id) else { return nil }
+            if info.loadOnOpen == true, loaded[id] == nil, !requested.contains(id) { return nil }
             if let entry = loaded[id] {
                 if entry.version != info.version, entry.plugin != nil, !restartNoted.contains(id) {
                     restartNoted.insert(id)
@@ -167,7 +169,14 @@ enum NativePlugins {
 
     static func fileWindow(for url: URL) -> FileWindow? { active.lazy.compactMap { $0.fileWindow(for: url) }.first }
 
-    static func viewer(for url: URL) -> EditorExtension? { active.lazy.compactMap { ($0 as? FileViewing)?.viewer(for: url) }.first }
+    static func viewer(for url: URL) -> EditorExtension? {
+        let ext = url.pathExtension.lowercased()
+        let listed = Set(PluginStore.installedIDs.filter { PluginStore.installed($0)?.fileExtensions.contains(ext) == true })
+        requested.formUnion(listed.filter { PluginStore.installed($0)?.loadOnOpen == true })
+        let viewers = active.compactMap { $0 as? FileViewing & NativePlugin }
+        let ordered = viewers.filter { listed.contains($0.id) } + viewers.filter { !listed.contains($0.id) }
+        return ordered.lazy.compactMap { $0.viewer(for: url) }.first
+    }
 
     static var opensFiles: Bool { active.contains { $0.opensFiles } }
 }

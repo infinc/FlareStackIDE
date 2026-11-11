@@ -28,6 +28,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WelcomeDelegate {
             self.showMainWindow()
             self.launched = true
             PluginStore.refreshCatalog()
+            PluginStore.startPeriodicCheck()
             let urls = self.pendingURLs
             self.pendingURLs = []
             urls.forEach(self.openFromFinder)
@@ -319,6 +320,9 @@ func buildMainMenu() -> NSMenu {
     let fileMenu = NSMenu(title: "ファイル")
     fileMenu.addItem(withTitle: "開く…", action: #selector(AppDelegate.openDocument(_:)), keyEquivalent: "o")
     fileMenu.addItem(withTitle: "保存", action: #selector(EditorWindowController.saveDocument(_:)), keyEquivalent: "s")
+    fileMenu.addItem(.separator())
+    fileMenu.addItem(withTitle: "設定を書き出す…", action: #selector(SettingsTransfer.exportClicked(_:)), keyEquivalent: "").target = SettingsTransfer.shared
+    fileMenu.addItem(withTitle: "設定を読み込む…", action: #selector(SettingsTransfer.importClicked(_:)), keyEquivalent: "").target = SettingsTransfer.shared
     fileMenu.addItem(.separator())
     fileMenu.addItem(withTitle: "閉じる", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
 

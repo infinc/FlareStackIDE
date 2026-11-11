@@ -287,6 +287,8 @@ final class RunConfigEditor: NSObject, NSTableViewDataSource, NSTableViewDelegat
         return NSApp.runModal(for: panel) == .OK
     }
 
+    @objc var worksWhenModal: Bool { true }
+
     private func label(_ text: String) -> NSTextField {
         let label = NSTextField(labelWithString: text)
         label.alignment = .right
@@ -461,6 +463,7 @@ final class RunConfigEditor: NSObject, NSTableViewDataSource, NSTableViewDelegat
 
     @objc private func newClicked() {
         let menu = NSMenu()
+        menu.autoenablesItems = false
         let plain = NSMenuItem(title: "テンプレートなし", action: #selector(templateClicked(_:)), keyEquivalent: "")
         plain.target = self
         menu.addItem(plain)

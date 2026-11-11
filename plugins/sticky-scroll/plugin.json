@@ -10,7 +10,7 @@
   "files": ["plugin.dylib", "README.md"],
   "apiVersion": 3,
   "hashes": {
-    "README.md": "75c25dc0527c870d224f1bd120dc6232fddfb85404de5d5c822a2339c5695116",
-    "plugin.dylib": "b39183bcb3c7c0de93540bb34fdcd3107135f3d0809c04da93b0bfa808e61e64"
+    "README.md": "7d2b8ef388717db85e46201e424e9fd9571ea0d04355e57c119a63ef57f286a9",
+    "plugin.dylib": "bc90aae6a8fe9503764d5b0b0218869f406b7d4eb70657ece8ccb2beace5c2f4"
   }
 }
