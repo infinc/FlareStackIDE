@@ -42,10 +42,11 @@ final class Buffer {
 
     init(url: URL) {
         self.url = url
-        if let file = TextFile.read(url) {
+        if let data = try? Data(contentsOf: url, options: .mappedIfSafe), let file = TextFile.read(data) {
             text = file.text
             format = file.format
             editable = true
+            if data.count <= LocalHistory.maxBytes { baseline = Data(data) }
         } else {
             text = "このファイルは表示できません。"
             editable = false
@@ -62,10 +63,38 @@ final class Buffer {
         dirty = false
     }
 
+    private var baseline: Data?
+    private var pendingSave: DispatchWorkItem?
+    private var autosaveFailed = false
+
     func save(atomically: Bool = true) throws {
+        pendingSave?.cancel()
+        pendingSave = nil
         let data = try TextFile.write(text, to: url, format: format, atomically: atomically)
         dirty = false
-        LocalHistory.record(url, data: data)
+        LocalHistory.record(url, data: data, previous: baseline)
+        baseline = nil
+    }
+
+    func scheduleSave(_ done: @escaping () -> Void) {
+        dirty = true
+        pendingSave?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, self.pendingSave != nil else { return }
+            do {
+                try self.save()
+                self.autosaveFailed = false
+            } catch {
+                self.dirty = true
+                if !self.autosaveFailed {
+                    Toasts.post("「\(self.url.lastPathComponent)」を自動保存できませんでした", message: error.localizedDescription)
+                }
+                self.autosaveFailed = true
+            }
+            done()
+        }
+        pendingSave = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: work)
     }
 
     func diskText() -> String? { TextFile.read(url, encoding: format.encoding)?.text }
@@ -1116,13 +1145,11 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
         guard let current else { return }
         if Settings.autosaveImmediate, current.editable {
             current.text = textView.string
-            do {
-                try current.save(atomically: false)
-            } catch {
-                current.dirty = true
+            current.scheduleSave { [weak self] in
+                self?.updateTitle()
+                self?.scheduleGitRefresh()
             }
             updateTitle()
-            scheduleGitRefresh()
             return
         }
         guard !current.dirty else { return }

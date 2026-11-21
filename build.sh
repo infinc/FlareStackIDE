@@ -60,13 +60,14 @@ emit() {
     printf '['
     emit "$(jsonlist swiftc -target arm64-apple-macos13 -sdk "$SDK" -enable-testing -module-name "$NAME" "$ROOT"/Sources/*.swift)" "$ROOT"/Sources/*.swift
     kit=("$ROOT"/PluginKit/*.swift)
+    pending=("${kit[@]}")
     for dir in "$ROOT"/plugins/*/; do
         sources=("$dir"*.swift)
         [ -e "${sources[0]}" ] || continue
         id="$(basename "$dir")"
-        emit "$(jsonlist swiftc -target arm64-apple-macos13 -sdk "$SDK" -module-name "FSPlugin_${id//-/_}" -I "$MODULE" "${sources[@]}" ${kit[@]+"${kit[@]}"})" \
-            "${sources[@]}" ${kit[@]+"${kit[@]}"}
-        kit=()
+        emit "$(jsonlist swiftc -target arm64-apple-macos13 -sdk "$SDK" -module-name "FSPlugin_${id//-/_}" -I "$MODULE" "${sources[@]}" "${kit[@]}")" \
+            "${sources[@]}" ${pending[@]+"${pending[@]}"}
+        pending=()
     done
     printf '\n]\n'
 } > "$ROOT/build/compile_commands.json"
@@ -138,12 +139,13 @@ PLIST
 progress "dmg 作成中"
 DMG="$ROOT/$NAME-$VERSION.dmg"
 STAGE="$ROOT/build/dmg"
-rm -rf "$STAGE" "$DMG"
+rm -rf "$STAGE" "$DMG" "$DMG.sig"
 mkdir -p "$STAGE"
 cp -R "$APP" "$STAGE/"
 ln -s /Applications "$STAGE/Applications"
 hdiutil create -volname "$NAME" -srcfolder "$STAGE" -ov -format UDZO "$DMG" 2> >(grep -v deprecated >&2) >/dev/null
 rm -rf "$STAGE"
+swift "$ROOT/tools/manifest.swift" --sign "$DMG"
 progress "完了"
 
 echo "Built $APP ($VERSION)"

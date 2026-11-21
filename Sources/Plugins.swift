@@ -112,6 +112,7 @@ enum PluginStore {
     private static var highlighters: [String: Highlighter] = [:]
     private static var notified: [String: String] = [:]
     private static var preapproved: Set<String> = []
+    private static var installWaiters: [String: [(Error?) -> Void]] = [:]
     private static var installedCache: [String: PluginInfo?] = [:]
     private static var installedIDsCache: [String]?
     private static var changePending = false
@@ -150,6 +151,7 @@ enum PluginStore {
     private static func invalidate() {
         installedCache = [:]
         installedIDsCache = nil
+        NativePlugins.invalidate()
     }
 
     private static func changed() {
@@ -194,13 +196,24 @@ enum PluginStore {
         for id in ids {
             let source = bundled.appendingPathComponent(id)
             guard let data = try? Data(contentsOf: source.appendingPathComponent("plugin.json")),
-                  let info = try? JSONDecoder().decode(PluginInfo.self, from: data) else { continue }
-            if let reason = PluginTrust.verifyInstalled(source, info: info, files: info.files ?? ["main.js"]) {
+                  let info = try? JSONDecoder().decode(PluginInfo.self, from: data), info.id == id else { continue }
+            let files = info.files ?? ["main.js"]
+            guard files.allSatisfy(isSafe) else {
+                rejected.append("\(info.name): plugin.json の files に不正なパスがあります")
+                continue
+            }
+            if let reason = compatibility(info).map({ "\(info.name): \($0)" })
+                ?? PluginTrust.verifyInstalled(source, info: info, files: files) {
                 rejected.append(reason)
                 continue
             }
-            try? fm.removeItem(at: folder(id))
-            try? fm.copyItem(at: source, to: folder(id))
+            let staging = directory.appendingPathComponent(".\(id)-bundled-\(UUID().uuidString)")
+            guard (try? fm.copyItem(at: source, to: staging)) != nil else { continue }
+            if fm.fileExists(atPath: folder(id).path) {
+                if (try? fm.replaceItemAt(folder(id), withItemAt: staging)) == nil { try? fm.removeItem(at: staging) }
+            } else if (try? fm.moveItem(at: staging, to: folder(id))) == nil {
+                try? fm.removeItem(at: staging)
+            }
         }
         try? stamp.write(to: marker, atomically: true, encoding: .utf8)
         invalidate()
@@ -403,14 +416,22 @@ enum PluginStore {
 
     private static func install(_ id: String, visiting: Set<String>, completion: @escaping (Error?) -> Void) {
         guard !visiting.contains(id) else { return completion(failure("プラグインの依存関係が循環しています（\(id)）")) }
-        guard isValidID(id), !busy.contains(id) else { return visiting.isEmpty ? () : completion(nil) }
+        guard isValidID(id) else { return completion(failure("プラグインの ID が正しくありません（\(id)）")) }
+        if installWaiters[id] != nil {
+            installWaiters[id]?.append(completion)
+            return
+        }
+        guard !busy.contains(id) else { return completion(failure("\(info(id)?.name ?? id) は処理中です")) }
         busy.insert(id)
+        installWaiters[id] = []
         changed()
         let finish: (Error?) -> Void = { error in
             busy.remove(id)
             detailsCache[id] = nil
+            let waiters = installWaiters.removeValue(forKey: id) ?? []
             changed()
             completion(error)
+            waiters.forEach { $0(error) }
         }
         fetch("\(id)/plugin.json") { result in
             let data: Data
@@ -481,8 +502,11 @@ enum PluginStore {
             if outcome == nil {
                 do {
                     try fm.createDirectory(at: directory, withIntermediateDirectories: true)
-                    if fm.fileExists(atPath: folder(id).path) { try fm.removeItem(at: folder(id)) }
-                    try fm.moveItem(at: staging, to: folder(id))
+                    if fm.fileExists(atPath: folder(id).path) {
+                        _ = try fm.replaceItemAt(folder(id), withItemAt: staging)
+                    } else {
+                        try fm.moveItem(at: staging, to: folder(id))
+                    }
                 } catch {
                     outcome = error
                 }
@@ -1497,6 +1521,19 @@ final class ScriptExtension: NSObject, EditorExtension, WKNavigationDelegate {
 
 final class LocalFileScheme: NSObject, WKURLSchemeHandler {
     static let scheme = "flarestack-file"
+    private let root: String?
+    private static let library = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library").path
+
+    init(root: URL? = nil) {
+        self.root = root.map { $0.resolvingSymlinksInPath().standardizedFileURL.path }
+    }
+
+    private func allows(_ path: String) -> Bool {
+        let real = URL(fileURLWithPath: path).resolvingSymlinksInPath().standardizedFileURL.path
+        if let root { return real == root || real.hasPrefix(root + "/") }
+        if real.hasPrefix(Self.library + "/") { return false }
+        return !real.split(separator: "/").contains { $0.hasPrefix(".") }
+    }
 
     static func url(for directory: URL) -> URL {
         var parts = URLComponents()
@@ -1507,8 +1544,8 @@ final class LocalFileScheme: NSObject, WKURLSchemeHandler {
     }
 
     func webView(_ webView: WKWebView, start task: WKURLSchemeTask) {
-        guard let url = task.request.url, let path = URLComponents(url: url, resolvingAgainstBaseURL: false)?.path,
-              let data = FileManager.default.contents(atPath: path) else {
+        guard let url = task.request.url, let path = URLComponents(url: url, resolvingAgainstBaseURL: false)?.path, allows(path),
+              let data = try? Data(contentsOf: URL(fileURLWithPath: path), options: .mappedIfSafe) else {
             return task.didFailWithError(URLError(.fileDoesNotExist))
         }
         let mime = UTType(filenameExtension: (path as NSString).pathExtension)?.preferredMIMEType ?? "application/octet-stream"

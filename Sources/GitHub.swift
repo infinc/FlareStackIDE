@@ -112,7 +112,7 @@ final class GitClone {
 
     init(_ request: CloneRequest, progress: @escaping (String, Double) -> Void, completion: @escaping (Error?) -> Void) {
         process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-        process.arguments = ["clone", "--progress", request.remote, request.destination.path]
+        process.arguments = ["clone", "--progress", "--", request.remote, request.destination.path]
         var env = ProcessInfo.processInfo.environment
         env["GIT_TERMINAL_PROMPT"] = "0"
         if let token = request.token, request.remote.hasPrefix("https://github.com/") {

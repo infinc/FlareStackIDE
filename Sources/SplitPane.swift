@@ -591,7 +591,7 @@ final class SplitPane: NSView, NSTextViewDelegate {
         current.text = textView.string
         ext?.update(text: current.text)
         if Settings.autosaveImmediate {
-            current.dirty = (try? current.save(atomically: false)) == nil
+            current.scheduleSave { [weak self] in self?.onChange?() }
         } else {
             current.dirty = true
         }

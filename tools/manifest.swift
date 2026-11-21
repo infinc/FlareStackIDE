@@ -24,7 +24,22 @@ if args.first == "--keygen" {
     exit(0)
 }
 
-guard let rootArg = args.first else { fail("使い方: swift tools/manifest.swift <リポジトリのルート> | --keygen") }
+if args.first == "--sign" {
+    guard let path = args.dropFirst().first, let data = try? Data(contentsOf: URL(fileURLWithPath: path), options: .mappedIfSafe) else {
+        fail("使い方: swift tools/manifest.swift --sign <ファイル>")
+    }
+    guard let text = try? String(contentsOfFile: keyPath, encoding: .utf8),
+          let raw = Data(base64Encoded: text.trimmingCharacters(in: .whitespacesAndNewlines)),
+          let key = try? Curve25519.Signing.PrivateKey(rawRepresentation: raw) else {
+        warn("署名鍵 \(keyPath) がないため \(path) に署名しません")
+        exit(0)
+    }
+    let signature = try! key.signature(for: data)
+    try! Data(signature.base64EncodedString().utf8).write(to: URL(fileURLWithPath: path + ".sig"))
+    exit(0)
+}
+
+guard let rootArg = args.first else { fail("使い方: swift tools/manifest.swift <リポジトリのルート> | --keygen | --sign <ファイル>") }
 let root = URL(fileURLWithPath: rootArg)
 let plugins = root.appendingPathComponent("plugins")
 
@@ -40,6 +55,17 @@ guard let apiMatch = nativeSource.range(of: #"static let apiVersion = \d+"#, opt
       let apiVersion = Int(nativeSource[apiMatch].split(separator: " ").last ?? "") else { fail("apiVersion が見つかりません") }
 
 func sha256(_ data: Data) -> String { SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined() }
+
+let lockURL = plugins.appendingPathComponent("abi.lock")
+if let module = try? Data(contentsOf: root.appendingPathComponent("build/module/FlareStackIDE.swiftmodule")) {
+    let current = "\(apiVersion) \(sha256(module))"
+    let locked = (try? String(contentsOf: lockURL, encoding: .utf8))?.trimmingCharacters(in: .whitespacesAndNewlines)
+    if let locked, locked != current, locked.hasPrefix("\(apiVersion) ") {
+        warn("本体のプラグイン向けの型が変わりました。公開済みのプラグインが落ちないよう Sources/NativePlugins.swift の apiVersion を上げてください（意図した互換なら plugins/abi.lock を消して再ビルド）")
+    } else if locked != current {
+        try! (current + "\n").write(to: lockURL, atomically: true, encoding: .utf8)
+    }
+}
 
 func json(_ value: Any) -> String {
     let data = try! JSONSerialization.data(withJSONObject: value, options: [.fragmentsAllowed, .withoutEscapingSlashes])

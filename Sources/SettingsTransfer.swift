@@ -54,6 +54,7 @@ final class SettingsTransfer: NSObject {
         let defaults = UserDefaults.standard
         for key in stored.keys where imported.defaults[key] == nil { defaults.removeObject(forKey: key) }
         for (key, value) in imported.defaults { defaults.set(value, forKey: key) }
+        NativePlugins.invalidate()
         NotificationCenter.default.post(name: .settingsChanged, object: nil)
         NotificationCenter.default.post(name: .pluginsChanged, object: nil)
     }

@@ -122,7 +122,18 @@ enum NativePlugins {
         return order
     }
 
+    private static var activeCache: [NativePlugin]?
+
+    static func invalidate() { activeCache = nil }
+
     static var active: [NativePlugin] {
+        if let activeCache { return activeCache }
+        let plugins = resolveActive()
+        activeCache = plugins
+        return plugins
+    }
+
+    private static func resolveActive() -> [NativePlugin] {
         loadOrder.compactMap { id in
             guard let info = PluginStore.installed(id) else { return nil }
             if info.loadOnOpen == true, loaded[id] == nil, !requested.contains(id) { return nil }
@@ -172,7 +183,11 @@ enum NativePlugins {
     static func viewer(for url: URL) -> EditorExtension? {
         let ext = url.pathExtension.lowercased()
         let listed = Set(PluginStore.installedIDs.filter { PluginStore.installed($0)?.fileExtensions.contains(ext) == true })
-        requested.formUnion(listed.filter { PluginStore.installed($0)?.loadOnOpen == true })
+        let wanted = listed.filter { PluginStore.installed($0)?.loadOnOpen == true }
+        if !wanted.isSubset(of: requested) {
+            requested.formUnion(wanted)
+            invalidate()
+        }
         let viewers = active.compactMap { $0 as? FileViewing & NativePlugin }
         let ordered = viewers.filter { listed.contains($0.id) } + viewers.filter { !listed.contains($0.id) }
         return ordered.lazy.compactMap { $0.viewer(for: url) }.first

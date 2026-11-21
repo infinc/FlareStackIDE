@@ -7,34 +7,38 @@ enum Refactor {
         options: [.anchorsMatchLines])
 
     static func apply(in base: URL, from old: URL, to new: URL, isDirectory: Bool) -> Int {
+        var changed = relocated(in: base, from: old, to: new, isDirectory: isDirectory)
+        guard !isDirectory else { return changed.count }
         let oldName = old.lastPathComponent, newName = new.lastPathComponent
-        let oldStem = isDirectory ? oldName : old.deletingPathExtension().lastPathComponent
-        let newStem = isDirectory ? newName : new.deletingPathExtension().lastPathComponent
+        let oldStem = old.deletingPathExtension().lastPathComponent
+        let newStem = new.deletingPathExtension().lastPathComponent
         let e = NSRegularExpression.escapedPattern(for:)
 
-        var rules: [(NSRegularExpression, String, Bool)] = []
-        if isDirectory {
-            rules.append((try! NSRegularExpression(pattern: #"(?<![\w.\-])"# + e(oldName) + #"(?=/)"#), newName, false))
-        } else {
-            rules.append((try! NSRegularExpression(pattern: #"(?<![\w\-])"# + e(oldName) + #"(?![\w\-])"#), newName, false))
+        var rules: [(NSRegularExpression, String)] = []
+        if let regex = try? NSRegularExpression(pattern: #"(?<![\w.\-/])"# + e(oldName) + #"(?![\w\-])"#) {
+            rules.append((regex, newName))
         }
-        if oldStem != newStem, !oldStem.isEmpty {
-            rules.append((try! NSRegularExpression(pattern: #"(?<![\w\-])"# + e(oldStem) + #"(?![\w\-])"#), newStem, true))
+        if oldStem != newStem, !oldStem.isEmpty,
+           let regex = try? NSRegularExpression(pattern: #"(?<![\w.\-/])"# + e(oldStem) + #"(?![\w\-/])"#) {
+            rules.append((regex, newStem))
         }
 
-        var changed = 0
         for file in textFiles(in: base) {
             guard let text = try? String(contentsOf: file, encoding: .utf8) else { continue }
-            let result = rewrite(text, rules)
+            let result = rewriteImports(text, rules)
             guard result != text, (try? result.write(to: file, atomically: true, encoding: .utf8)) != nil else { continue }
-            changed += 1
+            changed.insert(file.standardizedFileURL)
         }
-        return changed
+        return changed.count
     }
 
     private static let pathToken = try! NSRegularExpression(pattern: #"(?<=["'`(<])[^"'`()<>\s]+(?=["'`)>])"#)
 
     static func move(in base: URL, from old: URL, to new: URL, isDirectory: Bool) -> Int {
+        relocated(in: base, from: old, to: new, isDirectory: isDirectory).count
+    }
+
+    private static func relocated(in base: URL, from old: URL, to new: URL, isDirectory: Bool) -> Set<URL> {
         let root = canonical(base), oldPath = canonical(old), newPath = canonical(new)
         let forward = { (path: String) in relocate(path, oldPath, newPath) }
         let back = { (path: String) in relocate(path, newPath, oldPath) }
@@ -42,7 +46,7 @@ enum Refactor {
         let newBare = (newPath as NSString).deletingPathExtension
         let exists = { (path: String) in FileManager.default.fileExists(atPath: path) }
 
-        var changed = 0
+        var changed: Set<URL> = []
         for file in textFiles(in: base) {
             guard let text = try? String(contentsOf: file, encoding: .utf8) else { continue }
             let here = canonical(file)
@@ -86,7 +90,7 @@ enum Refactor {
             }
             if file.pathExtension == "py" { result = moveModules(result, root: root, oldPath: oldPath, newPath: newPath, isDirectory: isDirectory) }
             guard result != text, (try? result.write(to: file, atomically: true, encoding: .utf8)) != nil else { continue }
-            changed += 1
+            changed.insert(file.standardizedFileURL)
         }
         return changed
     }
@@ -146,14 +150,10 @@ enum Refactor {
         return (Array(repeating: "..", count: from.count - shared) + to[shared...]).joined(separator: "/")
     }
 
-    private static func rewrite(_ text: String, _ rules: [(NSRegularExpression, String, Bool)]) -> String {
+    private static func rewriteImports(_ text: String, _ rules: [(NSRegularExpression, String)]) -> String {
         var result = text
-        for (regex, replacement, importsOnly) in rules {
+        for (regex, replacement) in rules {
             let template = NSRegularExpression.escapedTemplate(for: replacement)
-            guard importsOnly else {
-                result = regex.stringByReplacingMatches(in: result, range: NSRange(result.startIndex..., in: result), withTemplate: template)
-                continue
-            }
             let ns = result as NSString
             var pieces: [String] = []
             var cursor = 0

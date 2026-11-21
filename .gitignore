@@ -10,3 +10,4 @@ debug_build.sh
 CLAUDE.md
 
 venv/
+*.dmg.sig
