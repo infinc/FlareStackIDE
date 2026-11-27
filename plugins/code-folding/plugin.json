@@ -1,7 +1,7 @@
 {
   "id": "code-folding",
   "name": "Code Folding",
-  "version": "1.4",
+  "version": "1.5",
   "author": "FlareStackIDE",
   "symbol": "chevron.down.square",
   "summary": "関数やブロックを折りたたんで隠す",
@@ -9,10 +9,10 @@
   "category": "表示",
   "requires": ["lines"],
   "files": ["plugin.dylib", "main.js", "README.md"],
-  "apiVersion": 3,
+  "apiVersion": 4,
   "hashes": {
-    "README.md": "d4f6ff24919307750901239ffc96749926ef2d4314391a4de7990853462f9b9b",
+    "README.md": "d974bf2b59c448cebd31e35559c1c61c53c365dd53cf621d5fd405b047ee7cac",
     "main.js": "c70572cb554633b173b19f454dcae17ffeff0c08323b497e2f725fc9d24af912",
-    "plugin.dylib": "5d787e2b26c31a018fa511d37e318e0a713b672e8a412c41bd777b2d8ccd9a0f"
+    "plugin.dylib": "ba8273795eced7252dfcfa3b61ee1b0f278df9efaf4a4f645e2447d8dd6c5910"
   }
 }

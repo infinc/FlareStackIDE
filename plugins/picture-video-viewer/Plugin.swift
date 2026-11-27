@@ -61,7 +61,7 @@ final class ImageViewer: MediaViewer, WKNavigationDelegate {
     override init(file: URL) {
         let config = WKWebViewConfiguration()
         config.defaultWebpagePreferences.allowsContentJavaScript = false
-        config.setURLSchemeHandler(LocalFileScheme(), forURLScheme: LocalFileScheme.scheme)
+        config.setURLSchemeHandler(LocalFileScheme(root: file.deletingLastPathComponent()), forURLScheme: LocalFileScheme.scheme)
         web = WKWebView(frame: .zero, configuration: config)
         web.allowsMagnification = true
         super.init(file: file)

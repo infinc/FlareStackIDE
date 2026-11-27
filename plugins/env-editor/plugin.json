@@ -1,0 +1,20 @@
+{
+  "id": "env-editor",
+  "name": "Env Editor",
+  "version": "1.0",
+  "author": "FlareStackIDE",
+  "symbol": "key.horizontal",
+  "summary": ".env ファイルを表で表示して編集。値は伏せ字で表示",
+  "fileExtensions": [],
+  "category": "ビューア",
+  "permissions": ["files"],
+  "files": ["plugin.dylib", "README.md"],
+  "settings": [
+    { "key": "maskByDefault", "title": "開いたときに値を伏せ字にする", "type": "bool", "default": "true" }
+  ],
+  "apiVersion": 4,
+  "hashes": {
+    "README.md": "6f8dda3417f32f2afba8c1e042728f20fcd8f4c8b49141574957805690e0ff2d",
+    "plugin.dylib": "ec7e861aca4f3ebbfeb88c48ce4c0ec2beb05060e8f7146aeb539b21f413339b"
+  }
+}

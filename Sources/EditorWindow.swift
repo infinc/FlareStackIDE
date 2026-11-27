@@ -10,11 +10,12 @@ final class FileNode {
         isDirectory = (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
     }
 
+    static let hiddenNames: Set<String> = [".DS_Store", ".git"]
+
     var children: [FileNode] {
         if let cached { return cached }
-        let hidden: Set<String> = [".DS_Store", ".git"]
         let urls = (try? FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: [.isDirectoryKey])) ?? []
-        let nodes = urls.filter { !hidden.contains($0.lastPathComponent) }.map(FileNode.init).sorted {
+        let nodes = urls.filter { !FileNode.hiddenNames.contains($0.lastPathComponent) }.map(FileNode.init).sorted {
             $0.isDirectory != $1.isDirectory ? $0.isDirectory
                 : $0.url.lastPathComponent.localizedStandardCompare($1.url.lastPathComponent) == .orderedAscending
         }
@@ -23,6 +24,10 @@ final class FileNode {
     }
 
     func invalidate() { cached = nil }
+
+    func loadedChild(_ name: String) -> FileNode? { cached?.first { $0.url.lastPathComponent == name } }
+
+    var isLoaded: Bool { cached != nil }
 
     func refresh() {
         guard let old = cached else { return }
@@ -42,10 +47,11 @@ final class Buffer {
 
     init(url: URL) {
         self.url = url
-        if let file = TextFile.read(url) {
+        if let data = try? Data(contentsOf: url, options: .mappedIfSafe), let file = TextFile.read(data) {
             text = file.text
             format = file.format
             editable = true
+            if data.count <= LocalHistory.maxBytes { baseline = Data(data) }
         } else {
             text = "このファイルは表示できません。"
             editable = false
@@ -62,10 +68,38 @@ final class Buffer {
         dirty = false
     }
 
+    private var baseline: Data?
+    private var pendingSave: DispatchWorkItem?
+    private var autosaveFailed = false
+
     func save(atomically: Bool = true) throws {
+        pendingSave?.cancel()
+        pendingSave = nil
         let data = try TextFile.write(text, to: url, format: format, atomically: atomically)
         dirty = false
-        LocalHistory.record(url, data: data)
+        LocalHistory.record(url, data: data, previous: baseline)
+        baseline = nil
+    }
+
+    func scheduleSave(_ done: @escaping () -> Void) {
+        dirty = true
+        pendingSave?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, self.pendingSave != nil else { return }
+            do {
+                try self.save()
+                self.autosaveFailed = false
+            } catch {
+                self.dirty = true
+                if !self.autosaveFailed {
+                    Toasts.post("「\(self.url.lastPathComponent)」を自動保存できませんでした", message: error.localizedDescription)
+                }
+                self.autosaveFailed = true
+            }
+            done()
+        }
+        pendingSave = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: work)
     }
 
     func diskText() -> String? { TextFile.read(url, encoding: format.encoding)?.text }
@@ -231,13 +265,13 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
             guard let self, self.dragTopButton(event) else { return event }
             return nil
         }
-        watcher = FileWatcher(path: baseDirectory.path) { [weak self] structural, modified in
+        watcher = FileWatcher(path: baseDirectory.path) { [weak self] changes in
             guard let self else { return }
-            if !modified.isEmpty { self.reloadExternal(modified) }
-            if structural {
+            if !changes.modified.isEmpty { self.reloadExternal(changes.modified) }
+            if changes.rescan || self.treeDiffers(changes.structural) {
                 self.reloadTree()
                 self.refreshGit()
-            } else if !modified.isEmpty {
+            } else {
                 self.scheduleGitRefresh()
             }
         }
@@ -627,14 +661,33 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
         return list + CommandPalette.menuCommands()
     }
 
+    private func lineRange(_ line: Int) -> NSRange {
+        let text = textView.string as NSString
+        let starts = LineIndex.starts(of: textView)
+        let start = starts[min(max(line - 1, 0), starts.count - 1)]
+        return text.lineRange(for: NSRange(location: min(start, text.length), length: 0))
+    }
+
+    func openLocation(_ url: URL, line: Int, column: Int?) {
+        if selectedURL != url { open(url) }
+        window?.makeKeyAndOrderFront(nil)
+        guard current?.url == url else { return }
+        let text = textView.string as NSString
+        let range = lineRange(line)
+        let end = NSMaxRange(range) - (text.substring(with: range).hasSuffix("\n") ? 1 : 0)
+        let target = NSRange(location: min(range.location + max((column ?? 1) - 1, 0), end), length: 0)
+        window?.makeFirstResponder(textView)
+        textView.setSelectedRange(target)
+        CodeView.center(textView, on: target)
+        textView.showFindIndicator(for: NSRange(location: range.location, length: end - range.location))
+    }
+
     private func openHit(_ url: URL, line: Int?, query: String) {
         if selectedURL != url { open(url) }
         window?.makeKeyAndOrderFront(nil)
         guard let line, current?.url == url else { return }
         let text = textView.string as NSString
-        let starts = LineIndex.starts(of: textView)
-        let start = starts[min(max(line - 1, 0), starts.count - 1)]
-        let lineRange = text.lineRange(for: NSRange(location: min(start, text.length), length: 0))
+        let lineRange = self.lineRange(line)
         let found = text.range(of: query, options: .caseInsensitive, range: lineRange)
         let target = found.location == NSNotFound ? NSRange(location: lineRange.location, length: 0) : found
         window?.makeFirstResponder(textView)
@@ -905,7 +958,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
         guard let current else { return detachExtension() }
         let viewer = NativePlugins.viewer(for: current.url)
         textView.isEditable = current.editable && viewer == nil
-        ext = viewer ?? (current.editable ? PluginStore.makeExtension(for: current.url, code: editorScroll) : nil)
+        ext = viewer ?? (current.editable ? NativePlugins.codePreview(for: current.url, code: editorScroll) ?? PluginStore.makeExtension(for: current.url, code: editorScroll) : nil)
         guard let ext else { return detachExtension() }
         show(ext.body, in: bodyHost)
         layoutExtensionBar()
@@ -1116,13 +1169,11 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
         guard let current else { return }
         if Settings.autosaveImmediate, current.editable {
             current.text = textView.string
-            do {
-                try current.save(atomically: false)
-            } catch {
-                current.dirty = true
+            current.scheduleSave { [weak self] in
+                self?.updateTitle()
+                self?.scheduleGitRefresh()
             }
             updateTitle()
-            scheduleGitRefresh()
             return
         }
         guard !current.dirty else { return }
@@ -1400,6 +1451,27 @@ extension EditorWindowController {
             return nil
         }
         return url
+    }
+
+    private func treeDiffers(_ paths: Set<String>) -> Bool {
+        guard !paths.isEmpty else { return false }
+        let base = realpath(root.url.path, nil).map { defer { free($0) }; return String(cString: $0) } ?? root.url.standardizedFileURL.path
+        var info = stat()
+        let exists = { (path: String) in lstat(path, &info) == 0 }
+        guard root.isDirectory else {
+            return (paths.contains(base) || paths.contains(root.url.standardizedFileURL.path)) && !exists(base)
+        }
+        for path in paths {
+            guard path.hasPrefix(base + "/") else { return true }
+            let parts = path.dropFirst(base.count + 1).split(separator: "/").map(String.init)
+            guard let name = parts.last else { return true }
+            if FileNode.hiddenNames.contains(name) { continue }
+            var parent: FileNode? = root
+            for part in parts.dropLast() { parent = parent?.loadedChild(part) }
+            guard let parent, parent.isLoaded else { continue }
+            if (parent.loadedChild(name) != nil) != exists(path) { return true }
+        }
+        return false
     }
 
     func reloadTree() {

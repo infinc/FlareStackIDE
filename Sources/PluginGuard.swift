@@ -28,6 +28,7 @@ enum PluginGuard {
         disabled.remove(id)
         UserDefaults.standard.removeObject(forKey: countKey(id))
         notified.remove(id)
+        NativePlugins.invalidate()
         NotificationCenter.default.post(name: .pluginsChanged, object: nil)
     }
 

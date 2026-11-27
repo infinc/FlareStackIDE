@@ -34,7 +34,7 @@ struct Shortcut: Codable, Equatable {
 }
 
 enum ShortcutAction: String, CaseIterable {
-    case run, theme, close, palette, zoomIn, zoomOut, zoomReset
+    case run, theme, close, palette, zoomIn, zoomOut, zoomReset, comment
 
     var title: String {
         switch self {
@@ -45,6 +45,7 @@ enum ShortcutAction: String, CaseIterable {
         case .zoomIn: return "拡大"
         case .zoomOut: return "縮小"
         case .zoomReset: return "実際のサイズ"
+        case .comment: return "コメントの切り替え（Comment Toggle が必要）"
         }
     }
 
@@ -62,6 +63,7 @@ enum ShortcutStore {
     static let pluginID = "shortcut"
     private static let key = "Plugin.\(pluginID).Items"
     private static let seededKey = "Plugin.\(pluginID).PaletteSeeded"
+    private static let commentSeededKey = "Plugin.\(pluginID).CommentSeeded"
     static var live = 0
 
     static var items: [Shortcut] {
@@ -83,7 +85,21 @@ enum ShortcutStore {
         items.append(Shortcut(keyCode: 35, modifiers: modifiers.rawValue, key: "P", action: ShortcutAction.palette.rawValue))
     }
 
+    static func seedComment() {
+        guard !UserDefaults.standard.bool(forKey: commentSeededKey), PluginStore.isInstalled("comment-toggle") else { return }
+        UserDefaults.standard.set(true, forKey: commentSeededKey)
+        let current = items
+        guard !current.contains(where: { $0.action == ShortcutAction.comment.rawValue }),
+              !current.contains(where: { $0.keyCode == 44 && $0.modifiers == NSEvent.ModifierFlags.command.rawValue }) else { return }
+        items.append(Shortcut(keyCode: 44, modifiers: NSEvent.ModifierFlags.command.rawValue, key: "/", action: ShortcutAction.comment.rawValue))
+    }
+
+    static func postCommentKey() {
+        NotificationCenter.default.post(name: PluginEvent.commentKey, object: nil, userInfo: ["managed": live > 0])
+    }
+
     static func applyPaletteKey() {
+        postCommentKey()
         guard live > 0 else {
             CommandPalette.overrideKey(nil)
             Zoom.Action.allCases.forEach { Zoom.overrideKey($0, nil) }

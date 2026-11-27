@@ -1,7 +1,7 @@
 {
   "id": "merge-resolver",
   "name": "Merge Resolver",
-  "version": "1.2",
+  "version": "1.3",
   "author": "FlareStackIDE",
   "symbol": "arrow.triangle.merge",
   "summary": "マージ競合を「自分の変更」「相手の変更」「両方」のボタンで解決",
@@ -13,9 +13,9 @@
     { "key": "oursColor", "title": "自分の変更の背景色", "type": "color", "default": "#34C759" },
     { "key": "theirsColor", "title": "相手の変更の背景色", "type": "color", "default": "#0A84FF" }
   ],
-  "apiVersion": 3,
+  "apiVersion": 4,
   "hashes": {
-    "README.md": "e3f835a86c20df71d52af3d23fda8c0312499d9f324e3764bdcaed4767d056bf",
-    "plugin.dylib": "f748eb651efe8c10be0521125e716aaa8f8e9c3dc78c73411ca3274b56eada93"
+    "README.md": "b6649ea4a271722969b352c392bbd0b376241788bf1bd5a3ab574246559f84e4",
+    "plugin.dylib": "b4a3c18384134710b2242db0936deb5531933a6f4558f75ebb85ccd56e6e0354"
   }
 }

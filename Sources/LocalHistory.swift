@@ -56,20 +56,36 @@ enum LocalHistory {
         return projectFolder(project).appendingPathComponent(hash(relative))
     }
 
-    static func record(_ url: URL, data: Data, merge: Bool = true) {
+    private static var mergeStarts: [String: Date] = [:]
+
+    static func record(_ url: URL, data: Data, merge: Bool = true, previous: Data? = nil) {
         guard data.count <= maxBytes, let project = owner(of: url) else { return }
         let target = folder(for: url, project: project)
         queue.async {
             let fm = FileManager.default
+            let key = target.path
             try? fm.createDirectory(at: target, withIntermediateDirectories: true)
             try? Data(project.utf8).write(to: projectFolder(project).appendingPathComponent("project.txt"))
             try? Data(url.standardizedFileURL.path.utf8).write(to: target.appendingPathComponent("path.txt"))
-            let existing = snapshots(in: target)
+            var existing = snapshots(in: target)
+            let now = stamp.date(from: stamp.string(from: Date())) ?? Date()
+            if existing.isEmpty, let previous, previous != data, previous.count <= maxBytes {
+                try? previous.write(to: target.appendingPathComponent(stamp.string(from: now.addingTimeInterval(-0.001)) + ".snap"))
+                existing = snapshots(in: target)
+                mergeStarts[key] = nil
+            }
             if let last = existing.first {
                 if (try? Data(contentsOf: last.file)) == data { return }
-                if merge, Date().timeIntervalSince(last.date) < mergeInterval { try? fm.removeItem(at: last.file) }
+                if merge, let start = mergeStarts[key], now.timeIntervalSince(start) < mergeInterval, last.date >= start {
+                    try? fm.removeItem(at: last.file)
+                } else {
+                    mergeStarts[key] = now
+                }
+            } else {
+                mergeStarts[key] = now
             }
-            try? data.write(to: target.appendingPathComponent(stamp.string(from: Date()) + ".snap"))
+            if !merge { mergeStarts[key] = nil }
+            try? data.write(to: target.appendingPathComponent(stamp.string(from: now) + ".snap"))
             for old in snapshots(in: target).dropFirst(maxEntries) { try? fm.removeItem(at: old.file) }
         }
     }

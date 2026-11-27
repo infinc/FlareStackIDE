@@ -1,0 +1,16 @@
+{
+  "id": "outline",
+  "name": "Outline",
+  "version": "1.0",
+  "author": "FlareStackIDE",
+  "symbol": "list.bullet.indent",
+  "summary": "開いているファイルのクラス・関数・見出しの一覧をフィードに表示",
+  "fileExtensions": [],
+  "category": "表示",
+  "files": ["plugin.dylib", "README.md"],
+  "apiVersion": 4,
+  "hashes": {
+    "README.md": "2a49b041ea766f4274af997effa74037fef38ebfbbf7172f4755b7c05c255b4c",
+    "plugin.dylib": "11337e44bf5e2238e4655d4fe536fc7dc8e81ee5c6129fa2b06fa66346504304"
+  }
+}

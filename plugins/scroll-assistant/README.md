@@ -18,6 +18,10 @@ Word Highlight を入れると、クリックした語がある行を水色で�
 
 ## 更新履歴
 
+### v1.7
+
+- プラグイン API 4（apiVersion 4）への対応
+
 ### v1.6
 
 - プラグイン API 3（apiVersion 3）への対応

@@ -1,0 +1,16 @@
+{
+  "id": "comment-toggle",
+  "name": "Comment Toggle",
+  "version": "1.0",
+  "author": "FlareStackIDE",
+  "symbol": "text.bubble",
+  "summary": "⌘/ で選んだ行のコメントを付け外し",
+  "fileExtensions": [],
+  "category": "編集",
+  "files": ["plugin.dylib", "README.md"],
+  "apiVersion": 4,
+  "hashes": {
+    "README.md": "e672ab5316b6ab705cdd2b5ded3b2aea528486478db5247f4ea481f41fa884fd",
+    "plugin.dylib": "f8f4007f6fb068b37e27e95f0416faf72525a336193d8cedc42d9a9f19edc691"
+  }
+}

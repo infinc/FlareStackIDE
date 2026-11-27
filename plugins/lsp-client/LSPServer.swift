@@ -190,6 +190,7 @@ final class LSPServer {
     private var queued: [() -> Void] = []
     private var stopping = false
     private(set) var capabilities: [String: Any] = [:]
+    var onApplyEdit: (([String: Any]) -> Bool)?
 
     init(root: URL, language: String) {
         self.root = root
@@ -240,8 +241,17 @@ final class LSPServer {
                     "references": [:] as [String: Any],
                     "rename": ["prepareSupport": false],
                     "publishDiagnostics": ["versionSupport": true],
+                    "documentSymbol": ["hierarchicalDocumentSymbolSupport": true],
+                    "codeAction": [
+                        "codeActionLiteralSupport": ["codeActionKind": ["valueSet": ["", "quickfix", "refactor", "refactor.extract",
+                                                                                     "refactor.inline", "refactor.rewrite", "source",
+                                                                                     "source.organizeImports", "source.fixAll"]]],
+                        "isPreferredSupport": true,
+                        "resolveSupport": ["properties": ["edit"]],
+                        "dataSupport": true,
+                    ] as [String: Any],
                 ],
-                "workspace": ["configuration": true, "applyEdit": false],
+                "workspace": ["configuration": true, "applyEdit": true, "workspaceEdit": ["documentChanges": true]],
             ],
         ]
         send(["jsonrpc": "2.0", "id": 0, "method": "initialize", "params": params])
@@ -348,6 +358,9 @@ final class LSPServer {
             result = items.map { _ in NSNull() }
         case "workspace/workspaceFolders":
             result = [["uri": root.absoluteString, "name": root.lastPathComponent]]
+        case "workspace/applyEdit":
+            let edit = (params as? [String: Any])?["edit"] as? [String: Any] ?? [:]
+            result = ["applied": onApplyEdit?(edit) ?? false]
         default:
             result = NSNull()
         }

@@ -13,12 +13,24 @@ struct Release: Decodable {
     let body: String?
     let assets: [Asset]
 
-    var dmg: Asset? { assets.first { $0.name.hasSuffix(".dmg") } }
+    var dmg: Asset? { assets.first { $0.name.hasSuffix(".dmg") && !$0.name.hasSuffix("-debug.dmg") } }
+
+    var dmgSignature: Asset? { dmg.flatMap { dmg in assets.first { $0.name == dmg.name + ".sig" } } }
 }
 
 func versionParts(_ s: String) -> [Int] {
     guard let range = s.range(of: #"\d+(\.\d+)*"#, options: .regularExpression) else { return [] }
     return s[range].split(separator: ".").map { Int($0) ?? 0 }
+}
+
+func preRelease(_ s: String) -> String? {
+    guard let range = s.range(of: #"\d+(\.\d+)*-([0-9A-Za-z.-]+)"#, options: .regularExpression) else { return nil }
+    let text = s[range]
+    guard let dash = text.firstIndex(of: "-") else { return nil }
+    var tag = String(text[text.index(after: dash)...])
+    if tag == "debug" { return nil }
+    if tag.hasSuffix("-debug") { tag.removeLast("-debug".count) }
+    return tag
 }
 
 func isNewer(_ remote: String, than local: String) -> Bool {
@@ -27,7 +39,12 @@ func isNewer(_ remote: String, than local: String) -> Bool {
         let a = i < r.count ? r[i] : 0, b = i < l.count ? l[i] : 0
         if a != b { return a > b }
     }
-    return false
+    switch (preRelease(remote), preRelease(local)) {
+    case (nil, nil): return false
+    case (nil, _): return true
+    case (_, nil): return false
+    case let (a?, b?): return a.compare(b, options: .numeric) == .orderedDescending
+    }
 }
 
 @discardableResult
@@ -71,17 +88,30 @@ final class Updater {
     }
 
     func install(_ release: Release, completion: @escaping (Error?) -> Void) {
-        guard let asset = release.dmg else {
-            completion(NSError(domain: appName, code: 1,
-                               userInfo: [NSLocalizedDescriptionKey: "リリースに .dmg が見つかりません"]))
-            return
+        let fail = { (message: String) in
+            completion(NSError(domain: appName, code: 1, userInfo: [NSLocalizedDescriptionKey: message]))
         }
-        URLSession.shared.downloadTask(with: asset.browser_download_url) { location, _, error in
-            var failure = error
-            if let location, failure == nil {
-                do { try Self.replaceApp(fromDMG: location) } catch { failure = error }
+        guard let asset = release.dmg else { return fail("リリースに .dmg が見つかりません") }
+        guard let signatureAsset = release.dmgSignature else { return fail("リリースに \(asset.name).sig（署名）が見つかりません") }
+        URLSession.shared.dataTask(with: signatureAsset.browser_download_url) { signature, response, error in
+            guard let signature, error == nil, (response as? HTTPURLResponse)?.statusCode == 200 else {
+                return DispatchQueue.main.async { fail(error?.localizedDescription ?? "署名を取得できませんでした") }
             }
-            DispatchQueue.main.async { completion(failure) }
+            URLSession.shared.downloadTask(with: asset.browser_download_url) { location, _, error in
+                var failure = error
+                if let location, failure == nil {
+                    do {
+                        let data = try Data(contentsOf: location, options: .mappedIfSafe)
+                        guard PluginTrust.isSigned(data, signature: signature) else {
+                            throw PluginTrust.error("\(asset.name) の署名を確認できませんでした。配布元が違うか、ファイルが改ざんされています")
+                        }
+                        try Self.replaceApp(fromDMG: location)
+                    } catch {
+                        failure = error
+                    }
+                }
+                DispatchQueue.main.async { completion(failure) }
+            }.resume()
         }.resume()
     }
 

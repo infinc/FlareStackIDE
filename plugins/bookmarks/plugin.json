@@ -1,7 +1,7 @@
 {
   "id": "bookmarks",
   "name": "Bookmarks",
-  "version": "1.4",
+  "version": "1.5",
   "author": "FlareStackIDE",
   "symbol": "bookmark",
   "summary": "行に印を付けて、一覧やキーで移動",
@@ -9,9 +9,9 @@
   "category": "編集",
   "requires": ["lines"],
   "files": ["plugin.dylib", "README.md"],
-  "apiVersion": 3,
+  "apiVersion": 4,
   "hashes": {
-    "README.md": "7a38c0ff455199f75917574cb146782d1237bff6d1c1c384a998b9668e0b7cbb",
-    "plugin.dylib": "aa89249eb98f0a44cc5c8e9ef722d74efc46542b463fe225f51ac3201f98f211"
+    "README.md": "b0fb48f51c98a3881b822992a0262edf07e1661bda2512031751867201cba945",
+    "plugin.dylib": "dbbb0ec4cd11385f16722bb3615308cd79879e3503e8ca2dd48e3f2a9b562e19"
   }
 }
