@@ -505,6 +505,9 @@ final class TerminalView: NSView, NSTextInputClient {
     private var blinkTimer: Timer?
     private var blinkOn = true
     let padding: CGFloat = 6
+    var directory: String?
+    private var hoverLink: TerminalLink?
+    private var linkTracking: NSTrackingArea?
 
     override var isFlipped: Bool { true }
     override var acceptsFirstResponder: Bool { true }
@@ -537,6 +540,10 @@ final class TerminalView: NSView, NSTextInputClient {
     }
 
     override func mouseDown(with event: NSEvent) {
+        if event.modifierFlags.contains(.command), let link = link(at: event) {
+            openLink(link)
+            return
+        }
         window?.makeFirstResponder(self)
         if selection != nil {
             selection = nil
@@ -656,6 +663,12 @@ final class TerminalView: NSView, NSTextInputClient {
             flush()
         }
 
+        if let hoverLink, (first..<last).contains(hoverLink.row) {
+            NSColor.linkColor.setFill()
+            NSRect(x: padding + CGFloat(hoverLink.cols.lowerBound) * w, y: CGFloat(hoverLink.row + 1) * h - 2,
+                   width: CGFloat(hoverLink.cols.count) * w, height: 1).fill()
+        }
+
         if emulator.cursorVisible {
             let rect = cursorRect
             if !marked.isEmpty {
@@ -765,6 +778,118 @@ final class TerminalView: NSView, NSTextInputClient {
     }
 }
 
+struct TerminalLink: Equatable {
+    let path: String
+    let line: Int
+    let column: Int?
+    let row: Int
+    let cols: Range<Int>
+}
+
+extension TerminalView {
+    private static let linkPatterns: [NSRegularExpression] = [
+        #"File "([^"]+)", line (\d+)"#,
+        #"([^\s:()"'<>|,]+\.[A-Za-z0-9]+)\((\d+),(\d+)\)"#,
+        #"([^\s:()"'<>|,]*[A-Za-z0-9_][^\s:()"'<>|,]*):(\d+)(?::(\d+))?"#,
+    ].map { try! NSRegularExpression(pattern: $0) }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let linkTracking { removeTrackingArea(linkTracking) }
+        let area = NSTrackingArea(rect: .zero, options: [.mouseMoved, .mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect], owner: self)
+        addTrackingArea(area)
+        linkTracking = area
+    }
+
+    override func mouseMoved(with event: NSEvent) { updateHover(event) }
+
+    override func mouseExited(with event: NSEvent) { setHover(nil) }
+
+    override func flagsChanged(with event: NSEvent) {
+        super.flagsChanged(with: event)
+        guard let window else { return }
+        let location = window.mouseLocationOutsideOfEventStream
+        guard bounds.contains(convert(location, from: nil)) else { return setHover(nil) }
+        setHover(event.modifierFlags.contains(.command) ? link(atWindowPoint: location) : nil)
+    }
+
+    private func updateHover(_ event: NSEvent) {
+        setHover(event.modifierFlags.contains(.command) ? link(at: event) : nil)
+    }
+
+    private func setHover(_ link: TerminalLink?) {
+        (link == nil ? NSCursor.arrow : NSCursor.pointingHand).set()
+        guard link != hoverLink else { return }
+        hoverLink = link
+        needsDisplay = true
+    }
+
+    private func link(at event: NSEvent) -> TerminalLink? { link(atWindowPoint: event.locationInWindow) }
+
+    private func link(atWindowPoint location: NSPoint) -> TerminalLink? {
+        let point = convert(location, from: nil)
+        let row = Int(point.y / cellSize.height)
+        guard row >= 0, row < totalLines, point.x >= padding else { return nil }
+        let col = Int((point.x - padding) / cellSize.width)
+        var text = ""
+        var columns: [Int] = []
+        for (x, cell) in line(row).enumerated() where cell.width != 0 {
+            text += cell.ch
+            columns += Array(repeating: x, count: cell.ch.utf16.count)
+        }
+        let ns = text as NSString
+        for regex in Self.linkPatterns {
+            for match in regex.matches(in: text, range: NSRange(location: 0, length: ns.length)) {
+                let range = match.range
+                guard range.length > 0, NSMaxRange(range) <= columns.count else { continue }
+                let cols = columns[range.location]..<(columns[NSMaxRange(range) - 1] + 1)
+                guard cols.contains(col) else { continue }
+                let group = { (i: Int) -> String? in
+                    let r = match.range(at: i)
+                    return r.location == NSNotFound ? nil : ns.substring(with: r)
+                }
+                guard let path = group(1), let line = group(2).flatMap(Int.init) else { continue }
+                return TerminalLink(path: path, line: line, column: match.numberOfRanges > 3 ? group(3).flatMap(Int.init) : nil, row: row, cols: cols)
+            }
+        }
+        return nil
+    }
+
+    private func openLink(_ link: TerminalLink) {
+        guard let editor = window?.windowController as? EditorWindowController,
+              let url = resolve(link.path, root: editor.baseDirectory) else { return NSSound.beep() }
+        setHover(nil)
+        editor.openLocation(url, line: link.line, column: link.column)
+    }
+
+    private func resolve(_ path: String, root: URL) -> URL? {
+        let manager = FileManager.default
+        func file(_ url: URL) -> URL? {
+            var isDirectory: ObjCBool = false
+            return manager.fileExists(atPath: url.path, isDirectory: &isDirectory) && !isDirectory.boolValue ? url.standardizedFileURL : nil
+        }
+        let expanded = (path as NSString).expandingTildeInPath
+        if expanded.hasPrefix("/") { return file(URL(fileURLWithPath: expanded)) }
+        for base in [directory, root.path].compactMap({ $0 }) {
+            if let url = file(URL(fileURLWithPath: base).appendingPathComponent(expanded)) { return url }
+        }
+        let suffix = "/" + expanded.drop { $0 == "." || $0 == "/" }
+        guard suffix.count > 1, let files = manager.enumerator(at: root, includingPropertiesForKeys: [.isRegularFileKey],
+                                                                options: [.skipsHiddenFiles, .skipsPackageDescendants]) else { return nil }
+        var found: URL?
+        var count = 0
+        for case let url as URL in files {
+            count += 1
+            if count > 20000 { return nil }
+            if ["node_modules", "build", ".build"].contains(url.lastPathComponent) { files.skipDescendants(); continue }
+            guard url.path.hasSuffix(suffix), file(url) != nil else { continue }
+            if found != nil { return nil }
+            found = url
+        }
+        return found
+    }
+}
+
 final class TerminalPane: NSView {
     let terminal = TerminalView()
     private let scroll = NSScrollView()
@@ -778,6 +903,7 @@ final class TerminalPane: NSView {
         self.cwd = cwd
         self.command = command
         super.init(frame: .zero)
+        terminal.directory = cwd
         scroll.hasVerticalScroller = true
         scroll.autohidesScrollers = true
         scroll.drawsBackground = true

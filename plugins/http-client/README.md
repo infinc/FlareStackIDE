@@ -48,6 +48,10 @@ localhost 以外へ `http://`（暗号化なし）で送るときは、確認が
 
 ## 更新履歴
 
+### v1.3
+
+- プラグイン API 4（apiVersion 4）への対応
+
 ### v1.2
 
 - プラグイン API 3（apiVersion 3）への対応

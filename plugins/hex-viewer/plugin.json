@@ -1,16 +1,16 @@
 {
   "id": "hex-viewer",
   "name": "Hex Viewer",
-  "version": "1.1",
+  "version": "1.2",
   "author": "FlareStackIDE",
   "symbol": "number.square",
   "summary": "テキストとして開けないファイルを16進数で表示",
   "fileExtensions": [],
   "category": "ビューア",
   "files": ["plugin.dylib", "README.md"],
-  "apiVersion": 3,
+  "apiVersion": 4,
   "hashes": {
-    "README.md": "f46f0e63f57a09ae54873557a6fb404b585ac768ea8278138b427516f9c7adc4",
-    "plugin.dylib": "7c335f9f39ca08f47a44cd874b7d44811521705b7a5fe14e9fac8cad3ab478e0"
+    "README.md": "1ffeff04848e276e5c89ba97c587479f5ede4bbcf6714a1101fcf490b5a17dec",
+    "plugin.dylib": "3bb3c0543498851ba3330d2b7bf05879c1e4d0cf03a272f071a5edc142ce6e13"
   }
 }

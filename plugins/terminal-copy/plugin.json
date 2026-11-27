@@ -1,7 +1,7 @@
 {
   "id": "terminal-copy",
   "name": "Terminal Copy",
-  "version": "1.3",
+  "version": "1.4",
   "author": "FlareStackIDE",
   "symbol": "doc.on.clipboard",
   "summary": "ターミナルでドラッグして選んだ文字をすぐにコピー",
@@ -9,9 +9,9 @@
   "category": "実行・ツール",
   "permissions": ["clipboard"],
   "files": ["plugin.dylib", "README.md"],
-  "apiVersion": 3,
+  "apiVersion": 4,
   "hashes": {
-    "README.md": "f4d69166d98566cff4bf4b1ea8933ba72d4a36f34916e20c9470047fc50ec2e2",
-    "plugin.dylib": "8424a2403529254dde6987d8a42afc7b0130d4086853ff01bde5d64c73a08600"
+    "README.md": "83d890f89e11430da1a0fcca01f0e0ffe659f4bd2ab81adeef4605c4591db861",
+    "plugin.dylib": "34c06aa18c56a62a80eb02b42e3dbc03da7da3c2a3972dcf7a9dd3684b4ebc2e"
   }
 }

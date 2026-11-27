@@ -16,6 +16,11 @@ enum PluginEvent {
     static let lspFilesRequest = name("lspFilesRequest")
     static let hoverShown = name("hoverShown")
     static let completionItems = name("completionItems")
+    static let toggleComment = name("toggleComment")
+    static let commentKey = name("commentKey")
+    static let commentKeyRequest = name("commentKeyRequest")
+    static let symbols = name("symbols")
+    static let symbolsRequest = name("symbolsRequest")
 
     private static func name(_ id: String) -> Notification.Name { Notification.Name("FlareStackIDE." + id) }
 }

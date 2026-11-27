@@ -1,7 +1,7 @@
 {
   "id": "pdf-viewer",
   "name": "PDF Viewer",
-  "version": "1.4",
+  "version": "1.5",
   "author": "FlareStackIDE",
   "symbol": "doc.text.image",
   "summary": "PDF をファイル編集画面で表示",
@@ -9,9 +9,9 @@
   "category": "ビューア",
   "loadOnOpen": true,
   "files": ["plugin.dylib", "README.md"],
-  "apiVersion": 3,
+  "apiVersion": 4,
   "hashes": {
-    "README.md": "ec909b41e4da086ea12e35276bf636f428b0579bbd58a4bfef7fd4f9a4ad7596",
-    "plugin.dylib": "0e95b4dfbfb8b09d17442c48a76f9b2ec10f762791e3fcebc0f63a17f1d887b5"
+    "README.md": "2e5983fb4ac320350faaa98b459d631514f63125d053b664100084b2ee533c96",
+    "plugin.dylib": "ac0541d5059774f35a2d4412ecc44c261b5e1a69f771afeb9eb9151ad49bb6b3"
   }
 }

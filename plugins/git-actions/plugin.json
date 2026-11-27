@@ -1,7 +1,7 @@
 {
   "id": "git-actions",
   "name": "Git Actions",
-  "version": "1.5",
+  "version": "1.6",
   "author": "FlareStackIDE",
   "symbol": "arrow.triangle.pull",
   "summary": "ステージ・コミット・push・pull・ブランチ切り替えを GUI で",
@@ -9,9 +9,9 @@
   "category": "Git",
   "permissions": ["process"],
   "files": ["plugin.dylib", "README.md"],
-  "apiVersion": 3,
+  "apiVersion": 4,
   "hashes": {
-    "README.md": "aff02d4a7373ac28096826db1eb986790107a6772a0ef1db02d7be5bf4f57543",
-    "plugin.dylib": "6b1ce2c62c438339e128c857c7ba42fa1f74a0ee14336b397e93adecf27252ff"
+    "README.md": "bb9a096b612fd90ace80ee1bd4c111acea5b83abe1f84e7de2ce2d6ac427eab5",
+    "plugin.dylib": "14449b40e61a47f191b0c3c6292ff938e21d4e35c4f2ab00d6d94fef53400fc3"
   }
 }

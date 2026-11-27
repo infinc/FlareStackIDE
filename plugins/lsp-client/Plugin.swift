@@ -76,6 +76,7 @@ enum LSPHub {
     private static var missing: Set<String> = []
     private(set) static var documents: [String: LSPDocument] = [:]
     private(set) static var diagnostics: [String: [(range: NSRange, severity: Int, message: String, source: String)]] = [:]
+    private(set) static var rawDiagnostics: [String: [[String: Any]]] = [:]
     private static var installed = false
     private static let convertQueue = DispatchQueue(label: "\(appName).lsp.diagnostics", qos: .userInitiated)
 
@@ -128,6 +129,10 @@ enum LSPHub {
             postFiles()
             Toasts.post("\(spec.name) の言語サーバーが見つかりません", message: "ターミナルで \(spec.install) を実行してから、プロジェクトを開き直してください")
         }
+        server.onApplyEdit = { edit in
+            guard let editor = NSApp.keyWindow?.windowController as? EditorWindowController else { return false }
+            return LSPEdits.apply(edit, editor: editor, message: "コードを変更しました")
+        }
         server.onExit = { [weak server] in
             guard let server else { return }
             servers[id] = nil
@@ -170,6 +175,7 @@ enum LSPHub {
         guard doc.refs <= 0 else { return }
         documents[doc.url.path] = nil
         diagnostics[doc.url.path] = nil
+        rawDiagnostics[doc.url.path] = nil
         doc.server.notify("textDocument/didClose", ["textDocument": ["uri": doc.uri]])
         NotificationCenter.default.post(name: externalDiagnostics, object: doc.url, userInfo: ["items": [[String: Any]]()])
         postFiles()
@@ -214,10 +220,62 @@ enum LSPHub {
             DispatchQueue.main.async {
                 guard documents[url.path] === doc, doc.version == version else { return }
                 diagnostics[url.path] = items
+                rawDiagnostics[url.path] = raw
                 NotificationCenter.default.post(name: externalDiagnostics, object: url, userInfo: ["items": payload, "version": version])
                 NotificationCenter.default.post(name: diagnosticsChanged, object: url)
             }
         }
+    }
+}
+
+enum LSPEdits {
+    @discardableResult
+    static func apply(_ edit: [String: Any]?, editor: EditorWindowController?, message: String) -> Bool {
+        var changes: [URL: [[String: Any]]] = [:]
+        for (uri, edits) in edit?["changes"] as? [String: [[String: Any]]] ?? [:] {
+            if let url = LSPText.url(uri) { changes[url, default: []] += edits }
+        }
+        for change in edit?["documentChanges"] as? [[String: Any]] ?? [] {
+            guard let url = LSPText.url((change["textDocument"] as? [String: Any])?["uri"] as? String) else { continue }
+            changes[url, default: []] += change["edits"] as? [[String: Any]] ?? []
+        }
+        let window = editor?.window
+        guard !changes.isEmpty else {
+            Toasts.post("変更できる箇所がありませんでした", in: window)
+            return false
+        }
+        if let editor, let error = editor.saveAll() {
+            editor.showError(error)
+            return false
+        }
+        var originals: [URL: String] = [:]
+        var count = 0
+        for (url, edits) in changes {
+            guard let text = try? String(contentsOf: url, encoding: .utf8) else { continue }
+            let ns = NSMutableString(string: text)
+            let starts = LSPText.lineStarts(text as NSString)
+            let ranges = edits.map { (LSPText.range($0["range"] as? [String: Any], in: text as NSString, starts: starts), $0["newText"] as? String ?? "") }
+            for (range, replacement) in ranges.sorted(by: { $0.0.location > $1.0.location }) where NSMaxRange(range) <= ns.length {
+                ns.replaceCharacters(in: range, with: replacement)
+                count += 1
+            }
+            do {
+                try (ns as String).write(to: url, atomically: false, encoding: .utf8)
+                originals[url] = text
+            } catch {
+                Toasts.post("\(url.lastPathComponent) に書き込めませんでした", message: error.localizedDescription, in: window)
+            }
+        }
+        editor?.reloadExternal(Set(originals.keys.map(\.path)))
+        Toasts.post(message, message: "\(originals.count) ファイル・\(count) 箇所",
+                    actions: [("元に戻す", { [weak editor] in restore(originals, editor: editor) })], in: window)
+        return !originals.isEmpty
+    }
+
+    private static func restore(_ originals: [URL: String], editor: EditorWindowController?) {
+        if let editor, let error = editor.saveAll() { return editor.showError(error) }
+        for (url, text) in originals { try? text.write(to: url, atomically: false, encoding: .utf8) }
+        editor?.reloadExternal(Set(originals.keys.map(\.path)))
     }
 }
 
@@ -269,6 +327,7 @@ final class LSPTextAddon: NSObject, TextAddon, TextDecorating, CommandProviding 
     private var hoverIndex: Int?
     private var monitors: [Any] = []
     private var lastTyped: String?
+    private var bulb: NSButton?
 
     init(code: CodeEditing) {
         self.code = code
@@ -279,6 +338,8 @@ final class LSPTextAddon: NSObject, TextAddon, TextDecorating, CommandProviding 
         center.addObserver(self, selector: #selector(otherHover(_:)), name: LSPHub.hoverShown, object: code.textView)
         center.addObserver(self, selector: #selector(hideHover), name: NSView.boundsDidChangeNotification, object: code.scrollView.contentView)
         center.addObserver(self, selector: #selector(reopen), name: LSPHub.reopen, object: nil)
+        center.addObserver(self, selector: #selector(updateBulb), name: NSView.boundsDidChangeNotification, object: code.scrollView.contentView)
+        center.addObserver(self, selector: #selector(symbolsRequested(_:)), name: PluginEvent.symbolsRequest, object: nil)
         if let monitor = NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved, .scrollWheel, .keyDown, .leftMouseDown], handler: { [weak self] in
             self?.handle($0) ?? $0
         }) { monitors.append(monitor) }
@@ -298,6 +359,7 @@ final class LSPTextAddon: NSObject, TextAddon, TextDecorating, CommandProviding 
 
     func fileOpened() {
         hideHover()
+        removeBulb()
         if let doc, LSPHub.documents[doc.url.path] !== doc { self.doc = nil }
         if let doc, doc.url != code?.fileURL?.standardizedFileURL {
             LSPHub.close(doc)
@@ -391,6 +453,7 @@ final class LSPTextAddon: NSObject, TextAddon, TextDecorating, CommandProviding 
             case (111, []): goToDefinition()
             case (111, .shift): findReferences()
             case (120, []): rename()
+            case (36, .option): quickFix()
             default: return event
             }
             return nil
@@ -582,57 +645,148 @@ final class LSPTextAddon: NSObject, TextAddon, TextDecorating, CommandProviding 
         guard !name.isEmpty, name != old, var params = params(at: word.location) else { return }
         params["newName"] = name
         doc.server.request("textDocument/rename", params) { [weak self] result in
-            self?.apply(result as? [String: Any], name: name)
+            guard let self else { return }
+            LSPEdits.apply(result as? [String: Any], editor: self.editor, message: "「\(name)」に名前を変更しました")
         }
-    }
-
-    private func apply(_ edit: [String: Any]?, name: String) {
-        var changes: [URL: [[String: Any]]] = [:]
-        for (uri, edits) in edit?["changes"] as? [String: [[String: Any]]] ?? [:] {
-            if let url = LSPText.url(uri) { changes[url, default: []] += edits }
-        }
-        for change in edit?["documentChanges"] as? [[String: Any]] ?? [] {
-            guard let url = LSPText.url((change["textDocument"] as? [String: Any])?["uri"] as? String) else { continue }
-            changes[url, default: []] += change["edits"] as? [[String: Any]] ?? []
-        }
-        let window = code?.textView.window
-        guard !changes.isEmpty else {
-            Toasts.post("変更できる箇所がありませんでした", in: window)
-            return
-        }
-        if let editor, let error = editor.saveAll() { return editor.showError(error) }
-        var originals: [URL: String] = [:]
-        var count = 0
-        for (url, edits) in changes {
-            guard let text = try? String(contentsOf: url, encoding: .utf8) else { continue }
-            let ns = NSMutableString(string: text)
-            let starts = LSPText.lineStarts(text as NSString)
-            let ranges = edits.map { (LSPText.range($0["range"] as? [String: Any], in: text as NSString, starts: starts), $0["newText"] as? String ?? "") }
-            for (range, replacement) in ranges.sorted(by: { $0.0.location > $1.0.location }) where NSMaxRange(range) <= ns.length {
-                ns.replaceCharacters(in: range, with: replacement)
-                count += 1
-            }
-            do {
-                try (ns as String).write(to: url, atomically: false, encoding: .utf8)
-                originals[url] = text
-            } catch {
-                Toasts.post("\(url.lastPathComponent) に書き込めませんでした", message: error.localizedDescription, in: window)
-            }
-        }
-        editor?.reloadExternal(Set(originals.keys.map(\.path)))
-        Toasts.post("「\(name)」に \(count) 箇所を変更しました", message: "\(originals.count) ファイル",
-                    actions: [("元に戻す", { [weak self] in self?.restore(originals) })], in: window)
-    }
-
-    private func restore(_ originals: [URL: String]) {
-        if let editor, let error = editor.saveAll() { return editor.showError(error) }
-        for (url, text) in originals { try? text.write(to: url, atomically: false, encoding: .utf8) }
-        editor?.reloadExternal(Set(originals.keys.map(\.path)))
     }
 
     @objc private func diagnosticsChanged(_ note: Notification) {
         guard let url = note.object as? URL, url == doc?.url else { return }
         redraw()
+        updateBulb()
+    }
+
+    func selectionChanged() { updateBulb() }
+
+    @objc private func updateBulb() {
+        guard let doc, let textView = code?.textView, let layout = textView.layoutManager, layout.numberOfGlyphs > 0 else { return removeBulb() }
+        let text = textView.string as NSString
+        let caret = min(textView.selectedRange().location, text.length)
+        let line = text.lineRange(for: NSRange(location: caret, length: 0))
+        let hit = (LSPHub.diagnostics[doc.url.path] ?? []).contains {
+            NSIntersectionRange($0.range, line).length > 0 || NSLocationInRange($0.range.location, line)
+        }
+        guard hit, line.location < text.length else { return removeBulb() }
+        let glyph = layout.glyphIndexForCharacter(at: line.location)
+        let rect = layout.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
+            .offsetBy(dx: textView.textContainerOrigin.x, dy: textView.textContainerOrigin.y)
+        let button = bulb ?? makeBulb()
+        let size: CGFloat = 16
+        button.frame = NSRect(x: textView.visibleRect.maxX - size - 6, y: rect.midY - size / 2, width: size, height: size)
+        if button.superview !== textView { textView.addSubview(button) }
+    }
+
+    private func makeBulb() -> NSButton {
+        let image = NSImage(systemSymbolName: "lightbulb.fill", accessibilityDescription: "クイックフィックス") ?? NSImage()
+        let button = NSButton(image: image, target: self, action: #selector(bulbClicked))
+        button.isBordered = false
+        button.imageScaling = .scaleProportionallyDown
+        button.contentTintColor = .systemYellow
+        button.toolTip = "クイックフィックス（⌥↩）"
+        bulb = button
+        return button
+    }
+
+    private func removeBulb() { bulb?.removeFromSuperview() }
+
+    @objc private func bulbClicked() {
+        code?.textView.window?.makeFirstResponder(code?.textView)
+        quickFix()
+    }
+
+    private func quickFix() {
+        guard let doc, let textView = code?.textView else { return }
+        flush()
+        let text = doc.text as NSString
+        let selection = textView.selectedRange()
+        var range = selection
+        if range.length == 0 {
+            let line = text.lineRange(for: NSRange(location: min(selection.location, text.length), length: 0))
+            range = NSRange(location: line.location, length: line.length - (text.substring(with: line).hasSuffix("\n") ? 1 : 0))
+        }
+        let starts = LSPText.lineStarts(text)
+        let related = (LSPHub.rawDiagnostics[doc.url.path] ?? []).filter { item in
+            let found = LSPText.range(item["range"] as? [String: Any], in: text, starts: starts)
+            return NSIntersectionRange(found, range).length > 0 || NSLocationInRange(found.location, range) || found.location == NSMaxRange(range)
+        }
+        let params: [String: Any] = [
+            "textDocument": ["uri": doc.uri],
+            "range": ["start": LSPText.position(range.location, in: text), "end": LSPText.position(NSMaxRange(range), in: text)],
+            "context": ["diagnostics": related, "triggerKind": 1] as [String: Any],
+        ]
+        doc.server.request("textDocument/codeAction", params) { [weak self, weak textView] result in
+            guard let self, let textView else { return }
+            let actions = (result as? [[String: Any]] ?? []).filter { $0["disabled"] == nil && $0["title"] is String }
+            let preferred = actions.filter { $0["isPreferred"] as? Bool == true }
+            let ordered = preferred + actions.filter { $0["isPreferred"] as? Bool != true }
+            guard !ordered.isEmpty else {
+                Toasts.post("修正の候補はありません", in: textView.window)
+                return
+            }
+            let menu = NSMenu()
+            let header = NSMenuItem(title: "クイックフィックス", action: nil, keyEquivalent: "")
+            header.isEnabled = false
+            menu.addItem(header)
+            for action in ordered.prefix(50) {
+                let item = NSMenuItem(title: action["title"] as? String ?? "", action: #selector(self.actionChosen(_:)), keyEquivalent: "")
+                item.target = self
+                item.representedObject = action
+                if action["isPreferred"] as? Bool == true { item.image = NSImage(systemSymbolName: "star.fill", accessibilityDescription: nil) }
+                menu.addItem(item)
+            }
+            let caret = textView.firstRect(forCharacterRange: NSRange(location: range.location, length: 0), actualRange: nil)
+            let point = textView.window?.convertPoint(fromScreen: NSPoint(x: caret.minX, y: caret.minY)) ?? .zero
+            menu.popUp(positioning: nil, at: textView.convert(point, from: nil), in: textView)
+        }
+    }
+
+    @objc private func actionChosen(_ sender: NSMenuItem) {
+        guard let action = sender.representedObject as? [String: Any], let server = doc?.server else { return }
+        perform(action, server: server, resolved: false)
+    }
+
+    private func perform(_ action: [String: Any], server: LSPServer, resolved: Bool) {
+        if let command = action["command"] as? String {
+            return execute(["command": command, "arguments": action["arguments"] ?? []], server: server)
+        }
+        let title = action["title"] as? String ?? ""
+        if let edit = action["edit"] as? [String: Any] {
+            LSPEdits.apply(edit, editor: editor, message: "「\(title)」を適用しました")
+        } else if !resolved, action["data"] != nil,
+                  (server.capabilities["codeActionProvider"] as? [String: Any])?["resolveProvider"] as? Bool == true {
+            server.request("codeAction/resolve", action) { [weak self] result in
+                guard let self, let resolved = result as? [String: Any] else { return }
+                self.perform(resolved, server: server, resolved: true)
+            }
+            return
+        }
+        if let command = action["command"] as? [String: Any] { execute(command, server: server) }
+    }
+
+    private func execute(_ command: [String: Any], server: LSPServer) {
+        server.request("workspace/executeCommand", ["command": command["command"] ?? "", "arguments": command["arguments"] ?? []]) { _ in }
+    }
+
+    @objc private func symbolsRequested(_ note: Notification) {
+        guard let doc, let url = note.object as? URL, url.standardizedFileURL == doc.url else { return }
+        flush()
+        let text = doc.text as NSString
+        let version = doc.version
+        doc.server.request("textDocument/documentSymbol", ["textDocument": ["uri": doc.uri]]) { result in
+            let starts = LSPText.lineStarts(text)
+            func convert(_ item: [String: Any]) -> [String: Any]? {
+                guard let name = item["name"] as? String else { return nil }
+                let raw = (item["range"] as? [String: Any]) ?? ((item["location"] as? [String: Any])?["range"] as? [String: Any])
+                let range = LSPText.range(raw, in: text, starts: starts)
+                let selection = (item["selectionRange"] as? [String: Any]).map { LSPText.range($0, in: text, starts: starts).location } ?? range.location
+                return ["name": name, "kind": (item["kind"] as? NSNumber)?.intValue ?? 0,
+                        "detail": item["detail"] as? String ?? item["containerName"] as? String ?? "",
+                        "start": range.location, "length": range.length, "selection": selection,
+                        "children": (item["children"] as? [[String: Any]] ?? []).compactMap(convert)]
+            }
+            let items = (result as? [[String: Any]] ?? []).compactMap(convert)
+            NotificationCenter.default.post(name: PluginEvent.symbols, object: doc.url, userInfo: ["items": items, "version": version])
+        }
     }
 
     private func redraw() {
@@ -661,6 +815,7 @@ final class LSPTextAddon: NSObject, TextAddon, TextDecorating, CommandProviding 
             PaletteCommand(id: "lsp.definition", title: "LSP: 定義へ移動", detail: "F12 / ⌘クリック") { [weak self] in self?.goToDefinition() },
             PaletteCommand(id: "lsp.references", title: "LSP: 参照を検索", detail: "⇧F12") { [weak self] in self?.findReferences() },
             PaletteCommand(id: "lsp.rename", title: "LSP: 名前の変更", detail: "F2") { [weak self] in self?.rename() },
+            PaletteCommand(id: "lsp.quickfix", title: "LSP: クイックフィックス", detail: "⌥↩") { [weak self] in self?.quickFix() },
             PaletteCommand(id: "lsp.restart", title: "LSP: 言語サーバーを再起動") { [weak self] in self?.restart() },
         ]
     }
@@ -675,6 +830,7 @@ final class LSPTextAddon: NSObject, TextAddon, TextDecorating, CommandProviding 
 
     func detach() {
         hideHover()
+        removeBulb()
         changeWork?.cancel()
         NotificationCenter.default.removeObserver(self)
         monitors.forEach(NSEvent.removeMonitor)

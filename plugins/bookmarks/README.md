@@ -18,6 +18,10 @@ Lines を入れていると行番号の左に青い点、Scroll Assistant を入
 
 ## 更新履歴
 
+### v1.5
+
+- プラグイン API 4（apiVersion 4）への対応
+
 ### v1.4
 
 - プラグイン API 3（apiVersion 3）への対応

@@ -501,7 +501,7 @@ final class SplitPane: NSView, NSTextViewDelegate {
         guard let current else { return }
         let viewer = NativePlugins.viewer(for: current.url)
         textView.isEditable = current.editable && viewer == nil
-        ext = viewer ?? (current.editable ? PluginStore.makeExtension(for: current.url, code: scroll) : nil)
+        ext = viewer ?? (current.editable ? NativePlugins.codePreview(for: current.url, code: scroll) ?? PluginStore.makeExtension(for: current.url, code: scroll) : nil)
         guard let ext else { return detachExtension() }
         host(ext.body, in: bodyHost)
         layoutExtensionBar()

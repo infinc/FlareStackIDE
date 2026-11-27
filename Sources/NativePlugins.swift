@@ -86,6 +86,10 @@ protocol FileViewing: AnyObject {
     func viewer(for url: URL) -> EditorExtension?
 }
 
+protocol CodePreviewing: AnyObject {
+    func preview(for url: URL, code: NSView) -> EditorExtension?
+}
+
 extension NativePlugin {
     var opensFiles: Bool { false }
     func textAddon(for code: CodeEditing) -> TextAddon? { nil }
@@ -95,7 +99,7 @@ extension NativePlugin {
 
 enum NativePlugins {
     static let binary = "plugin.dylib"
-    static let apiVersion = 3
+    static let apiVersion = 4
     private typealias Entry = @convention(c) () -> Void
     private static var loaded: [String: (plugin: NativePlugin?, version: String)] = [:]
     private static var registering: NativePlugin?
@@ -191,6 +195,10 @@ enum NativePlugins {
         let viewers = active.compactMap { $0 as? FileViewing & NativePlugin }
         let ordered = viewers.filter { listed.contains($0.id) } + viewers.filter { !listed.contains($0.id) }
         return ordered.lazy.compactMap { $0.viewer(for: url) }.first
+    }
+
+    static func codePreview(for url: URL, code: NSView) -> EditorExtension? {
+        active.lazy.compactMap { ($0 as? CodePreviewing)?.preview(for: url, code: code) }.first
     }
 
     static var opensFiles: Bool { active.contains { $0.opensFiles } }

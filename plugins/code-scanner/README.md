@@ -63,6 +63,10 @@ LSP Client プラグインが言語サーバー（Python なら Pyright など�
 
 ## 更新履歴
 
+### v1.10
+
+- プラグイン API 4（apiVersion 4）への対応
+
 ### v1.9
 
 - プラグイン API 3（apiVersion 3）への対応

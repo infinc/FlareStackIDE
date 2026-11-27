@@ -1,16 +1,16 @@
 {
   "id": "file-tab-cleaner",
   "name": "File Tab Cleaner",
-  "version": "1.4",
+  "version": "1.5",
   "author": "FlareStackIDE",
   "symbol": "xmark.circle",
   "summary": "タブを長押しで固定し、固定していないタブをボタン1つで閉じる",
   "fileExtensions": [],
   "category": "ウィンドウ・タブ",
   "files": ["plugin.dylib", "README.md"],
-  "apiVersion": 3,
+  "apiVersion": 4,
   "hashes": {
-    "README.md": "b734b657ddd391afb0a577072d0fd4b6fb3ae7e4912b4d455d44f88a635caf5b",
-    "plugin.dylib": "faca0ebb59c4f7977ad7fefa8412d37166d1e6dba927ea36fa24daa5cfdcf23b"
+    "README.md": "054719af9c58c8b4f0785327712a9e3f9429bd6f497b71e3b83910d41237ed41",
+    "plugin.dylib": "4820431fee1d33b07ae949db56f23e0091af2e644fa4236d11c2b092f2e9c840"
   }
 }

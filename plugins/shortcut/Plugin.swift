@@ -10,11 +10,13 @@ final class ShortcutPlugin: NativePlugin, PluginSettingsProviding {
 final class ShortcutAddon: WindowAddon {
     private weak var editor: EditorWindowController?
     private var monitor: Any?
+    private var observer: Any?
 
     init(editor: EditorWindowController) {
         self.editor = editor
         ShortcutStore.live += 1
         ShortcutStore.seedPalette()
+        ShortcutStore.seedComment()
         ShortcutStore.applyPaletteKey()
         monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self, let editor = self.editor, event.window === editor.window,
@@ -22,6 +24,10 @@ final class ShortcutAddon: WindowAddon {
                   let action = ShortcutAction(rawValue: shortcut.action) else { return event }
             DispatchQueue.main.async { self.perform(action) }
             return nil
+        }
+        observer = NotificationCenter.default.addObserver(forName: PluginEvent.commentKeyRequest, object: nil, queue: .main) { _ in
+            ShortcutStore.seedComment()
+            ShortcutStore.postCommentKey()
         }
     }
 
@@ -40,10 +46,18 @@ final class ShortcutAddon: WindowAddon {
             editor.showCommandPalette(nil)
         case .zoomIn, .zoomOut, .zoomReset:
             if let zoom = action.zoom { Zoom.perform(zoom) }
+        case .comment:
+            if NativePlugins.plugin("comment-toggle") == nil {
+                Toasts.post("Comment Toggle プラグインが必要です", message: "プラグインの一覧から Comment Toggle をインストールしてください", in: editor.window)
+            } else {
+                NotificationCenter.default.post(name: PluginEvent.toggleComment, object: editor.window)
+            }
         }
     }
 
     func detach() {
+        if let observer { NotificationCenter.default.removeObserver(observer) }
+        observer = nil
         guard let monitor else { return }
         NSEvent.removeMonitor(monitor)
         self.monitor = nil

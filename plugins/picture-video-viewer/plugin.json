@@ -1,7 +1,7 @@
 {
   "id": "picture-video-viewer",
   "name": "Picture/Video Viewer",
-  "version": "1.4",
+  "version": "1.5",
   "author": "FlareStackIDE",
   "symbol": "photo.on.rectangle",
   "summary": "写真と動画をファイル編集画面で表示",
@@ -9,9 +9,9 @@
   "category": "ビューア",
   "loadOnOpen": true,
   "files": ["plugin.dylib", "README.md"],
-  "apiVersion": 3,
+  "apiVersion": 4,
   "hashes": {
-    "README.md": "570b33561e31d8ab989baac50fd6f5a7dddc61b00f29bbe95ccb4ae2def3de88",
-    "plugin.dylib": "8ca5c07f80665410858c07ce0b835d13fea949a18e9492e3573c5fda2c950c66"
+    "README.md": "63ef42d34f7479db7a89a7b936adcea08e4afc1cc5a540077b6ab1f763c842a5",
+    "plugin.dylib": "47053ceecfe327cad7a59200f05c43be278b81b29e5a72d3c3cab68663b4dce4"
   }
 }
