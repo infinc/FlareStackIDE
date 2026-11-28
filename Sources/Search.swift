@@ -28,9 +28,36 @@ enum ProjectSearch {
         return result
     }
 
-    static func run(_ query: String, in base: URL, cancelled: () -> Bool) -> [SearchHit] {
-        let needle = query.lowercased()
-        guard !needle.isEmpty else { return [] }
+    struct Options {
+        var regex = false
+        var caseSensitive = false
+    }
+
+    struct Replacement {
+        let url: URL
+        let original: Data
+        let text: String
+        let format: TextFormat
+        let count: Int
+    }
+
+    static func matcher(_ query: String, _ options: Options) -> NSRegularExpression? {
+        guard !query.isEmpty else { return nil }
+        return try? NSRegularExpression(pattern: options.regex ? query : NSRegularExpression.escapedPattern(for: query),
+                                        options: options.caseSensitive ? [] : [.caseInsensitive])
+    }
+
+    static func read(_ url: URL) -> (data: Data, text: String, format: TextFormat)? {
+        guard let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize, size <= maxFileSize,
+              let data = try? Data(contentsOf: url), !data.prefix(4096).contains(0),
+              let file = TextFile.read(data) else { return nil }
+        return (data, file.text, file.format)
+    }
+
+    private static func whole(_ text: String) -> NSRange { NSRange(location: 0, length: (text as NSString).length) }
+
+    static func run(_ query: String, in base: URL, options: Options = Options(), cancelled: () -> Bool) -> [SearchHit] {
+        guard let regex = matcher(query, options) else { return [] }
         let all = files(in: base)
         let prefix = base.standardizedFileURL.path + "/"
         func relative(_ url: URL) -> String {
@@ -40,31 +67,57 @@ enum ProjectSearch {
         var names: [SearchHit] = []
         for url in all {
             let name = url.lastPathComponent
-            if let range = name.range(of: needle, options: .caseInsensitive) {
-                names.append(SearchHit(url: url, relative: relative(url), line: nil, text: name, match: NSRange(range, in: name)))
+            if let match = regex.firstMatch(in: name, range: whole(name)), match.range.length > 0 {
+                names.append(SearchHit(url: url, relative: relative(url), line: nil, text: name, match: match.range))
             }
         }
         names.sort { $0.text.count < $1.text.count }
         var lines: [SearchHit] = []
         for url in all {
             if cancelled() || names.count + lines.count >= maxHits { break }
-            guard let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize, size <= maxFileSize,
-                  let data = try? Data(contentsOf: url), !data.prefix(4096).contains(0),
-                  let text = String(data: data, encoding: .utf8) else { continue }
-            guard text.range(of: needle, options: .caseInsensitive) != nil else { continue }
+            guard let file = read(url), regex.firstMatch(in: file.text, range: whole(file.text)) != nil else { continue }
             var number = 0
-            text.enumerateLines { line, stop in
+            file.text.enumerateLines { line, stop in
                 number += 1
-                guard let range = line.range(of: needle, options: .caseInsensitive) else { return }
+                guard let found = regex.firstMatch(in: line, range: whole(line)), found.range.length > 0 else { return }
                 let trimmed = line.trimmingCharacters(in: .whitespaces)
                 let shift = (line as NSString).range(of: trimmed).location
-                var match = NSRange(range, in: line)
+                var match = found.range
                 match.location -= shift == NSNotFound ? 0 : shift
                 lines.append(SearchHit(url: url, relative: relative(url), line: number, text: trimmed, match: match))
                 if names.count + lines.count >= maxHits { stop = true }
             }
         }
         return names + lines
+    }
+
+    static func replacements(_ query: String, with replacement: String, in base: URL, options: Options) -> [Replacement] {
+        guard let regex = matcher(query, options) else { return [] }
+        let template = options.regex ? replacement : NSRegularExpression.escapedTemplate(for: replacement)
+        return files(in: base).compactMap { url in
+            guard let file = read(url) else { return nil }
+            let count = regex.numberOfMatches(in: file.text, range: whole(file.text))
+            guard count > 0 else { return nil }
+            let text = regex.stringByReplacingMatches(in: file.text, range: whole(file.text), withTemplate: template)
+            return text == file.text ? nil : Replacement(url: url, original: file.data, text: text, format: file.format, count: count)
+        }
+    }
+
+    static func apply(_ plan: [Replacement]) throws -> [URL: Data] {
+        var originals: [URL: Data] = [:]
+        for item in plan {
+            let data = try TextFile.write(item.text, to: item.url, format: item.format, atomically: true)
+            LocalHistory.record(item.url, data: data, merge: false, previous: item.original)
+            originals[item.url] = item.original
+        }
+        return originals
+    }
+
+    static func restore(_ originals: [URL: Data]) throws {
+        for (url, data) in originals {
+            try data.write(to: url, options: .atomic)
+            LocalHistory.record(url, data: data, merge: false)
+        }
     }
 }
 
@@ -75,12 +128,18 @@ final class SearchPanelWindow: NSPanel {
 
 final class SearchPanel: NSObject, NSWindowDelegate, NSSearchFieldDelegate, NSTableViewDataSource, NSTableViewDelegate {
     var onOpen: ((URL, Int?, String) -> Void)?
+    var onReplace: ((String, String, ProjectSearch.Options) -> Void)?
     private let base: URL
     private let panel: SearchPanelWindow
     private let field = NSSearchField()
     private let table = NSTableView()
     private let scroll = NSScrollView()
     private let status = NSTextField(labelWithString: "")
+    private let regex = NSButton(checkboxWithTitle: "正規表現", target: nil, action: nil)
+    private let caseSensitive = NSButton(checkboxWithTitle: "大文字と小文字を区別", target: nil, action: nil)
+    private let replacement = NSTextField()
+    private let replaceButton = NSButton(title: "すべて置換…", target: nil, action: nil)
+    private static let headerHeight: CGFloat = 88
     private var hits: [SearchHit] = []
     private var generation = 0
     private var pending: DispatchWorkItem?
@@ -140,15 +199,37 @@ final class SearchPanel: NSObject, NSWindowDelegate, NSSearchFieldDelegate, NSTa
         status.textColor = .secondaryLabelColor
         status.translatesAutoresizingMaskIntoConstraints = false
 
-        [field, scroll, status].forEach(effect.addSubview)
-        height = effect.heightAnchor.constraint(equalToConstant: 56)
+        for toggle in [regex, caseSensitive] {
+            toggle.controlSize = .small
+            toggle.font = .systemFont(ofSize: 11)
+            toggle.target = self
+            toggle.action = #selector(queryChanged)
+        }
+        replacement.placeholderString = "置換後の文字列"
+        replacement.controlSize = .small
+        replacement.font = .systemFont(ofSize: 12)
+        replacement.target = self
+        replacement.action = #selector(replaceClicked)
+        replaceButton.bezelStyle = .rounded
+        replaceButton.controlSize = .small
+        replaceButton.target = self
+        replaceButton.action = #selector(replaceClicked)
+        let options = NSStackView(views: [regex, caseSensitive, replacement, replaceButton])
+        options.spacing = 10
+        options.translatesAutoresizingMaskIntoConstraints = false
+
+        [field, options, scroll, status].forEach(effect.addSubview)
+        height = effect.heightAnchor.constraint(equalToConstant: Self.headerHeight)
         NSLayoutConstraint.activate([
             effect.widthAnchor.constraint(equalToConstant: 640),
             height,
             field.topAnchor.constraint(equalTo: effect.topAnchor, constant: 12),
             field.leadingAnchor.constraint(equalTo: effect.leadingAnchor, constant: 12),
             field.trailingAnchor.constraint(equalTo: effect.trailingAnchor, constant: -12),
-            scroll.topAnchor.constraint(equalTo: field.bottomAnchor, constant: 8),
+            options.topAnchor.constraint(equalTo: field.bottomAnchor, constant: 8),
+            options.leadingAnchor.constraint(equalTo: effect.leadingAnchor, constant: 14),
+            options.trailingAnchor.constraint(equalTo: effect.trailingAnchor, constant: -12),
+            scroll.topAnchor.constraint(equalTo: options.bottomAnchor, constant: 6),
             scroll.leadingAnchor.constraint(equalTo: effect.leadingAnchor, constant: 6),
             scroll.trailingAnchor.constraint(equalTo: effect.trailingAnchor, constant: -6),
             scroll.bottomAnchor.constraint(equalTo: status.topAnchor, constant: -4),
@@ -185,7 +266,7 @@ final class SearchPanel: NSObject, NSWindowDelegate, NSSearchFieldDelegate, NSTa
         let showsStatus = !status.stringValue.isEmpty
         status.isHidden = !showsStatus
         scroll.isHidden = hits.isEmpty
-        let value = 56 + (hits.isEmpty ? 0 : rows + 8) + (showsStatus ? 18 : 0)
+        let value = Self.headerHeight + (hits.isEmpty ? 0 : rows + 8) + (showsStatus ? 18 : 0)
         guard abs(height.constant - value) > 0.5 else { return }
         let top = panel.frame.maxY
         height.constant = value
@@ -215,16 +296,25 @@ final class SearchPanel: NSObject, NSWindowDelegate, NSSearchFieldDelegate, NSTa
         }
         let current = generation
         let base = base
+        let options = currentOptions
+        guard ProjectSearch.matcher(query, options) != nil else {
+            hits = []
+            rowHeights = []
+            status.stringValue = "正規表現が正しくありません"
+            table.reloadData()
+            updateHeight()
+            return
+        }
         let work = DispatchWorkItem { [weak self] in
             DispatchQueue.global(qos: .userInitiated).async {
-                let found = ProjectSearch.run(query, in: base) { [weak self] in self?.generation != current }
+                let found = ProjectSearch.run(query, in: base, options: options) { [weak self] in self?.generation != current }
                 DispatchQueue.main.async {
                     guard let self, self.generation == current else { return }
                     self.hits = found
                     self.rowHeights = found.map(Self.height)
                     let files = found.filter { $0.line == nil }.count
                     self.status.stringValue = found.isEmpty ? "一致するものはありません"
-                        : "ファイル名 \(files) 件・コード \(found.count - files) 件" + (found.count >= ProjectSearch.maxHits ? "（上限）" : "")
+                        : "ファイル名 \(files) 件・コード \(found.count - files) 件" + (found.count >= ProjectSearch.maxHits ? "　·　さらに結果があります（上限 \(ProjectSearch.maxHits) 件）" : "")
                     self.table.reloadData()
                     if !found.isEmpty { self.table.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false) }
                     self.updateHeight()
@@ -235,7 +325,20 @@ final class SearchPanel: NSObject, NSWindowDelegate, NSSearchFieldDelegate, NSTa
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: work)
     }
 
+    private var currentOptions: ProjectSearch.Options {
+        ProjectSearch.Options(regex: regex.state == .on, caseSensitive: caseSensitive.state == .on)
+    }
+
+    @objc private func replaceClicked() {
+        let query = field.stringValue.trimmingCharacters(in: .whitespaces)
+        guard !query.isEmpty, ProjectSearch.matcher(query, currentOptions) != nil else { return }
+        let options = currentOptions, value = replacement.stringValue
+        panel.close()
+        onReplace?(query, value, options)
+    }
+
     func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
+        guard control === field else { return false }
         switch selector {
         case #selector(NSResponder.moveDown(_:)): move(1)
         case #selector(NSResponder.moveUp(_:)): move(-1)

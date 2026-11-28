@@ -16,7 +16,7 @@ final class LightEditorWindowController: NSWindowController, NSWindowDelegate, N
         self.url = url
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 760, height: 560),
                               styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
-        window.title = "\(url.lastPathComponent) — Light Editer"
+        window.title = "\(url.lastPathComponent) — Light Editor"
         window.representedURL = url
         window.isReleasedWhenClosed = false
         window.minSize = NSSize(width: 360, height: 240)

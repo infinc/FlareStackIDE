@@ -1,7 +1,7 @@
 {
   "id": "lines",
   "name": "Lines",
-  "version": "1.8",
+  "version": "1.9",
   "author": "FlareStackIDE",
   "symbol": "list.number",
   "summary": "ファイル編集画面の左側に行数を表示",
@@ -16,7 +16,7 @@
   ],
   "apiVersion": 4,
   "hashes": {
-    "README.md": "01b64f43628ee58bc0df9bdee64d0387f5ef3c2533876c1614634e2529089323",
-    "plugin.dylib": "1748a64975bb97e3ef2b25d0f686a6c2e3923c7cb6c930a6a1e85975f892cbf7"
+    "README.md": "fe58db710b64d419eb2039e069707f6faf0d8d0fbd36e86058c6fc4c1b17ca76",
+    "plugin.dylib": "d857a0913e979b688d9d298058c57a0ce8f1c921c3e91d4fcba84f606b32e2cf"
   }
 }

@@ -145,7 +145,8 @@ final class BookmarksAddon: NSObject, TextAddon {
     }
 
     @objc private func rulerClicked(_ note: Notification) {
-        guard note.userInfo?["zone"] as? String == "line", let line = note.userInfo?["line"] as? Int else { return }
+        guard note.userInfo?["zone"] as? String == "line", note.userInfo?["option"] as? Bool != true,
+              let line = note.userInfo?["line"] as? Int else { return }
         toggle(line)
     }
 

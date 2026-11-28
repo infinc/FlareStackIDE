@@ -1,181 +1,21 @@
 import AppKit
 
-final class FileNode {
-    let url: URL
-    let isDirectory: Bool
-    private var cached: [FileNode]?
-
-    init(url: URL) {
-        self.url = url
-        isDirectory = (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
-    }
-
-    static let hiddenNames: Set<String> = [".DS_Store", ".git"]
-
-    var children: [FileNode] {
-        if let cached { return cached }
-        let urls = (try? FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: [.isDirectoryKey])) ?? []
-        let nodes = urls.filter { !FileNode.hiddenNames.contains($0.lastPathComponent) }.map(FileNode.init).sorted {
-            $0.isDirectory != $1.isDirectory ? $0.isDirectory
-                : $0.url.lastPathComponent.localizedStandardCompare($1.url.lastPathComponent) == .orderedAscending
-        }
-        cached = nodes
-        return nodes
-    }
-
-    func invalidate() { cached = nil }
-
-    func loadedChild(_ name: String) -> FileNode? { cached?.first { $0.url.lastPathComponent == name } }
-
-    var isLoaded: Bool { cached != nil }
-
-    func refresh() {
-        guard let old = cached else { return }
-        let existing = Dictionary(old.map { ($0.url.standardizedFileURL, $0) }, uniquingKeysWith: { a, _ in a })
-        cached = nil
-        cached = children.map { existing[$0.url.standardizedFileURL] ?? $0 }
-        cached?.forEach { $0.refresh() }
-    }
-}
-
-final class Buffer {
-    let url: URL
-    var text: String
-    var dirty = false
-    private(set) var editable: Bool
-    var format = TextFormat()
-
-    init(url: URL) {
-        self.url = url
-        if let data = try? Data(contentsOf: url, options: .mappedIfSafe), let file = TextFile.read(data) {
-            text = file.text
-            format = file.format
-            editable = true
-            if data.count <= LocalHistory.maxBytes { baseline = Data(data) }
-        } else {
-            text = "このファイルは表示できません。"
-            editable = false
-        }
-    }
-
-    func reopen(as encoding: TextEncoding) throws {
-        guard let file = TextFile.read(url, encoding: encoding) else {
-            throw TextFile.failure("\(encoding.title) として読み込めませんでした。")
-        }
-        text = file.text
-        format = file.format
-        editable = true
-        dirty = false
-    }
-
-    private var baseline: Data?
-    private var pendingSave: DispatchWorkItem?
-    private var autosaveFailed = false
-
-    func save(atomically: Bool = true) throws {
-        pendingSave?.cancel()
-        pendingSave = nil
-        let data = try TextFile.write(text, to: url, format: format, atomically: atomically)
-        dirty = false
-        LocalHistory.record(url, data: data, previous: baseline)
-        baseline = nil
-    }
-
-    func scheduleSave(_ done: @escaping () -> Void) {
-        dirty = true
-        pendingSave?.cancel()
-        let work = DispatchWorkItem { [weak self] in
-            guard let self, self.pendingSave != nil else { return }
-            do {
-                try self.save()
-                self.autosaveFailed = false
-            } catch {
-                self.dirty = true
-                if !self.autosaveFailed {
-                    Toasts.post("「\(self.url.lastPathComponent)」を自動保存できませんでした", message: error.localizedDescription)
-                }
-                self.autosaveFailed = true
-            }
-            done()
-        }
-        pendingSave = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: work)
-    }
-
-    func diskText() -> String? { TextFile.read(url, encoding: format.encoding)?.text }
-}
-
-final class ToolStripButton: NSButton {
-    var active = false { didSet { needsDisplay = true } }
-    private var symbol = ""
-    private var width: NSLayoutConstraint!
-    private var height: NSLayoutConstraint!
-
-    convenience init(symbol: String, tip: String, target: AnyObject, action: Selector) {
-        self.init(image: NSImage(systemSymbolName: symbol, accessibilityDescription: tip)!, target: target, action: action)
-        self.symbol = symbol
-        isBordered = false
-        toolTip = tip
-        translatesAutoresizingMaskIntoConstraints = false
-        width = widthAnchor.constraint(equalToConstant: 30)
-        height = heightAnchor.constraint(equalToConstant: 30)
-        NSLayoutConstraint.activate([width, height])
-        applySize()
-    }
-
-    func applySize() {
-        let side = max(Settings.bigTabWidth - 10, 22)
-        width.constant = side
-        height.constant = side
-        image = NSImage(systemSymbolName: symbol, accessibilityDescription: toolTip)?
-            .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: Settings.bigTabIconSize, weight: .regular))
-    }
-
-    var onReorder: (() -> Void)?
-    var groups: () -> [NSStackView] = { [] }
-
-    override func mouseDown(with event: NSEvent) {
-        guard event.modifierFlags.contains(.command), let window,
-              let item = sequence(first: self as NSView, next: { $0.superview }).first(where: { $0.superview is NSStackView }) else {
-            return super.mouseDown(with: event)
-        }
-        var reorder: DragReorder?
-        while let next = window.nextEvent(matching: [.leftMouseDragged, .leftMouseUp]), next.type == .leftMouseDragged {
-            if reorder == nil {
-                guard hypot(next.locationInWindow.x - event.locationInWindow.x, next.locationInWindow.y - event.locationInWindow.y) > 3 else { continue }
-                reorder = DragReorder(view: item, event: event, peers: groups())
-            }
-            reorder?.drag(next)
-        }
-        reorder?.end()
-        if reorder != nil { onReorder?() }
-    }
-
-    override func draw(_ dirtyRect: NSRect) {
-        if active {
-            ButtonHover.activeFill(for: self).setFill()
-            NSBezierPath(roundedRect: bounds, xRadius: 6, yRadius: 6).fill()
-        }
-        super.draw(dirtyRect)
-    }
-}
-
 final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutlineViewDataSource, NSOutlineViewDelegate, NSTextViewDelegate, NSMenuDelegate {
-    private(set) var project: Project
+    var project: Project
     var onClose: (() -> Void)?
     var onBack: (() -> Void)?
     var onOpenProject: ((Project, Bool) -> Void)?
     var onProjectRenamed: (() -> Void)?
 
-    private let root: FileNode
-    private let outline = TreeOutline()
+    let root: FileNode
+    let outline = TreeOutline()
     private let treeScroll = NSScrollView()
     private let mainSplit = NSSplitView()
     private let rightSplit = NSSplitView()
-    private let editorScroll = CodeScrollView.make()
+    let editorScroll = CodeScrollView.make()
     var textView: NSTextView { editorScroll.documentView as! NSTextView }
-    private let fileLabel = NSTextField(labelWithString: "")
-    private let formatButton = NSButton()
+    let fileLabel = NSTextField(labelWithString: "")
+    let formatButton = NSButton()
     private let placeholder = NSTextField(labelWithString: "左のディレクトリからファイルを選択してください")
     private var folderButton: ToolStripButton!
     private var pluginButton: ToolStripButton!
@@ -192,51 +32,51 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
     private var treeFeed: FeedView!
     private let leftPane = NSView()
     private let rightColumn = NSView()
-    private let topFeedHost = NSView()
-    private let topFeedLine = NSBox()
-    private var topFeedHeight: NSLayoutConstraint!
+    let topFeedHost = NSView()
+    let topFeedLine = NSBox()
+    var topFeedHeight: NSLayoutConstraint!
     private var pluginFeed: FeedView?
     private let pluginPage = PluginPage()
     private let barHost = NSView()
     private var barHeight: NSLayoutConstraint!
     private var floatConstraints: [NSLayoutConstraint] = []
-    private var overlayInset: CGFloat = 0
-    private var overlayTrailing: [NSLayoutConstraint] = []
-    private let bodyHost = NSView()
-    private var ext: EditorExtension?
+    var overlayInset: CGFloat = 0
+    var overlayTrailing: [NSLayoutConstraint] = []
+    let bodyHost = NSView()
+    var ext: EditorExtension?
     private var highlighter: Highlighter?
     private var recolorWork: DispatchWorkItem?
     private let topBar = NSView()
-    private let strip = NSView()
-    private var selectedURL: URL?
+    let strip = NSView()
+    var selectedURL: URL?
     private let gearButton = NSButton()
     private let searchButton = NSButton()
     private var searchPanel: SearchPanel?
     private var commandPalette: CommandPalette?
     private let settingsMenu = EditorSettingsMenu()
-    private let fileTabs = TabStrip()
-    private let editorSplit = NSSplitView()
-    private var splitPane: SplitPane?
-    private var tabs: [URL: TabItemView] = [:]
-    private var buffers: [URL: Buffer] = [:]
-    private var current: Buffer?
+    let fileTabs = TabStrip()
+    let editorSplit = NSSplitView()
+    var splitPane: SplitPane?
+    var tabs: [URL: TabItemView] = [:]
+    var buffers: [URL: Buffer] = [:]
+    var current: Buffer?
     private let cloudButton = NSButton()
-    private let topButtons = NSStackView()
+    let topButtons = NSStackView()
     private var shiftMonitor: Any?
     private var topDragMonitor: Any?
     private var lastShift: TimeInterval?
     private var autosaveTimer: Timer?
     private var cloning: GitClone?
-    private let projectButton = NSButton()
+    let projectButton = NSButton()
     private var topHeight: NSLayoutConstraint!
-    private var stripWidth: NSLayoutConstraint!
+    var stripWidth: NSLayoutConstraint!
     private var watcher: FileWatcher?
     private var gitWork: DispatchWorkItem?
-    private var upperColumn: NSStackView!
-    private var lowerColumn: NSStackView!
-    private var pluginFeeds: [(feed: NSView, button: ToolStripButton?)] = []
-    private lazy var textAddons = TextAddons(code: self)
-    private lazy var windowAddons = WindowAddons(editor: self)
+    var upperColumn: NSStackView!
+    var lowerColumn: NSStackView!
+    var pluginFeeds: [(feed: NSView, button: ToolStripButton?)] = []
+    lazy var textAddons = TextAddons(code: self)
+    lazy var windowAddons = WindowAddons(editor: self)
     private var resizingFullScreen = false
 
     init(project: Project) {
@@ -527,7 +367,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
         fitTreeColumn()
     }
 
-    @objc private func backClicked() {
+    @objc func backClicked() {
         guard let window else { return }
         if let error = saveAll() {
             NSAlert(error: error).beginSheetModal(for: window)
@@ -537,7 +377,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
         window.close()
     }
 
-    @objc private func fitTreeColumn() {
+    @objc func fitTreeColumn() {
         guard let column = outline.tableColumns.first else { return }
         let font = NSFont.systemFont(ofSize: NSFont.smallSystemFontSize)
         var width: CGFloat = 0
@@ -570,7 +410,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
         return stack
     }
 
-    private func show(_ view: NSView, in host: NSView) {
+    func show(_ view: NSView, in host: NSView) {
         host.subviews.filter { $0 !== view }.forEach { $0.removeFromSuperview() }
         view.isHidden = false
         guard view.superview !== host else { return }
@@ -630,6 +470,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
         if let panel = searchPanel, panel.isVisible { return panel.close() }
         let panel = searchPanel ?? SearchPanel(base: baseDirectory)
         panel.onOpen = { [weak self] in self?.openHit($0, line: $1, query: $2) }
+        panel.onReplace = { [weak self] in self?.replaceInProject($0, with: $1, options: $2) }
         searchPanel = panel
         panel.show(over: window)
     }
@@ -650,6 +491,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
         windowAddons.each(collect)
         textAddons.each(collect)
         splitPane?.addons.each(collect)
+        list += HostAPI.paletteCommands
         for button in stripButtons {
             guard let tip = button.toolTip, !tip.isEmpty else { continue }
             list.append(PaletteCommand(id: "strip." + tip, title: tip, detail: "アイコン列") { [weak button] in button?.performClick(nil) })
@@ -697,7 +539,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
         if target.length > 0 { textView.showFindIndicator(for: target) }
     }
 
-    private var feeds: [(feed: NSView, button: ToolStripButton?)] {
+    var feeds: [(feed: NSView, button: ToolStripButton?)] {
         [(treeFeed as NSView?, folderButton), (pluginFeed, pluginButton), (terminalFeed, terminalButton), (gitFeed, gitButton)]
             .compactMap { pair in pair.0.map { ($0, pair.1) } } + pluginFeeds
     }
@@ -751,7 +593,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
         window?.makeFirstResponder(textView)
     }
 
-    private func settleFeeds() {
+    func settleFeeds() {
         feeds.filter { !$0.feed.isHidden && ($0.feed.superview === leftPane) != inUpper($0.feed) }.forEach { showBottom($0.feed) }
     }
 
@@ -842,7 +684,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
         splitPane?.colorTabs()
     }
 
-    private func gitState(_ url: URL) -> GitFileState? {
+    func gitState(_ url: URL) -> GitFileState? {
         guard let git, url.isFileURL else { return nil }
         let path = url.standardizedFileURL.path
         let base = root.url.standardizedFileURL.path
@@ -995,7 +837,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
         ext.update(text: textView.string)
     }
 
-    private func layoutExtensionBar() {
+    func layoutExtensionBar() {
         guard let ext else { return }
         let bar = ext.bar
         NSLayoutConstraint.deactivate(floatConstraints)
@@ -1040,7 +882,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
         show(editorScroll, in: bodyHost)
     }
 
-    private func showEmpty() {
+    func showEmpty() {
         selectedURL = nil
         highlighter = nil
         detachExtension()
@@ -1159,7 +1001,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
         if let tab = tabs[url] { fileTabs.reveal(tab) }
     }
 
-    private func closeTab(_ url: URL) {
+    func closeTab(_ url: URL) {
         guard let tab = tabs[url] else { return }
         let index = fileTabs.stack.arrangedSubviews.filter { $0 is TabItemView }.firstIndex(of: tab) ?? 0
         if selectedURL == url { storeCurrent() }
@@ -1186,7 +1028,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
         showEmpty()
     }
 
-    private func storeCurrent() {
+    func storeCurrent() {
         guard let current, current.editable else { return }
         current.text = textView.string
     }
@@ -1241,7 +1083,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.6, execute: work)
     }
 
-    private func updateTitle() {
+    func updateTitle() {
         guard let current else { return updateCloud() }
         let base = baseDirectory
         var relative = current.url.path
@@ -1257,7 +1099,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
             .font: NSFont.systemFont(ofSize: 11, weight: .medium), .foregroundColor: NSColor.secondaryLabelColor])
     }
 
-    private func updateCloud() {
+    func updateCloud() {
         updateFormat()
         let dirty = buffers.values.contains { $0.dirty } || splitPane?.dirty == true
         cloudButton.image = Self.cloudImage(dirty ? "icloud.and.arrow.up" : "checkmark.icloud")
@@ -1398,846 +1240,5 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
         autosaveTimer?.invalidate()
         terminalFeed?.stopAll()
         onClose?()
-    }
-}
-
-extension EditorWindowController {
-    private static let refactorKey = "RefactorOnRename"
-
-    func menuNeedsUpdate(_ menu: NSMenu) {
-        menu.removeAllItems()
-        guard let node = outline.item(atRow: outline.clickedRow) as? FileNode else { return }
-        let isRoot = node === root
-        func add(_ title: String, _ action: Selector, enabled: Bool = true) {
-            let item = NSMenuItem(title: title, action: enabled ? action : nil, keyEquivalent: "")
-            item.target = self
-            item.representedObject = node
-            menu.addItem(item)
-        }
-        if node.isDirectory {
-            add("フォルダ名を変更…", #selector(renameItem(_:)), enabled: !isRoot)
-            add("新規ファイル…", #selector(newFileItem(_:)))
-            add("新規フォルダ…", #selector(newFolderItem(_:)))
-        } else {
-            add("右に開く", #selector(openRightItem(_:)))
-            menu.addItem(.separator())
-            add("ファイル名を変更…", #selector(renameItem(_:)), enabled: !isRoot)
-            add("ファイルをコピー…", #selector(copyFileItem(_:)))
-            if LocalHistory.isTracked(node.url) { add("ローカル履歴…", #selector(historyItem(_:))) }
-        }
-        add("パスをコピー", #selector(copyPathItem(_:)))
-        menu.addItem(.separator())
-        add("削除", #selector(deleteItem(_:)), enabled: !isRoot)
-    }
-
-    private func node(of sender: Any?) -> FileNode? {
-        (sender as? NSMenuItem)?.representedObject as? FileNode
-    }
-
-    func showError(_ error: Error) {
-        guard let window else { return }
-        NSAlert(error: error).beginSheetModal(for: window)
-    }
-
-    private func showMessage(_ text: String) {
-        let alert = NSAlert()
-        alert.messageText = text
-        alert.addButton(withTitle: "OK")
-        if let window { alert.beginSheetModal(for: window) } else { alert.runModal() }
-    }
-
-    private func askName(title: String, initial: String, button: String, refactor: Bool = false) -> (name: String, refactor: Bool)? {
-        let alert = NSAlert()
-        alert.messageText = title
-        alert.addButton(withTitle: button)
-        alert.addButton(withTitle: "キャンセル")
-        let field = NSTextField(string: initial)
-        field.frame = NSRect(x: 0, y: refactor ? 28 : 0, width: 320, height: 24)
-        let accessory = NSView(frame: NSRect(x: 0, y: 0, width: 320, height: refactor ? 52 : 24))
-        accessory.addSubview(field)
-        let check = NSButton(checkboxWithTitle: "参照も更新する（リファクタリング）", target: nil, action: nil)
-        if refactor {
-            UserDefaults.standard.register(defaults: [Self.refactorKey: true])
-            check.state = UserDefaults.standard.bool(forKey: Self.refactorKey) ? .on : .off
-            check.frame = NSRect(x: 0, y: 0, width: 320, height: 20)
-            accessory.addSubview(check)
-        }
-        alert.accessoryView = accessory
-        alert.window.initialFirstResponder = field
-        guard alert.runModal() == .alertFirstButtonReturn else { return nil }
-        if refactor { UserDefaults.standard.set(check.state == .on, forKey: Self.refactorKey) }
-        let name = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !name.isEmpty, !name.contains("/"), name != ".", name != ".." else {
-            showMessage("その名前は使用できません。")
-            return nil
-        }
-        return (name, refactor && check.state == .on)
-    }
-
-    private func destination(_ name: String, in directory: URL) -> URL? {
-        let url = directory.appendingPathComponent(name)
-        guard !FileManager.default.fileExists(atPath: url.path) else {
-            showMessage("「\(name)」は既に存在します。")
-            return nil
-        }
-        return url
-    }
-
-    private func treeDiffers(_ paths: Set<String>) -> Bool {
-        guard !paths.isEmpty else { return false }
-        let base = realpath(root.url.path, nil).map { defer { free($0) }; return String(cString: $0) } ?? root.url.standardizedFileURL.path
-        var info = stat()
-        let exists = { (path: String) in lstat(path, &info) == 0 }
-        guard root.isDirectory else {
-            return (paths.contains(base) || paths.contains(root.url.standardizedFileURL.path)) && !exists(base)
-        }
-        for path in paths {
-            guard path.hasPrefix(base + "/") else { return true }
-            let parts = path.dropFirst(base.count + 1).split(separator: "/").map(String.init)
-            guard let name = parts.last else { return true }
-            if FileNode.hiddenNames.contains(name) { continue }
-            var parent: FileNode? = root
-            for part in parts.dropLast() { parent = parent?.loadedChild(part) }
-            guard let parent, parent.isLoaded else { continue }
-            if (parent.loadedChild(name) != nil) != exists(path) { return true }
-        }
-        return false
-    }
-
-    func reloadTree() {
-        textAddons.each { $0.treeChanged() }
-        root.refresh()
-        outline.reloadData()
-        fitTreeColumn()
-    }
-
-    private func reopenTabs(_ map: (URL) -> URL?) {
-        let order = fileTabs.stack.arrangedSubviews.compactMap { view in tabs.first { $0.value === view }?.key }
-        let selected = selectedURL
-        order.forEach { tabs[$0]?.removeFromSuperview() }
-        tabs = [:]
-        buffers = [:]
-        current = nil
-        splitPane?.remap(map)
-        let reopened = order.compactMap(map)
-        reopened.forEach { open($0) }
-        if let selected, let target = map(selected) {
-            open(target)
-        } else if reopened.isEmpty {
-            showEmpty()
-        }
-    }
-
-    @objc private func openRightItem(_ sender: Any?) {
-        guard let node = node(of: sender), !node.isDirectory else { return }
-        openRight(node.url)
-    }
-
-    private static func moved(_ url: URL, from old: URL, to new: URL) -> URL? {
-        let path = url.standardizedFileURL.path, oldPath = old.standardizedFileURL.path
-        if path == oldPath { return new }
-        guard path.hasPrefix(oldPath + "/") else { return url }
-        return URL(fileURLWithPath: new.standardizedFileURL.path + path.dropFirst(oldPath.count))
-    }
-
-    @objc private func renameItem(_ sender: Any?) {
-        guard let node = node(of: sender) else { return }
-        let old = node.url
-        let kind = node.isDirectory ? "フォルダ" : "ファイル"
-        guard let answer = askName(title: "\(kind)名を変更", initial: old.lastPathComponent, button: "変更", refactor: true),
-              answer.name != old.lastPathComponent,
-              let new = destination(answer.name, in: old.deletingLastPathComponent()) else { return }
-        if let error = saveAll() { showError(error); return }
-        do {
-            try FileManager.default.moveItem(at: old, to: new)
-        } catch {
-            showError(error)
-            return
-        }
-        let changed = answer.refactor ? Refactor.apply(in: baseDirectory, from: old, to: new, isDirectory: node.isDirectory) : 0
-        reopenTabs { Self.moved($0, from: old, to: new) }
-        reloadTree()
-        refreshGit()
-        if changed > 0 { showMessage("\(changed) 件のファイルで参照を更新しました。") }
-    }
-
-    @objc private func newFileItem(_ sender: Any?) {
-        guard let node = node(of: sender), node.isDirectory,
-              let answer = askName(title: "新規ファイル", initial: "", button: "作成"),
-              let url = destination(answer.name, in: node.url) else { return }
-        guard FileManager.default.createFile(atPath: url.path, contents: Data()) else {
-            showMessage("ファイルを作成できませんでした。")
-            return
-        }
-        reloadTree()
-        outline.expandItem(node)
-        open(url)
-        refreshGit()
-    }
-
-    @objc private func newFolderItem(_ sender: Any?) {
-        guard let node = node(of: sender), node.isDirectory,
-              let answer = askName(title: "新規フォルダ", initial: "", button: "作成"),
-              let url = destination(answer.name, in: node.url) else { return }
-        do {
-            try FileManager.default.createDirectory(at: url, withIntermediateDirectories: false)
-        } catch {
-            showError(error)
-            return
-        }
-        reloadTree()
-        outline.expandItem(node)
-        refreshGit()
-    }
-
-    private func moveNode(_ node: FileNode, into folder: FileNode) {
-        let old = node.url
-        let name = old.lastPathComponent
-        guard let new = destination(name, in: folder.url) else { return }
-        let alert = NSAlert()
-        alert.messageText = "「\(name)」を「\(folder.url.lastPathComponent)」へ移動します"
-        alert.informativeText = "参照している import やパスも新しい場所に合わせて更新（リファクタリング）しますか？"
-        alert.addButton(withTitle: "リファクタリングして移動")
-        alert.addButton(withTitle: "移動のみ")
-        alert.addButton(withTitle: "キャンセル")
-        let response = alert.runModal()
-        guard response != .alertThirdButtonReturn else { return }
-        if let error = saveAll() { showError(error); return }
-        do {
-            try FileManager.default.moveItem(at: old, to: new)
-        } catch {
-            showError(error)
-            return
-        }
-        let changed = response == .alertFirstButtonReturn
-            ? Refactor.move(in: baseDirectory, from: old, to: new, isDirectory: node.isDirectory) : 0
-        reopenTabs { Self.moved($0, from: old, to: new) }
-        reloadTree()
-        outline.expandItem(folder)
-        refreshGit()
-        if changed > 0 { showMessage("\(changed) 件のファイルで参照を更新しました。") }
-    }
-
-    @objc private func copyFileItem(_ sender: Any?) {
-        guard let node = node(of: sender), !node.isDirectory else { return }
-        let ext = node.url.pathExtension
-        let stem = node.url.deletingPathExtension().lastPathComponent
-        let initial = ext.isEmpty ? "\(stem) copy" : "\(stem) copy.\(ext)"
-        guard let answer = askName(title: "ファイルをコピー", initial: initial, button: "コピー"),
-              let url = destination(answer.name, in: node.url.deletingLastPathComponent()) else { return }
-        if let error = saveAll() { showError(error); return }
-        do {
-            try FileManager.default.copyItem(at: node.url, to: url)
-        } catch {
-            showError(error)
-            return
-        }
-        reloadTree()
-        open(url)
-        refreshGit()
-    }
-
-    @objc private func copyPathItem(_ sender: Any?) {
-        guard let node = node(of: sender) else { return }
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(node.url.path, forType: .string)
-    }
-
-    @objc private func deleteItem(_ sender: Any?) {
-        guard let node = node(of: sender), node !== root else { return }
-        let alert = NSAlert()
-        alert.messageText = "「\(node.url.lastPathComponent)」を削除しますか？"
-        alert.informativeText = "ゴミ箱に移動します。"
-        alert.addButton(withTitle: "削除")
-        alert.addButton(withTitle: "キャンセル")
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-        if let error = saveAll() { showError(error); return }
-        let original = node.url
-        var trashed: NSURL?
-        do {
-            try FileManager.default.trashItem(at: original, resultingItemURL: &trashed)
-        } catch {
-            showError(error)
-            return
-        }
-        let gone = original.standardizedFileURL.path
-        let inside = { (url: URL) -> Bool in
-            let path = url.standardizedFileURL.path
-            return path == gone || path.hasPrefix(gone + "/")
-        }
-        let closed = openURLs.filter(inside)
-        reopenTabs { inside($0) ? nil : $0 }
-        reloadTree()
-        refreshGit()
-        guard let trashed = trashed as URL? else { return }
-        Toasts.post("「\(original.lastPathComponent)」をゴミ箱に移動しました", actions: [("元に戻す", { [weak self] in
-            self?.restoreFromTrash(trashed, to: original, reopening: closed)
-        })], in: window)
-    }
-
-    private func restoreFromTrash(_ trashed: URL, to original: URL, reopening urls: [URL]) {
-        let fm = FileManager.default
-        guard !fm.fileExists(atPath: original.path) else {
-            return showMessage("「\(original.lastPathComponent)」は既に存在するため戻せません。")
-        }
-        do {
-            try fm.createDirectory(at: original.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try fm.moveItem(at: trashed, to: original)
-        } catch {
-            return showError(error)
-        }
-        reloadTree()
-        refreshGit()
-        urls.filter { fm.fileExists(atPath: $0.path) }.forEach { open($0) }
-        Toasts.post("「\(original.lastPathComponent)」を元に戻しました", in: window)
-    }
-}
-
-extension EditorWindowController {
-    private func updateProjectTitle() {
-        projectButton.attributedTitle = NSAttributedString(string: project.name + " ", attributes: [
-            .font: NSFont.systemFont(ofSize: 13, weight: .bold), .foregroundColor: NSColor.labelColor])
-        window?.title = "\(project.name) — \(appName)"
-    }
-
-    private func menuItem(_ title: String, _ action: Selector?, _ value: Any? = nil) -> NSMenuItem {
-        let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
-        item.target = self
-        item.representedObject = value
-        return item
-    }
-
-    @objc private func projectClicked() {
-        let menu = NSMenu()
-        menu.autoenablesItems = false
-        menu.addItem(menuItem("プロジェクト名を変更…", #selector(renameProject)))
-        menu.addItem(menuItem("プロジェクトの設定…", #selector(projectSettingsClicked)))
-        menu.addItem(.separator())
-        let others = ProjectStore.all.filter { $0.path != project.path }
-        let header = menuItem("他のプロジェクト", nil)
-        header.isEnabled = false
-        menu.addItem(header)
-        if others.isEmpty {
-            let none = menuItem("（ありません）", nil)
-            none.isEnabled = false
-            menu.addItem(none)
-        }
-        for other in others {
-            let item = menuItem(other.name, #selector(otherProjectClicked(_:)), other.path)
-            item.toolTip = other.path
-            item.image = NSWorkspace.shared.icon(forFile: other.path)
-            item.image?.size = NSSize(width: 16, height: 16)
-            menu.addItem(item)
-        }
-        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: projectButton.bounds.height + 4), in: projectButton)
-    }
-
-    @objc private func projectSettingsClicked() {
-        let project = project
-        Popups.show("project-settings-\(project.path)", title: "プロジェクトの設定", over: window) { ProjectSettingsView(project: project) }
-    }
-
-    func showHistory(_ url: URL) {
-        LocalHistory.show(url, editor: self)
-    }
-
-    @objc private func historyItem(_ sender: Any?) {
-        if let url = (sender as? NSMenuItem)?.representedObject as? URL ?? node(of: sender)?.url { showHistory(url) }
-    }
-
-    func restoreHistory(_ data: Data, to url: URL) {
-        if let error = saveAll() { return showError(error) }
-        if let old = try? Data(contentsOf: url) { LocalHistory.record(url, data: old, merge: false) }
-        do {
-            try data.write(to: url, options: .atomic)
-        } catch {
-            return showError(error)
-        }
-        LocalHistory.record(url, data: data, merge: false)
-        reloadExternal([url.standardizedFileURL.path])
-        refreshGit()
-        Toasts.post("「\(url.lastPathComponent)」を以前の版に戻しました", in: window)
-    }
-
-    @objc private func renameProject() {
-        let alert = NSAlert()
-        alert.messageText = "プロジェクト名を変更"
-        alert.addButton(withTitle: "変更")
-        alert.addButton(withTitle: "キャンセル")
-        let field = NSTextField(string: project.name)
-        field.frame = NSRect(x: 0, y: 0, width: 280, height: 24)
-        alert.accessoryView = field
-        alert.window.initialFirstResponder = field
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-        let name = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !name.isEmpty, name != project.name else { return }
-        if ProjectStore.all.contains(where: { $0.path == project.path }) {
-            ProjectStore.rename(project, to: name)
-        } else {
-            ProjectStore.touch(Project(name: name, path: project.path))
-        }
-        project.name = name
-        updateProjectTitle()
-        onProjectRenamed?()
-    }
-
-    @objc private func otherProjectClicked(_ sender: NSMenuItem) {
-        guard let path = sender.representedObject as? String, let other = ProjectStore.all.first(where: { $0.path == path }) else { return }
-        guard FileManager.default.fileExists(atPath: other.path) else {
-            showMessage("「\(other.name)」が見つかりません。\n\(other.path)")
-            return
-        }
-        let alert = NSAlert()
-        alert.messageText = "「\(other.name)」を開く"
-        alert.informativeText = other.path
-        alert.addButton(withTitle: "このウィンドウで開く")
-        alert.addButton(withTitle: "別のウィンドウで開く")
-        alert.addButton(withTitle: "キャンセル")
-        let response = alert.runModal()
-        guard response != .alertThirdButtonReturn else { return }
-        if response == .alertFirstButtonReturn, let error = saveAll() {
-            showError(error)
-            return
-        }
-        onOpenProject?(other, response == .alertSecondButtonReturn)
-    }
-
-    @objc private func pathClicked(_ gesture: NSClickGestureRecognizer) {
-        guard let url = selectedURL, url.isFileURL else { return }
-        let menu = NSMenu()
-        menu.addItem(menuItem("パスをコピー", #selector(copyCurrentPath(_:)), url.path))
-        menu.addItem(menuItem("相対パスをコピー", #selector(copyCurrentPath(_:)), relativePath(url)))
-        menu.addItem(menuItem("Finderで表示", #selector(revealCurrent(_:)), url.path))
-        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: fileLabel.bounds.height + 4), in: fileLabel)
-    }
-
-    func relativePath(_ url: URL) -> String {
-        let base = baseDirectory.standardizedFileURL.path
-        let path = url.standardizedFileURL.path
-        return path.hasPrefix(base + "/") ? String(path.dropFirst(base.count + 1)) : path
-    }
-
-    @objc private func copyCurrentPath(_ sender: NSMenuItem) {
-        guard let path = sender.representedObject as? String else { return }
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(path, forType: .string)
-    }
-
-    @objc private func revealCurrent(_ sender: NSMenuItem) {
-        guard let path = sender.representedObject as? String else { return }
-        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
-    }
-}
-
-extension EditorWindowController {
-    @objc private func formatClicked() {
-        guard let current else { return }
-        let menu = NSMenu()
-        menu.autoenablesItems = false
-        let reopen = NSMenuItem(title: "文字コードを指定して開き直す", action: nil, keyEquivalent: "")
-        let convert = NSMenuItem(title: "文字コードを変えて保存", action: nil, keyEquivalent: "")
-        let reopenMenu = NSMenu(), convertMenu = NSMenu()
-        for encoding in TextEncoding.all {
-            let again = menuItem(encoding.title, #selector(reopenEncoding(_:)), encoding.id)
-            again.state = current.editable && current.format.encoding == encoding ? .on : .off
-            reopenMenu.addItem(again)
-            let save = menuItem(encoding.title, #selector(convertEncoding(_:)), encoding.id)
-            save.state = again.state
-            convertMenu.addItem(save)
-        }
-        reopen.submenu = reopenMenu
-        convert.submenu = convertMenu
-        convert.isEnabled = current.editable
-        menu.addItem(reopen)
-        menu.addItem(convert)
-        menu.addItem(.separator())
-        let header = menuItem("改行コード", nil)
-        header.isEnabled = false
-        menu.addItem(header)
-        for ending in LineEnding.allCases {
-            let item = menuItem(ending.title, #selector(lineEndingClicked(_:)), ending.rawValue)
-            item.state = current.editable && current.format.lineEnding == ending ? .on : .off
-            item.isEnabled = current.editable
-            menu.addItem(item)
-        }
-        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: formatButton.bounds.height + 4), in: formatButton)
-    }
-
-    @objc private func reopenEncoding(_ sender: NSMenuItem) {
-        guard let current, let encoding = TextEncoding.all.first(where: { $0.id == sender.representedObject as? String }) else { return }
-        storeCurrent()
-        if current.dirty {
-            let alert = NSAlert()
-            alert.messageText = "未保存の変更を破棄して開き直しますか？"
-            alert.informativeText = "「\(current.url.lastPathComponent)」を \(encoding.title) として読み込み直します。"
-            alert.addButton(withTitle: "開き直す")
-            alert.addButton(withTitle: "キャンセル")
-            guard alert.runModal() == .alertFirstButtonReturn else { return }
-        }
-        do { try current.reopen(as: encoding) } catch { return showError(error) }
-        textView.string = current.text
-        open(current.url)
-    }
-
-    private func changeFormat(_ change: (inout TextFormat) -> Void) {
-        guard let current, current.editable else { return }
-        storeCurrent()
-        let old = current.format
-        change(&current.format)
-        do {
-            try current.save()
-        } catch {
-            current.format = old
-            showError(error)
-        }
-        updateTitle()
-        refreshGit()
-    }
-
-    @objc private func convertEncoding(_ sender: NSMenuItem) {
-        guard let encoding = TextEncoding.all.first(where: { $0.id == sender.representedObject as? String }) else { return }
-        changeFormat { $0.encoding = encoding }
-    }
-
-    @objc private func lineEndingClicked(_ sender: NSMenuItem) {
-        guard let ending = (sender.representedObject as? String).flatMap(LineEnding.init) else { return }
-        changeFormat { $0.lineEnding = ending }
-    }
-
-    private func tabMenu(_ url: URL) -> NSMenu {
-        let menu = NSMenu()
-        menu.addItem(menuItem("右に開く", #selector(openRightTab(_:)), url))
-        if LocalHistory.isTracked(url) { menu.addItem(menuItem("ローカル履歴…", #selector(historyItem(_:)), url)) }
-        if let tab = tabs[url], let pin = tab.onPin {
-            menu.addItem(.separator())
-            menu.addItem(TabItemView.pinItem(tab.pinned, pin))
-        }
-        menu.addItem(.separator())
-        menu.addItem(menuItem("閉じる", #selector(closeTabItem(_:)), url))
-        return menu
-    }
-
-    @objc private func openRightTab(_ sender: NSMenuItem) {
-        if let url = sender.representedObject as? URL { openRight(url) }
-    }
-
-    @objc private func closeTabItem(_ sender: NSMenuItem) {
-        if let url = sender.representedObject as? URL { closeTab(url) }
-    }
-
-    var splitURLs: [URL] { splitPane?.urls ?? [] }
-
-    var splitTextView: NSTextView? { splitPane?.textView }
-
-    var splitFileURL: URL? { splitPane?.fileURL }
-
-    func openRight(_ url: URL) {
-        let pane = splitPane ?? makeSplitPane()
-        if pane.contains(url) { return pane.select(url) }
-        let buffer: Buffer
-        if let existing = buffers[url] {
-            if selectedURL == url { storeCurrent() }
-            buffer = existing
-            detachTab(url)
-        } else {
-            buffer = Buffer(url: url)
-        }
-        pane.open(buffer)
-        updateCloud()
-    }
-
-    private func makeSplitPane() -> SplitPane {
-        let pane = SplitPane()
-        pane.onChange = { [weak self] in self?.updateCloud() }
-        pane.onEmpty = { [weak self] in self?.closeSplit() }
-        pane.baseDirectory = { [weak self] in self?.projectDirectory }
-        pane.tabColor = { [weak self] in self?.gitState($0)?.color }
-        pane.onMoveLeft = { [weak self] url in
-            guard let self, let buffer = self.splitPane?.take(url) else { return }
-            self.storeCurrent()
-            self.buffers[url] = buffer
-            self.open(url)
-        }
-        splitPane = pane
-        editorSplit.addArrangedSubview(pane)
-        editorSplit.layoutSubtreeIfNeeded()
-        editorSplit.setPosition(editorSplit.bounds.width / 2, ofDividerAt: 0)
-        return pane
-    }
-
-    private func closeSplit() {
-        guard let pane = splitPane else { return }
-        splitPane = nil
-        pane.detachAddons()
-        pane.removeFromSuperview()
-        editorSplit.adjustSubviews()
-        updateCloud()
-        window?.makeFirstResponder(textView)
-    }
-
-    private func detachTab(_ url: URL) {
-        guard let tab = tabs[url] else { return }
-        let index = fileTabs.stack.arrangedSubviews.filter { $0 is TabItemView }.firstIndex(of: tab) ?? 0
-        tab.removeFromSuperview()
-        tabs[url] = nil
-        buffers[url] = nil
-        windowAddons.each { $0.bufferClosed(url) }
-        guard selectedURL == url else { return }
-        current = nil
-        let remaining = fileTabs.stack.arrangedSubviews.filter { $0 is TabItemView }
-        if !remaining.isEmpty, let next = tabs.first(where: { $0.value === remaining[min(index, remaining.count - 1)] })?.key {
-            return open(next)
-        }
-        showEmpty()
-    }
-
-    @objc func closeAllTabs() { closeTabs(keeping: []) }
-
-    func closeTabs(keeping kept: Set<URL>) {
-        storeCurrent()
-        let closing = tabs.keys.filter { !kept.contains($0) }
-        for url in closing {
-            guard let buffer = buffers[url], buffer.dirty, buffer.editable else { continue }
-            do {
-                try buffer.save()
-            } catch {
-                return showError(error)
-            }
-        }
-        for url in closing {
-            tabs[url]?.removeFromSuperview()
-            tabs[url] = nil
-            buffers[url] = nil
-            windowAddons.each { $0.bufferClosed(url) }
-        }
-        updateCloud()
-        guard let selectedURL, closing.contains(selectedURL) else { return }
-        current = nil
-        if let next = openURLs.first { return open(next) }
-        showEmpty()
-    }
-}
-
-extension EditorWindowController: CodeEditing, OverlayHosting, TabClosing {
-    var scrollView: NSScrollView { editorScroll }
-    var fileURL: URL? { current?.editable == true ? current?.url : nil }
-    var tabStrip: TabStrip? { fileTabs }
-    var projectDirectory: URL? { root.isDirectory ? baseDirectory : nil }
-
-    var openTexts: [(url: URL, text: String)] {
-        storeCurrent()
-        return buffers.values.filter { $0.editable }.map { ($0.url, $0.text) }
-    }
-
-    var openURLs: [URL] { fileTabs.stack.arrangedSubviews.compactMap { view in tabs.first { $0.value === view }?.key } }
-
-    func isOpen(_ url: URL) -> Bool { buffers[url] != nil }
-
-    func reveal(_ url: URL, range: NSRange) {
-        if current?.url != url { open(url) }
-        guard current?.url == url, NSMaxRange(range) <= (textView.string as NSString).length else { return }
-        window?.makeFirstResponder(textView)
-        textView.setSelectedRange(range)
-        textView.scrollRangeToVisible(range)
-        textView.showFindIndicator(for: range)
-    }
-
-    private static let overlayID = NSUserInterfaceItemIdentifier("editor.overlay")
-
-    private var overlays: [NSView] { bodyHost.superview?.subviews.filter { $0.identifier == Self.overlayID } ?? [] }
-
-    func setOverlayInset(_ inset: CGFloat) {
-        overlayInset = inset
-        overlayTrailing.forEach { $0.constant = -4 - inset }
-        if ext?.floating == true { layoutExtensionBar() }
-    }
-
-    func addOverlay(_ view: NSView) {
-        view.translatesAutoresizingMaskIntoConstraints = false
-        view.identifier = Self.overlayID
-        bodyHost.superview?.addSubview(view)
-        let trailing = view.trailingAnchor.constraint(equalTo: bodyHost.trailingAnchor, constant: -4 - overlayInset)
-        overlayTrailing.append(trailing)
-        NSLayoutConstraint.activate([view.topAnchor.constraint(equalTo: bodyHost.topAnchor, constant: 4), trailing])
-        if ext?.floating == true { layoutExtensionBar() }
-    }
-
-    func removeOverlay(_ view: NSView) {
-        guard view.identifier == Self.overlayID else { return }
-        view.removeFromSuperview()
-        if ext?.floating == true { layoutExtensionBar() }
-    }
-
-    func addTopButton(_ view: NSView) {
-        guard view.superview == nil else { return }
-        if view.identifier == nil {
-            let name = L10n.original(view.toolTip) ?? String(describing: type(of: view))
-            view.identifier = NSUserInterfaceItemIdentifier(Self.topPrefix + "plugin." + name)
-        }
-        insertTopButton(view)
-    }
-
-    private static let topKey = "BigTab.Order.Top"
-    private static let topPrefix = "top."
-    private static let builtinTop: Set<String> = ["top.cloud", "top.search", "top.gear"]
-
-    private func insertTopButton(_ view: NSView) {
-        let saved = UserDefaults.standard.stringArray(forKey: Self.topKey) ?? []
-        let id = view.identifier?.rawValue ?? ""
-        let views = topButtons.arrangedSubviews
-        let index: Int
-        if let mine = saved.firstIndex(of: id) {
-            index = views.firstIndex { saved.firstIndex(of: $0.identifier?.rawValue ?? "").map { $0 > mine } ?? false } ?? views.count
-        } else if Self.builtinTop.contains(id) {
-            index = views.count
-        } else {
-            index = views.firstIndex { Self.builtinTop.contains($0.identifier?.rawValue ?? "") } ?? views.count
-        }
-        topButtons.insertArrangedSubview(view, at: index)
-    }
-
-    private func dragTopButton(_ event: NSEvent) -> Bool {
-        guard event.window === window, event.modifierFlags.contains(.command), let window,
-              let frame = window.contentView?.superview,
-              let hit = window.contentView?.hitTest(frame.convert(event.locationInWindow, from: nil)),
-              let item = sequence(first: hit, next: { $0.superview }).first(where: { $0.superview === topButtons }) else { return false }
-        var reorder: DragReorder?
-        while let next = window.nextEvent(matching: [.leftMouseDragged, .leftMouseUp]), next.type == .leftMouseDragged {
-            if reorder == nil {
-                guard hypot(next.locationInWindow.x - event.locationInWindow.x, next.locationInWindow.y - event.locationInWindow.y) > 3 else { continue }
-                reorder = DragReorder(view: item, event: event)
-            }
-            reorder?.drag(next)
-        }
-        reorder?.end()
-        if reorder != nil {
-            var order = UserDefaults.standard.stringArray(forKey: Self.topKey) ?? []
-            let current = topButtons.arrangedSubviews.compactMap { $0.identifier?.rawValue }
-            order.removeAll { current.contains($0) }
-            UserDefaults.standard.set(current + order, forKey: Self.topKey)
-        }
-        return true
-    }
-
-    func pressStripButton(_ id: String) -> Bool {
-        func find(_ view: NSView) -> ToolStripButton? { (view as? ToolStripButton) ?? view.subviews.lazy.compactMap(find).first }
-        guard let view = [upperColumn, lowerColumn].compactMap({ $0 }).flatMap(\.arrangedSubviews)
-            .first(where: { $0.identifier?.rawValue == id }), let button = find(view) else { return false }
-        button.performClick(nil)
-        return true
-    }
-
-    func goBack() { backClicked() }
-
-    func addFeed(_ feed: NSView, button: ToolStripButton?) {
-        guard !pluginFeeds.contains(where: { $0.feed === feed }) else { return }
-        pluginFeeds.append((feed, button))
-        feed.isHidden = true
-    }
-
-    func removeFeed(_ feed: NSView) {
-        if !feed.isHidden { hideBottom(feed) }
-        pluginFeeds.removeAll { $0.feed === feed }
-    }
-
-    func toggleTopFeed(_ feed: NSView, height: CGFloat) {
-        let open = feed.superview === topFeedHost
-        topFeedHost.subviews.forEach { $0.removeFromSuperview() }
-        topFeedHeight.constant = open ? 0 : height
-        topFeedLine.isHidden = open
-        if !open { show(feed, in: topFeedHost) }
-    }
-
-    func removeTopFeed(_ feed: NSView) {
-        if feed.superview === topFeedHost { toggleTopFeed(feed, height: 0) }
-    }
-
-    func toggleBottom(_ feed: NSView) {
-        if feed.isHidden { showBottom(feed) } else { hideBottom(feed) }
-    }
-
-    private static let upperKey = "BigTab.Order.Upper"
-    private static let lowerKey = "BigTab.Order.Lower"
-
-    private var stripButtons: [ToolStripButton] {
-        func find(_ view: NSView) -> [ToolStripButton] { (view as? ToolStripButton).map { [$0] } ?? view.subviews.flatMap(find) }
-        return [upperColumn, lowerColumn].compactMap { $0 }.flatMap(find)
-    }
-
-    private func prepareStripButtons() {
-        stripButtons.forEach {
-            $0.onReorder = { [weak self] in self?.stripReordered() }
-            $0.groups = { [weak self] in [self?.upperColumn, self?.lowerColumn].compactMap { $0 } }
-        }
-    }
-
-    private func stripReordered() {
-        saveStripOrder()
-        settleFeeds()
-    }
-
-    private func saveStripOrder() {
-        for (stack, key) in [(upperColumn, Self.upperKey), (lowerColumn, Self.lowerKey)] {
-            UserDefaults.standard.set(stack?.arrangedSubviews.compactMap { $0.identifier?.rawValue }, forKey: key)
-        }
-    }
-
-    func addStripButton(_ view: NSView, id: String) {
-        guard view.superview == nil else { return }
-        view.identifier = NSUserInterfaceItemIdentifier(id)
-        let top = UserDefaults.standard.stringArray(forKey: Self.upperKey) ?? []
-        let column: NSStackView = top.contains(id) ? upperColumn : lowerColumn
-        let saved = top.contains(id) ? top : UserDefaults.standard.stringArray(forKey: Self.lowerKey) ?? []
-        let rank = { (key: String?) in key.flatMap { saved.firstIndex(of: $0) } ?? Int.max }
-        let mine = rank(id)
-        let index = column.arrangedSubviews.firstIndex { rank($0.identifier?.rawValue) > mine } ?? column.arrangedSubviews.count
-        column.insertArrangedSubview(view, at: mine == Int.max ? 0 : index)
-        stripButtons.forEach { $0.applySize() }
-        prepareStripButtons()
-    }
-}
-
-extension EditorWindowController {
-    private struct FocusState {
-        var feeds: [NSView]
-        var topFeed: (view: NSView, height: CGFloat)?
-    }
-
-    private static var focusStates: [ObjectIdentifier: FocusState] = [:]
-
-    var focusMode: Bool { Self.focusStates[ObjectIdentifier(self)] != nil }
-
-    private var verticalSeparators: [NSView] {
-        window?.contentView?.subviews.filter { ($0 as? NSBox)?.boxType == .separator && $0.frame.height > $0.frame.width } ?? []
-    }
-
-    private var tabsHeight: NSLayoutConstraint? { fileTabs.constraints.first { $0.firstAttribute == .height && $0.secondItem == nil } }
-
-    func setFocusMode(_ on: Bool) {
-        let key = ObjectIdentifier(self)
-        if on {
-            guard Self.focusStates[key] == nil else { return }
-            let visible = feeds.map(\.feed).filter { !$0.isHidden && $0.superview != nil }
-            let top = topFeedHost.subviews.first.map { ($0, topFeedHeight.constant) }
-            Self.focusStates[key] = FocusState(feeds: visible, topFeed: top)
-            visible.forEach(hideBottom)
-            if let top { toggleTopFeed(top.0, height: top.1) }
-            strip.isHidden = true
-            stripWidth.constant = 0
-            verticalSeparators.forEach { $0.isHidden = true }
-            fileTabs.isHidden = true
-            tabsHeight?.constant = 0
-        } else {
-            guard let state = Self.focusStates.removeValue(forKey: key) else { return }
-            strip.isHidden = false
-            stripWidth.constant = Settings.bigTabWidth
-            verticalSeparators.forEach { $0.isHidden = false }
-            fileTabs.isHidden = false
-            tabsHeight?.constant = 30
-            state.feeds.forEach(showBottom)
-            if let top = state.topFeed, topFeedHost.subviews.isEmpty { toggleTopFeed(top.view, height: top.height) }
-        }
-        window?.contentView?.layoutSubtreeIfNeeded()
-        window?.makeFirstResponder(textView)
     }
 }

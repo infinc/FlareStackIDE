@@ -142,14 +142,14 @@ final class DiagramPreview: NSObject, EditorExtension, WKNavigationDelegate {
 
     private func prepare() {
         guard !failed else {
-            preview.loadHTMLString("<p style=\"color:#d33;font:13px -apple-system;padding:16px\">\(Self.library) が見つかりません。プラグインを入れ直してください。</p>", baseURL: nil)
+            preview.loadHTMLString("<p style=\"color:#d33;font:13px -apple-system;padding:16px\">" + L("\(Self.library) が見つかりません。プラグインを入れ直してください。") + "</p>", baseURL: nil)
             return
         }
         let load = { [weak self] (list: WKContentRuleList?) in
             guard let self else { return }
             guard let list else {
                 self.failed = true
-                self.preview.loadHTMLString("<p style=\"color:#d33;font:13px -apple-system;padding:16px\">通信の遮断を準備できないため、表示を止めました。</p>", baseURL: nil)
+                self.preview.loadHTMLString("<p style=\"color:#d33;font:13px -apple-system;padding:16px\">" + L("通信の遮断を準備できないため、表示を止めました。") + "</p>", baseURL: nil)
                 return
             }
             self.preview.configuration.userContentController.add(list)

@@ -46,7 +46,7 @@
   {
     "id": "lines",
     "name": "Lines",
-    "version": "1.8",
+    "version": "1.9",
     "author": "FlareStackIDE",
     "symbol": "list.number",
     "summary": "ファイル編集画面の左側に行数を表示",
@@ -56,8 +56,8 @@
   },
   {
     "id": "light-editor",
-    "name": "Light Editer",
-    "version": "1.5",
+    "name": "Light Editor",
+    "version": "1.6",
     "author": "FlareStackIDE",
     "symbol": "doc.text",
     "summary": "ファイルだけを開く軽量エディタ",
@@ -115,7 +115,7 @@
   {
     "id": "shortcut",
     "name": "Shortcut",
-    "version": "1.4",
+    "version": "1.5",
     "author": "FlareStackIDE",
     "symbol": "command",
     "summary": "好きなキーで実行・テーマ切り替え・拡大縮小・保存して終了・コマンドパレット",
@@ -184,7 +184,7 @@
   {
     "id": "bookmarks",
     "name": "Bookmarks",
-    "version": "1.5",
+    "version": "1.6",
     "author": "FlareStackIDE",
     "symbol": "bookmark",
     "summary": "行に印を付けて、一覧やキーで移動",
@@ -378,7 +378,7 @@
   {
     "id": "lsp-client",
     "name": "LSP Client",
-    "version": "1.4",
+    "version": "1.5",
     "author": "FlareStackIDE",
     "symbol": "brain",
     "summary": "言語サーバーで診断・ホバー・定義へ移動・名前の変更・補完（Python・TypeScript・Swift・Rust・Go・C/C++ など）",
@@ -468,7 +468,7 @@
   {
     "id": "diagram-preview",
     "name": "Diagram Preview",
-    "version": "1.0",
+    "version": "1.1",
     "author": "FlareStackIDE",
     "symbol": "point.3.connected.trianglepath.dotted",
     "summary": "Mermaid（.mmd / .mermaid）の図をコードの横にリアルタイムで表示",
@@ -479,7 +479,7 @@
   {
     "id": "html-preview",
     "name": "HTML Preview",
-    "version": "1.0",
+    "version": "1.1",
     "author": "FlareStackIDE",
     "symbol": "globe",
     "summary": "HTML ファイルを同じフォルダの CSS / JS と一緒にリアルタイムでプレビュー",
@@ -499,5 +499,42 @@
     "category": "ビューア",
     "permissions": ["files"],
     "apiVersion": 4
+  },
+  {
+    "id": "debugger",
+    "name": "Debugger",
+    "version": "1.0",
+    "author": "FlareStackIDE",
+    "symbol": "ladybug",
+    "summary": "ブレークポイント・ステップ実行・変数の表示でデバッグ（Python は debugpy、Swift / C / Rust などは lldb-dap）",
+    "fileExtensions": [],
+    "requires": ["lines"],
+    "category": "実行・ツール",
+    "permissions": ["process", "files"],
+    "apiVersion": 4
+  },
+  {
+    "id": "remote-ssh",
+    "name": "Remote SSH",
+    "version": "1.0",
+    "author": "FlareStackIDE",
+    "symbol": "network",
+    "summary": "SSH で接続したリモートのフォルダを手元に取得して編集し、保存すると送り返す",
+    "fileExtensions": [],
+    "category": "実行・ツール",
+    "permissions": ["process", "files", "network"],
+    "apiVersion": 4
+  },
+  {
+    "id": "word-count",
+    "name": "Word Count",
+    "version": "1.0",
+    "author": "FlareStackIDE",
+    "symbol": "textformat.123",
+    "summary": "今のファイルや選択範囲の文字数・語数・行数を数える（安定した C の API と別プロセスのワーカーで動く見本）",
+    "fileExtensions": [],
+    "category": "編集",
+    "abi": "c",
+    "hostAPI": 1
   }
 ]

@@ -39,7 +39,17 @@ enum PluginGuard {
         for id in ids {
             let crashes = UserDefaults.standard.integer(forKey: countKey(id)) + 1
             UserDefaults.standard.set(crashes, forKey: countKey(id))
-            if crashes >= threshold { disabled.insert(id) }
+            guard crashes >= threshold else { continue }
+            if let previous = PluginStore.previousVersion(id), let current = PluginStore.installed(id),
+               (try? PluginStore.rollback(id)) != nil {
+                UserDefaults.standard.removeObject(forKey: countKey(id))
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                    Toasts.post("\(current.name) を v\(previous.version) に戻しました",
+                                message: "v\(current.version) で \(appName) が続けて終了したため、前の版に戻しました")
+                }
+            } else {
+                disabled.insert(id)
+            }
         }
         _ = (markers, lines, frames, count)
         try? FileManager.default.createDirectory(at: PluginStore.directory, withIntermediateDirectories: true)
@@ -84,6 +94,19 @@ enum PluginGuard {
             UserDefaults.standard.removeObject(forKey: countKey(String(cString: line).trimmingCharacters(in: .newlines)))
         }
         if fd >= 0 { ftruncate(fd, 0) }
+    }
+
+    static func workerCrashed(_ info: PluginInfo) {
+        let crashes = UserDefaults.standard.integer(forKey: countKey(info.id)) + 1
+        UserDefaults.standard.set(crashes, forKey: countKey(info.id))
+        guard crashes >= threshold else {
+            Toasts.post("\(info.name) の処理が異常終了しました", message: "\(appName) 本体は動き続けています。もう一度起きると、このプラグインを止めます")
+            return
+        }
+        disabled.insert(info.id)
+        NativePlugins.invalidate()
+        NotificationCenter.default.post(name: .pluginsChanged, object: nil)
+        notifyDisabled(info)
     }
 
     static func notifyDisabled(_ info: PluginInfo) {

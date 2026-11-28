@@ -1,0 +1,20 @@
+{
+  "id": "remote-ssh",
+  "name": "Remote SSH",
+  "version": "1.0",
+  "author": "FlareStackIDE",
+  "symbol": "network",
+  "summary": "SSH で接続したリモートのフォルダを手元に取得して編集し、保存すると送り返す",
+  "fileExtensions": [],
+  "category": "実行・ツール",
+  "permissions": ["process", "files", "network"],
+  "files": ["plugin.dylib", "README.md"],
+  "settings": [
+    { "key": "exclude", "title": "取得しないもの（カンマ区切り、空なら node_modules, .venv, build など）", "type": "string" }
+  ],
+  "apiVersion": 4,
+  "hashes": {
+    "README.md": "a74eb69e6b809844f2c4ca9350618b4daa2ee975fded5249af78642ba473fac5",
+    "plugin.dylib": "e30d60408443357c96cee2123573dc95dd0039429f136389cdb65d84deb3ecb0"
+  }
+}

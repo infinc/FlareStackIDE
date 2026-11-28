@@ -1,7 +1,7 @@
 {
   "id": "diagram-preview",
   "name": "Diagram Preview",
-  "version": "1.0",
+  "version": "1.1",
   "author": "FlareStackIDE",
   "symbol": "point.3.connected.trianglepath.dotted",
   "summary": "Mermaid（.mmd / .mermaid）の図をコードの横にリアルタイムで表示",
@@ -11,8 +11,8 @@
   "files": ["plugin.dylib", "mermaid.min.js", "README.md"],
   "apiVersion": 4,
   "hashes": {
-    "README.md": "b9fa9cca72b7a57aaeb31aa66bf6ff79ee2a7c71e186c61b88bd830acab6b116",
+    "README.md": "e7075f5e93649d76972e30569fefad75b3df1fd1110225637efaae65ba222232",
     "mermaid.min.js": "a43bc1afd446f9c4cc66ac5dd45d02e8d65e26fc5344ec0ef787f88d6ddb6f9e",
-    "plugin.dylib": "9453bd9098dc34346e05bc4ca7b67a81390fadfea5399a42879ae67d4c9c1418"
+    "plugin.dylib": "352adf49c9d46040112e6561c70312050ce2385b37591cc598beef52f6c78290"
   }
 }

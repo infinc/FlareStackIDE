@@ -587,6 +587,45 @@ final class TerminalView: NSView, NSTextInputClient {
 
     var totalLines: Int { emulator.scrollback.count + emulator.rows }
 
+    func find(_ query: String, backwards: Bool, fresh: Bool) -> Bool {
+        let total = totalLines
+        guard !query.isEmpty, total > 0 else { return false }
+        let origin: (line: Int, col: Int) = fresh || selection == nil
+            ? (backwards ? (total - 1, Int.max) : (0, -1))
+            : backwards ? selection!.start : (selection!.end.line, selection!.end.col - 1)
+        for step in 0...total {
+            let index = ((backwards ? origin.line - step : origin.line + step) % total + total) % total
+            let cells = line(index)
+            var columns: [Int] = []
+            var text = ""
+            for (col, cell) in cells.enumerated() where cell.width != 0 {
+                text += cell.ch
+                columns.append(contentsOf: Array(repeating: col, count: cell.ch.count))
+            }
+            var matches: [(Int, Int)] = []
+            var searchStart = text.startIndex
+            while let range = text.range(of: query, options: .caseInsensitive, range: searchStart..<text.endIndex) {
+                let lower = text.distance(from: text.startIndex, to: range.lowerBound)
+                let upper = text.distance(from: text.startIndex, to: range.upperBound)
+                if lower < columns.count, upper > 0, upper <= columns.count {
+                    let last = columns[upper - 1]
+                    matches.append((columns[lower], last + max(Int(cells[last].width), 1)))
+                }
+                searchStart = range.upperBound
+            }
+            if step == 0 {
+                matches = matches.filter { backwards ? $0.0 < origin.col : $0.0 > origin.col }
+            }
+            guard let match = backwards ? matches.last : matches.first else { continue }
+            selection = ((index, match.0), (index, match.1))
+            scrollToVisible(NSRect(x: 0, y: CGFloat(index) * cellSize.height - cellSize.height * 2,
+                                   width: bounds.width, height: cellSize.height * 5))
+            needsDisplay = true
+            return true
+        }
+        return false
+    }
+
     private func line(_ index: Int) -> [Cell] {
         let sb = emulator.scrollback
         return index < sb.count ? sb[index] : emulator.screen[index - sb.count]
@@ -955,7 +994,7 @@ final class TerminalPane: NSView {
             started = true
             terminal.emulator.resize(cols: cols, rows: rows)
             if !pty.start(cwd: cwd, cols: cols, rows: rows, command: command) {
-                terminal.emulator.feed("シェルを起動できませんでした\r\n")
+                terminal.emulator.feed(L("シェルを起動できませんでした") + "\r\n")
             }
         } else if cols != terminal.emulator.cols || rows != terminal.emulator.rows {
             terminal.emulator.resize(cols: cols, rows: rows)
@@ -984,14 +1023,23 @@ final class TerminalPane: NSView {
     }
 }
 
-final class TerminalFeed: NSView {
+final class TerminalFeed: NSView, NSSearchFieldDelegate {
     var onRemove: (() -> Void)?
     var onEmpty: (() -> Void)?
+    private struct Session {
+        let tab: TabItemView
+        let split: NSSplitView
+        var panes: [TerminalPane]
+    }
     private let cwd: String
     private let bar: TabStrip
     private let container = NSView()
+    private let findBar = NSStackView()
+    private let findField = NSSearchField()
+    private let findStatus = NSTextField(labelWithString: "")
+    private var findHeight: NSLayoutConstraint!
     private var plus: NSButton!
-    private var sessions: [(tab: TabItemView, pane: TerminalPane)] = []
+    private var sessions: [Session] = []
     private var counter = 0
     private(set) var selected: TerminalPane?
 
@@ -1003,15 +1051,42 @@ final class TerminalFeed: NSView {
         minus.target = self
         minus.action = #selector(minusClicked)
         plus = FeedView.barButton(symbol: "plus", tip: "新しいターミナル", target: self, action: #selector(plusClicked))
+        let splitButton = FeedView.barButton(symbol: "rectangle.split.2x1", tip: "ターミナルを分割", target: self, action: #selector(splitClicked))
         bar.stack.addArrangedSubview(plus)
+        bar.stack.addArrangedSubview(splitButton)
         container.translatesAutoresizingMaskIntoConstraints = false
+
+        findField.placeholderString = "ターミナル内を検索"
+        findField.controlSize = .small
+        findField.sendsWholeSearchString = false
+        findField.delegate = self
+        findField.target = self
+        findField.action = #selector(findChanged)
+        findStatus.font = .systemFont(ofSize: 11)
+        findStatus.textColor = .secondaryLabelColor
+        let up = FeedView.barButton(symbol: "chevron.up", tip: "前を検索", target: self, action: #selector(findPrevious))
+        let down = FeedView.barButton(symbol: "chevron.down", tip: "次を検索", target: self, action: #selector(findNext))
+        let done = FeedView.barButton(symbol: "xmark", tip: "検索を閉じる", target: self, action: #selector(hideFind))
+        [findField, findStatus, up, down, done].forEach(findBar.addArrangedSubview)
+        findBar.spacing = 6
+        findBar.edgeInsets = NSEdgeInsets(top: 0, left: 8, bottom: 0, right: 8)
+        findBar.translatesAutoresizingMaskIntoConstraints = false
+        findBar.isHidden = true
+        findField.widthAnchor.constraint(equalToConstant: 220).isActive = true
+
         addSubview(bar)
+        addSubview(findBar)
         addSubview(container)
+        findHeight = findBar.heightAnchor.constraint(equalToConstant: 0)
         NSLayoutConstraint.activate([
             bar.topAnchor.constraint(equalTo: topAnchor),
             bar.leadingAnchor.constraint(equalTo: leadingAnchor),
             bar.trailingAnchor.constraint(equalTo: trailingAnchor),
-            container.topAnchor.constraint(equalTo: bar.bottomAnchor),
+            findBar.topAnchor.constraint(equalTo: bar.bottomAnchor),
+            findBar.leadingAnchor.constraint(equalTo: leadingAnchor),
+            findBar.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor),
+            findHeight,
+            container.topAnchor.constraint(equalTo: findBar.bottomAnchor),
             container.leadingAnchor.constraint(equalTo: leadingAnchor),
             container.trailingAnchor.constraint(equalTo: trailingAnchor),
             container.bottomAnchor.constraint(equalTo: bottomAnchor),
@@ -1021,59 +1096,150 @@ final class TerminalFeed: NSView {
 
     required init?(coder: NSCoder) { fatalError() }
 
+    private func makePane() -> TerminalPane {
+        let pane = TerminalPane(cwd: cwd)
+        pane.onExit = { [weak self, weak pane] in if let pane { self?.paneExited(pane) } }
+        return pane
+    }
+
     func addSession() {
         counter += 1
-        let pane = TerminalPane(cwd: cwd)
+        let pane = makePane()
+        let split = NSSplitView()
+        split.isVertical = true
+        split.dividerStyle = .thin
+        split.translatesAutoresizingMaskIntoConstraints = false
+        split.addArrangedSubview(pane)
         let tab = TabItemView(title: counter == 1 ? "ターミナル" : "ターミナル \(counter)", closable: true)
-        tab.onSelect = { [weak self, weak pane] in if let pane { self?.select(pane) } }
-        tab.onClose = { [weak self, weak pane] in if let pane { self?.close(pane) } }
+        tab.onSelect = { [weak self, weak split] in if let split { self?.select(split) } }
+        tab.onClose = { [weak self, weak split] in if let split { self?.close(split) } }
         tab.onRename = { [weak tab] in tab?.title = $0 }
         tab.draggable = true
-        pane.onExit = { [weak self, weak pane] in if let pane { self?.close(pane) } }
-        pane.translatesAutoresizingMaskIntoConstraints = false
-        container.addSubview(pane)
+        container.addSubview(split)
         NSLayoutConstraint.activate([
-            pane.topAnchor.constraint(equalTo: container.topAnchor),
-            pane.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            pane.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            pane.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+            split.topAnchor.constraint(equalTo: container.topAnchor),
+            split.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            split.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            split.bottomAnchor.constraint(equalTo: container.bottomAnchor),
         ])
-        bar.stack.insertArrangedSubview(tab, at: bar.stack.arrangedSubviews.count - 1)
-        sessions.append((tab, pane))
-        select(pane)
+        bar.stack.insertArrangedSubview(tab, at: bar.stack.arrangedSubviews.count - 2)
+        sessions.append(Session(tab: tab, split: split, panes: [pane]))
+        select(split)
     }
 
-    private func select(_ pane: TerminalPane) {
-        selected = pane
+    private func session(of split: NSSplitView) -> Int? { sessions.firstIndex { $0.split === split } }
+
+    private var current: Int? { sessions.firstIndex { $0.panes.contains { $0 === selected } } }
+
+    private func select(_ split: NSSplitView, pane: TerminalPane? = nil) {
+        guard let index = session(of: split) else { return }
+        let target = pane ?? sessions[index].panes.first
+        selected = target
         for session in sessions {
-            session.tab.selected = session.pane === pane
-            session.pane.isHidden = session.pane !== pane
+            session.tab.selected = session.split === split
+            session.split.isHidden = session.split !== split
         }
-        if let tab = sessions.first(where: { $0.pane === pane })?.tab { bar.reveal(tab) }
-        DispatchQueue.main.async { pane.focus() }
+        bar.reveal(sessions[index].tab)
+        DispatchQueue.main.async { target?.focus() }
     }
 
-    private func close(_ pane: TerminalPane) {
-        guard let index = sessions.firstIndex(where: { $0.pane === pane }) else { return }
+    private func paneExited(_ pane: TerminalPane) {
+        guard let index = sessions.firstIndex(where: { $0.panes.contains { $0 === pane } }) else { return }
+        guard sessions[index].panes.count > 1 else { return close(sessions[index].split) }
+        sessions[index].panes.removeAll { $0 === pane }
+        pane.onExit = nil
+        pane.removeFromSuperview()
+        if selected === pane { select(sessions[index].split) }
+    }
+
+    private func close(_ split: NSSplitView) {
+        guard let index = session(of: split) else { return }
         let order = bar.stack.arrangedSubviews.compactMap { view in sessions.first { $0.tab === view } }
-        let position = order.firstIndex { $0.pane === pane } ?? index
+        let position = order.firstIndex { $0.split === split } ?? index
         let session = sessions.remove(at: index)
-        session.pane.onExit = nil
-        session.pane.stop()
-        session.pane.removeFromSuperview()
+        for pane in session.panes {
+            pane.onExit = nil
+            pane.stop()
+        }
+        session.split.removeFromSuperview()
         session.tab.removeFromSuperview()
         if sessions.isEmpty {
             selected = nil
             onEmpty?()
-        } else if selected === pane {
-            let rest = order.filter { $0.pane !== pane }
-            select(rest[min(position, rest.count - 1)].pane)
+        } else if session.panes.contains(where: { $0 === selected }) {
+            let rest = order.filter { $0.split !== split }
+            select(rest[min(position, rest.count - 1)].split)
         }
+    }
+
+    @objc private func splitClicked() {
+        guard let index = current else { return }
+        let split = sessions[index].split
+        guard sessions[index].panes.count < 2 else {
+            if let last = sessions[index].panes.last { last.stop(); paneExited(last) }
+            return
+        }
+        let pane = makePane()
+        split.addArrangedSubview(pane)
+        sessions[index].panes.append(pane)
+        split.layoutSubtreeIfNeeded()
+        split.setPosition(split.bounds.width / 2, ofDividerAt: 0)
+        select(split, pane: pane)
+    }
+
+    private func rememberFocusedPane() {
+        guard let index = current, let pane = sessions[index].panes.first(where: { window?.firstResponder === $0.terminal }) else { return }
+        selected = pane
+    }
+
+    private var focusedTerminal: TerminalView? {
+        rememberFocusedPane()
+        return selected?.terminal
+    }
+
+    @objc func performFindPanelAction(_ sender: Any?) {
+        rememberFocusedPane()
+        findBar.isHidden = false
+        findHeight.constant = 28
+        window?.makeFirstResponder(findField)
+        findField.currentEditor()?.selectAll(nil)
+    }
+
+    @objc private func hideFind() {
+        findBar.isHidden = true
+        findHeight.constant = 0
+        findStatus.stringValue = ""
+        selected?.focus()
+    }
+
+    @objc private func findChanged() { find(backwards: true, fresh: true) }
+
+    @objc private func findPrevious() { find(backwards: true, fresh: false) }
+
+    @objc private func findNext() { find(backwards: false, fresh: false) }
+
+    private func find(backwards: Bool, fresh: Bool) {
+        let query = findField.stringValue
+        guard !query.isEmpty, let terminal = focusedTerminal else {
+            findStatus.stringValue = ""
+            return
+        }
+        findStatus.stringValue = terminal.find(query, backwards: backwards, fresh: fresh) ? "" : "見つかりません"
+    }
+
+    func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
+        switch selector {
+        case #selector(NSResponder.insertNewline(_:)):
+            NSEvent.modifierFlags.contains(.shift) ? findNext() : findPrevious()
+        case #selector(NSResponder.cancelOperation(_:)): hideFind()
+        default: return false
+        }
+        return true
     }
 
     func focus() { selected?.focus() }
 
-    func stopAll() { sessions.forEach { $0.pane.stop() } }
+    func stopAll() { sessions.forEach { $0.panes.forEach { $0.stop() } } }
 
     @objc private func plusClicked() { addSession() }
 

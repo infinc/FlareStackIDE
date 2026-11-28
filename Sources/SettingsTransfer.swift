@@ -120,3 +120,98 @@ final class SettingsTransfer: NSObject {
         }
     }
 }
+
+extension SettingsTransfer {
+    private static var watcher: DispatchSourceFileSystemObject?
+    private static var lastApplied: Data?
+
+    static var jsonURL: URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent(appName).appendingPathComponent("settings.json")
+    }
+
+    private static func isJSONValue(_ value: Any) -> Bool {
+        switch value {
+        case is String, is NSNumber: return true
+        case let list as [Any]: return list.allSatisfy(isJSONValue)
+        case let map as [String: Any]: return map.values.allSatisfy(isJSONValue)
+        default: return false
+        }
+    }
+
+    private static var editable: [String: Any] { stored.filter { isJSONValue($0.value) } }
+
+    static func jsonData() throws -> Data {
+        try JSONSerialization.data(withJSONObject: editable, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
+    }
+
+    private static func sameKind(_ a: Any, _ b: Any) -> Bool {
+        switch (a, b) {
+        case (is String, is String), (is NSNumber, is NSNumber), (is [Any], is [Any]), (is [String: Any], is [String: Any]): return true
+        default: return false
+        }
+    }
+
+    static func applyJSON(_ data: Data) throws {
+        guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw failure("settings.json の一番外側は { } にしてください")
+        }
+        let current = editable
+        let unknown = object.keys.filter { !isTransferable($0) }.sorted()
+        guard unknown.isEmpty else { throw failure("変更できないキーがあります: " + unknown.joined(separator: ", ")) }
+        let mismatched = object.filter { key, value in current[key].map { !sameKind($0, value) } ?? !isJSONValue(value) }.keys.sorted()
+        guard mismatched.isEmpty else { throw failure("値の種類が違います: " + mismatched.joined(separator: ", ")) }
+        let defaults = UserDefaults.standard
+        for key in current.keys where object[key] == nil { defaults.removeObject(forKey: key) }
+        for (key, value) in object { defaults.set(value, forKey: key) }
+        NativePlugins.invalidate()
+        NotificationCenter.default.post(name: .settingsChanged, object: nil)
+        NotificationCenter.default.post(name: .pluginsChanged, object: nil)
+    }
+
+    @objc func editJSONClicked(_ sender: Any?) {
+        let url = Self.jsonURL
+        do {
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            let data = try Self.jsonData()
+            try data.write(to: url, options: .atomic)
+            Self.lastApplied = data
+        } catch {
+            NSAlert(error: error).runModal()
+            return
+        }
+        Self.watch()
+        let editors = NSApp.windows.compactMap { $0.windowController as? EditorWindowController }
+        if let editor = (NSApp.keyWindow?.windowController as? EditorWindowController) ?? editors.first {
+            editor.open(url)
+            editor.window?.makeKeyAndOrderFront(nil)
+        } else {
+            NSApp.delegate?.application?(NSApp, open: [url])
+        }
+        Toasts.post("settings.json を開きました", message: "保存すると設定に反映します。キーを消すと既定値に戻ります")
+    }
+
+    private static func watch() {
+        guard watcher == nil else { return }
+        let folder = jsonURL.deletingLastPathComponent()
+        let fd = open(folder.path, O_EVTONLY)
+        guard fd >= 0 else { return }
+        let source = DispatchSource.makeFileSystemObjectSource(fileDescriptor: fd, eventMask: [.write, .rename], queue: .main)
+        source.setEventHandler { DispatchQueue.main.asyncAfter(deadline: .now() + 0.2, execute: reloadJSON) }
+        source.setCancelHandler { close(fd) }
+        source.resume()
+        watcher = source
+    }
+
+    private static func reloadJSON() {
+        guard let data = try? Data(contentsOf: jsonURL), data != lastApplied else { return }
+        lastApplied = data
+        do {
+            try applyJSON(data)
+            Toasts.post("settings.json を反映しました")
+        } catch {
+            let detail = (error as NSError).userInfo["NSDebugDescription"] as? String ?? error.localizedDescription
+            Toasts.post("settings.json を反映できませんでした", message: detail)
+        }
+    }
+}

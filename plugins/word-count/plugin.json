@@ -1,0 +1,17 @@
+{
+  "id": "word-count",
+  "name": "Word Count",
+  "version": "1.0",
+  "author": "FlareStackIDE",
+  "symbol": "textformat.123",
+  "summary": "今のファイルや選択範囲の文字数・語数・行数を数える（安定した C の API と別プロセスのワーカーで動く見本）",
+  "fileExtensions": [],
+  "category": "編集",
+  "abi": "c",
+  "hostAPI": 1,
+  "files": ["plugin.dylib", "README.md"],
+  "hashes": {
+    "README.md": "2c419847f339a40d3b1bc711582064f6f621c8d67ea0d0360a43bcd6d379db80",
+    "plugin.dylib": "5435991b0c18d10f1912952382a40aa895a0015e4289abebc8f69b65de5d5364"
+  }
+}

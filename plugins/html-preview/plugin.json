@@ -1,7 +1,7 @@
 {
   "id": "html-preview",
   "name": "HTML Preview",
-  "version": "1.0",
+  "version": "1.1",
   "author": "FlareStackIDE",
   "symbol": "globe",
   "summary": "HTML ファイルを同じフォルダの CSS / JS と一緒にリアルタイムでプレビュー",
@@ -20,7 +20,7 @@
   ],
   "apiVersion": 4,
   "hashes": {
-    "README.md": "720839398c02a312137054b18450700d7f4e957dbef7e27dd3dd6b2000f5c442",
-    "plugin.dylib": "c47303de2a0a425e7dc8d055a4fca57f682e4ac5a795013953194d1e0e2ea275"
+    "README.md": "df084acc137b1154dd6387976099a9f10f33a254bb0e383e0431fe89609c78bf",
+    "plugin.dylib": "e3c1962cd610570e4b110673cd4fa73d1899c19346f89e71b8733457bcb8cd6b"
   }
 }

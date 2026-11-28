@@ -1,7 +1,7 @@
 {
   "id": "lsp-client",
   "name": "LSP Client",
-  "version": "1.4",
+  "version": "1.5",
   "author": "FlareStackIDE",
   "symbol": "brain",
   "summary": "言語サーバーで診断・ホバー・定義へ移動・名前の変更・補完（Python・TypeScript・Swift・Rust・Go・C/C++ など）",
@@ -19,11 +19,12 @@
     { "key": "commandRuby", "title": "Ruby のコマンド（空なら自動）", "type": "string" },
     { "key": "commandPHP", "title": "PHP のコマンド（空なら自動）", "type": "string" },
     { "key": "commandShell", "title": "シェルスクリプト のコマンド（空なら自動）", "type": "string" },
-    { "key": "commandLua", "title": "Lua のコマンド（空なら自動）", "type": "string" }
+    { "key": "commandLua", "title": "Lua のコマンド（空なら自動）", "type": "string" },
+    { "key": "inlayHints", "title": "インレイヒント（型・引数名）を行末に表示", "type": "bool", "default": "false" }
   ],
   "apiVersion": 4,
   "hashes": {
-    "README.md": "46a078a384cf57be240580d26c6919643a224a6a0148c827306107f1da1a97d1",
-    "plugin.dylib": "b0d16721aeedcda2f5377ea19cc47597b7f93d671956ba2d8d7125bae1e0a5de"
+    "README.md": "ef48450e29680bfd56c9d3599a239e6895c6035a185d508b1719c0f3533e0d30",
+    "plugin.dylib": "3e51ae4b6a1afb32e11d598b169ea858e51681fc33c0fd9386e4fbe5f404a3da"
   }
 }

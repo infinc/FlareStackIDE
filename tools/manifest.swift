@@ -76,6 +76,8 @@ func inline(_ array: [Any]) -> String { "[" + array.map(json).joined(separator: 
 
 func sign(_ data: Data, to url: URL) {
     guard let signer else { return }
+    if let existing = try? Data(contentsOf: url), let raw = Data(base64Encoded: existing),
+       signer.publicKey.isValidSignature(raw, for: data) { return }
     let signature = try! signer.signature(for: data)
     try! Data(signature.base64EncodedString().utf8).write(to: url)
 }
@@ -127,7 +129,7 @@ for id in folders {
         guard let data = try? Data(contentsOf: folder.appendingPathComponent(file)) else { fail("\(id)/\(file) がありません") }
         hashes[file] = sha256(data)
     }
-    let updated = manifestText(text, hashes: hashes, native: files.contains("plugin.dylib"))
+    let updated = manifestText(text, hashes: hashes, native: files.contains("plugin.dylib") && object["abi"] as? String != "c")
     if updated != text { try! updated.write(to: manifestURL, atomically: true, encoding: .utf8) }
     sign(Data(updated.utf8), to: folder.appendingPathComponent("plugin.sig"))
     let parsed = try! JSONSerialization.jsonObject(with: Data(updated.utf8)) as! [String: Any]
@@ -144,9 +146,60 @@ for id in catalogIDs {
     if let category = m["category"] as? String { fields.append("    \"category\": \(json(category))") }
     if let permissions = m["permissions"] as? [Any], !permissions.isEmpty { fields.append("    \"permissions\": \(inline(permissions))") }
     if let api = m["apiVersion"] as? Int { fields.append("    \"apiVersion\": \(api)") }
+    if let abi = m["abi"] as? String { fields.append("    \"abi\": \(json(abi))") }
+    if let host = m["hostAPI"] as? Int { fields.append("    \"hostAPI\": \(host)") }
     entries.append("  {\n" + fields.joined(separator: ",\n") + "\n  }")
 }
 let indexText = "[\n" + entries.joined(separator: ",\n") + "\n]\n"
 try! indexText.write(to: indexURL, atomically: true, encoding: .utf8)
 sign(Data(indexText.utf8), to: plugins.appendingPathComponent("index.sig"))
 print(signer == nil ? "manifest: \(manifests.count) 件（署名なし）" : "manifest: \(manifests.count) 件に署名")
+
+func git(_ arguments: [String]) -> String? {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+    process.arguments = ["-C", root.path] + arguments
+    let pipe = Pipe()
+    process.standardOutput = pipe
+    process.standardError = FileHandle.nullDevice
+    guard (try? process.run()) != nil else { return nil }
+    let data = pipe.fileHandleForReading.readDataToEndOfFile()
+    process.waitUntilExit()
+    return process.terminationStatus == 0 ? String(decoding: data, as: UTF8.self) : nil
+}
+
+let generated: Set<String> = ["plugin.dylib", "plugin.json", "plugin.sig"]
+var changedPlugins: Set<String> = []
+for line in (git(["status", "--porcelain", "-z", "--", "plugins"]) ?? "").split(separator: "\0") where line.count > 3 {
+    let parts = line.dropFirst(3).split(separator: "/")
+    guard parts.count >= 3, parts[0] == "plugins", !generated.contains(String(parts.last!)) else { continue }
+    changedPlugins.insert(String(parts[1]))
+}
+for id in changedPlugins.sorted() {
+    guard let current = manifests[id]?["version"] as? String,
+          let committed = git(["show", "HEAD:plugins/\(id)/plugin.json"]),
+          let object = try? JSONSerialization.jsonObject(with: Data(committed.utf8)) as? [String: Any],
+          object["version"] as? String == current else { continue }
+    warn("\(id) を変更しましたが version が \(current) のままです（plugin.json の version を上げ、README.md の更新履歴に追記してください）")
+}
+
+let lookbehind = try! NSRegularExpression(pattern: #"\(\?<[=!]"#)
+for (id, manifest) in manifests.sorted(by: { $0.key < $1.key }) {
+    for file in manifest["files"] as? [String] ?? ["main.js"] where file.hasSuffix(".js") && !file.hasSuffix(".min.js") {
+        guard let text = try? String(contentsOf: plugins.appendingPathComponent("\(id)/\(file)"), encoding: .utf8) else { continue }
+        for (number, line) in text.components(separatedBy: "\n").enumerated()
+        where lookbehind.firstMatch(in: line, range: NSRange(line.startIndex..., in: line)) != nil {
+            warn("\(id)/\(file):\(number + 1) で正規表現の後読みを使っています（macOS 13.3 未満の JavaScriptCore で動きません）")
+        }
+    }
+}
+
+for id in folders {
+    let folder = plugins.appendingPathComponent(id)
+    for file in ((try? fm.contentsOfDirectory(atPath: folder.path)) ?? []).sorted() where file.hasSuffix(".swift") {
+        guard let text = try? String(contentsOf: folder.appendingPathComponent(file), encoding: .utf8) else { continue }
+        for (number, line) in text.components(separatedBy: "\n").enumerated() where line.contains("Notification.Name(\"FlareStackIDE.") {
+            warn("\(id)/\(file):\(number + 1) で通知名を直接書いています（PluginKit/PluginEvents.swift の PluginEvent に足してください）")
+        }
+    }
+}

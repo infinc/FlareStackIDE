@@ -160,7 +160,7 @@ final class HTMLPreview: NSObject, EditorExtension, WKNavigationDelegate {
         let finish = { [weak self] (list: WKContentRuleList?) in
             guard let self, self.blocking == true else { return }
             guard let list else {
-                self.preview.loadHTMLString("<p style=\"color:#d33;font:13px -apple-system;padding:16px\">通信の遮断を準備できないため、表示を止めました。</p>", baseURL: nil)
+                self.preview.loadHTMLString("<p style=\"color:#d33;font:13px -apple-system;padding:16px\">" + L("通信の遮断を準備できないため、表示を止めました。") + "</p>", baseURL: nil)
                 return
             }
             controller.add(list)

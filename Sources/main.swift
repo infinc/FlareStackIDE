@@ -166,7 +166,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WelcomeDelegate {
         var isDir: ObjCBool = false
         let light = allowLight && NativePlugins.opensFiles
             && FileManager.default.fileExists(atPath: project.path, isDirectory: &isDir) && !isDir.boolValue
-        if light { alert.addButton(withTitle: "Light Editerで開く") }
+        if light { alert.addButton(withTitle: "Light Editorで開く") }
         let response = alert.runModal()
         if light, response == .alertThirdButtonReturn {
             openLight(project.url)
@@ -323,6 +323,7 @@ func buildMainMenu() -> NSMenu {
     fileMenu.addItem(.separator())
     fileMenu.addItem(withTitle: "設定を書き出す…", action: #selector(SettingsTransfer.exportClicked(_:)), keyEquivalent: "").target = SettingsTransfer.shared
     fileMenu.addItem(withTitle: "設定を読み込む…", action: #selector(SettingsTransfer.importClicked(_:)), keyEquivalent: "").target = SettingsTransfer.shared
+    fileMenu.addItem(withTitle: "設定を JSON で編集…", action: #selector(SettingsTransfer.editJSONClicked(_:)), keyEquivalent: "").target = SettingsTransfer.shared
     fileMenu.addItem(.separator())
     fileMenu.addItem(withTitle: "閉じる", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
 

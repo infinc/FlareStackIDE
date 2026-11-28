@@ -5,6 +5,8 @@ final class LineNumberRuler: NSRulerView {
     static let pluginID = "lines"
     private weak var textView: NSTextView?
     private var bookmarks: Set<Int> = []
+    private var breakpoints: Set<Int> = []
+    private var debugLine: Int?
     private var foldActive = false
     private var foldOpen: Set<Int> = []
     private var foldClosed: Set<Int> = []
@@ -16,6 +18,9 @@ final class LineNumberRuler: NSRulerView {
     private static let foldMarks = PluginEvent.foldMarks
     private static let foldMarksRequest = PluginEvent.foldMarksRequest
     private static let rulerClicked = PluginEvent.rulerClicked
+    private static let breakpointsChanged = PluginEvent.breakpoints
+    private static let breakpointsRequest = PluginEvent.breakpointsRequest
+    private static let debugLineChanged = PluginEvent.debugLine
 
     private var trailing: CGFloat { foldActive ? 18 : 8 }
 
@@ -30,7 +35,10 @@ final class LineNumberRuler: NSRulerView {
         NotificationCenter.default.addObserver(self, selector: #selector(redraw), name: NSView.boundsDidChangeNotification, object: scroll.contentView)
         NotificationCenter.default.addObserver(self, selector: #selector(bookmarksUpdated(_:)), name: Self.bookmarksChanged, object: textView)
         NotificationCenter.default.addObserver(self, selector: #selector(foldsUpdated(_:)), name: Self.foldMarks, object: textView)
+        NotificationCenter.default.addObserver(self, selector: #selector(breakpointsUpdated(_:)), name: Self.breakpointsChanged, object: textView)
+        NotificationCenter.default.addObserver(self, selector: #selector(debugLineUpdated(_:)), name: Self.debugLineChanged, object: textView)
         NotificationCenter.default.post(name: Self.bookmarksRequest, object: textView)
+        NotificationCenter.default.post(name: Self.breakpointsRequest, object: textView)
         NotificationCenter.default.post(name: Self.foldMarksRequest, object: textView)
     }
 
@@ -38,6 +46,16 @@ final class LineNumberRuler: NSRulerView {
 
     @objc private func bookmarksUpdated(_ note: Notification) {
         bookmarks = note.userInfo?["lines"] as? Set<Int> ?? []
+        needsDisplay = true
+    }
+
+    @objc private func breakpointsUpdated(_ note: Notification) {
+        breakpoints = note.userInfo?["lines"] as? Set<Int> ?? []
+        needsDisplay = true
+    }
+
+    @objc private func debugLineUpdated(_ note: Notification) {
+        debugLine = note.userInfo?["line"] as? Int
         needsDisplay = true
     }
 
@@ -52,12 +70,24 @@ final class LineNumberRuler: NSRulerView {
         let point = convert(event.locationInWindow, from: nil)
         guard let line = drawn.last(where: { $0.top <= point.y })?.line else { return }
         let zone = foldActive && point.x >= ruleThickness - trailing ? "fold" : "line"
-        NotificationCenter.default.post(name: Self.rulerClicked, object: textView, userInfo: ["line": line, "zone": zone])
+        NotificationCenter.default.post(name: Self.rulerClicked, object: textView,
+                                        userInfo: ["line": line, "zone": zone, "option": event.modifierFlags.contains(.option)])
     }
 
     private func drawBookmark(top: CGFloat) {
         NSColor.systemBlue.setFill()
         NSBezierPath(ovalIn: NSRect(x: 3, y: top + (Settings.lineHeight - 6) / 2, width: 6, height: 6)).fill()
+    }
+
+    private func drawBreakpoint(top: CGFloat, line: Int) {
+        let height = Settings.lineHeight
+        if debugLine == line {
+            NSColor.systemYellow.withAlphaComponent(0.35).setFill()
+            NSRect(x: 0, y: top, width: ruleThickness, height: height).fill()
+        }
+        guard breakpoints.contains(line) else { return }
+        NSColor.systemRed.setFill()
+        NSBezierPath(ovalIn: NSRect(x: 2, y: top + (height - 9) / 2, width: 9, height: 9)).fill()
     }
 
     private func drawFoldMark(top: CGFloat, closed: Bool) {
@@ -170,6 +200,7 @@ final class LineNumberRuler: NSRulerView {
             let y = top + (lineHeight - size.height) / 2
             label.draw(at: NSPoint(x: ruleThickness - size.width - trailing, y: y), withAttributes: attrs)
             drawn.append((line + 1, top))
+            drawBreakpoint(top: top, line: line + 1)
             if bookmarks.contains(line + 1) { drawBookmark(top: top) }
             if foldClosed.contains(line + 1) { drawFoldMark(top: top, closed: true) }
             else if foldOpen.contains(line + 1) { drawFoldMark(top: top, closed: false) }

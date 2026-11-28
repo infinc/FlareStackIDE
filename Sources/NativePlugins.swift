@@ -161,6 +161,11 @@ enum NativePlugins {
                 return nil
             }
             PluginGuard.loaded(id)
+            if HostAPI.isCABI(PluginStore.rawManifest(id)) {
+                _ = HostAPI.load(file, id: id, name: info.name)
+                loaded[id] = (nil, info.version)
+                return nil
+            }
             let plugin = load(file, name: info.name)
             loaded[id] = (plugin, info.version)
             return plugin
@@ -168,6 +173,11 @@ enum NativePlugins {
     }
 
     static func plugin(_ id: String) -> NativePlugin? { active.first { $0.id == id } }
+
+    static func needsRestart(_ id: String) -> Bool {
+        guard let entry = loaded[id], entry.plugin != nil else { return false }
+        return PluginStore.installed(id)?.version != entry.version
+    }
 
     private static func load(_ file: URL, name: String) -> NativePlugin? {
         guard let handle = dlopen(file.path, RTLD_NOW | RTLD_LOCAL) else {

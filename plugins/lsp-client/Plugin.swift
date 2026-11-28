@@ -279,6 +279,10 @@ enum LSPEdits {
     }
 }
 
+final class LSPHintLabel: NSTextField {
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+}
+
 final class LSPPopup: NSView {
     private static let maxWidth: CGFloat = 520
 
@@ -328,6 +332,11 @@ final class LSPTextAddon: NSObject, TextAddon, TextDecorating, CommandProviding 
     private var monitors: [Any] = []
     private var lastTyped: String?
     private var bulb: NSButton?
+    private var signaturePopup: NSView?
+    private var signatureRequest: Int?
+    private var hintWork: DispatchWorkItem?
+    private var hintRequest: Int?
+    private var hintLabels: [NSTextField] = []
 
     init(code: CodeEditing) {
         self.code = code
@@ -340,6 +349,9 @@ final class LSPTextAddon: NSObject, TextAddon, TextDecorating, CommandProviding 
         center.addObserver(self, selector: #selector(reopen), name: LSPHub.reopen, object: nil)
         center.addObserver(self, selector: #selector(updateBulb), name: NSView.boundsDidChangeNotification, object: code.scrollView.contentView)
         center.addObserver(self, selector: #selector(symbolsRequested(_:)), name: PluginEvent.symbolsRequest, object: nil)
+        center.addObserver(self, selector: #selector(hideSignature), name: NSView.boundsDidChangeNotification, object: code.scrollView.contentView)
+        center.addObserver(self, selector: #selector(scheduleHints), name: NSView.boundsDidChangeNotification, object: code.scrollView.contentView)
+        center.addObserver(self, selector: #selector(scheduleHints), name: .settingsChanged, object: nil)
         if let monitor = NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved, .scrollWheel, .keyDown, .leftMouseDown], handler: { [weak self] in
             self?.handle($0) ?? $0
         }) { monitors.append(monitor) }
@@ -368,6 +380,7 @@ final class LSPTextAddon: NSObject, TextAddon, TextDecorating, CommandProviding 
         guard doc == nil, let code, let url = code.fileURL, LSPLanguage.language(for: url) != nil, let root else { return redraw() }
         doc = LSPHub.open(url, text: code.textView.string, root: root)
         redraw()
+        scheduleHints()
     }
 
     func shouldChange(_ range: NSRange, text: String) -> Bool {
@@ -378,6 +391,14 @@ final class LSPTextAddon: NSObject, TextAddon, TextDecorating, CommandProviding 
     func textChanged() {
         hideHover()
         guard doc != nil else { return }
+        scheduleHints()
+        if let typed = lastTyped {
+            if typed == "(" || typed == "()" || typed == "," {
+                DispatchQueue.main.async { [weak self] in self?.requestSignature() }
+            } else if typed == ")" || typed.contains("\n") {
+                hideSignature()
+            }
+        }
         changeWork?.cancel()
         let typed = lastTyped
         lastTyped = nil
@@ -439,6 +460,7 @@ final class LSPTextAddon: NSObject, TextAddon, TextDecorating, CommandProviding 
             mouseMoved(event)
         case .leftMouseDown:
             hideHover()
+            hideSignature()
             if event.modifierFlags.intersection([.command, .option, .control, .shift]) == .command, let index = index(at: event) {
                 textView.window?.makeFirstResponder(textView)
                 textView.setSelectedRange(NSRange(location: index, length: 0))
@@ -449,6 +471,10 @@ final class LSPTextAddon: NSObject, TextAddon, TextDecorating, CommandProviding 
             hideHover()
             guard textView.window?.firstResponder === textView else { return event }
             let flags = event.modifierFlags.intersection([.command, .option, .control, .shift])
+            if event.keyCode == 53, signaturePopup != nil {
+                hideSignature()
+                return nil
+            }
             switch (event.keyCode, flags) {
             case (111, []): goToDefinition()
             case (111, .shift): findReferences()
@@ -553,6 +579,145 @@ final class LSPTextAddon: NSObject, TextAddon, TextDecorating, CommandProviding 
             guard let url = LSPText.url(uri), let range else { return nil }
             return (url, range)
         }
+    }
+
+    private func requestSignature() {
+        guard let doc, let textView = code?.textView, doc.server.capabilities["signatureHelpProvider"] != nil else { return }
+        let caret = textView.selectedRange().location
+        guard let params = params(at: caret) else { return }
+        if let signatureRequest { doc.server.cancel(signatureRequest) }
+        signatureRequest = doc.server.request("textDocument/signatureHelp", params) { [weak self, weak textView] result in
+            guard let self, let textView, textView.selectedRange().location == caret else { return }
+            self.signatureRequest = nil
+            self.showSignature(result as? [String: Any], at: caret)
+        }
+    }
+
+    private func signatureText(_ help: [String: Any]) -> NSAttributedString? {
+        guard let signatures = help["signatures"] as? [[String: Any]], !signatures.isEmpty else { return nil }
+        let active = min(max(help["activeSignature"] as? Int ?? 0, 0), signatures.count - 1)
+        let signature = signatures[active]
+        guard let label = signature["label"] as? String else { return nil }
+        let font = NSFont.monospacedSystemFont(ofSize: max(Settings.fontSize - 1, 10), weight: .regular)
+        let text = NSMutableAttributedString(string: label, attributes: [.font: font, .foregroundColor: NSColor.labelColor])
+        let parameters = signature["parameters"] as? [[String: Any]] ?? []
+        let index = signature["activeParameter"] as? Int ?? help["activeParameter"] as? Int ?? 0
+        if parameters.indices.contains(index) {
+            var range: NSRange?
+            if let offsets = parameters[index]["label"] as? [Int], offsets.count == 2 {
+                range = NSRange(location: offsets[0], length: offsets[1] - offsets[0])
+            } else if let name = parameters[index]["label"] as? String {
+                let found = (label as NSString).range(of: name)
+                range = found.location == NSNotFound ? nil : found
+            }
+            if let range, NSMaxRange(range) <= text.length {
+                text.addAttributes([.font: NSFont.monospacedSystemFont(ofSize: font.pointSize, weight: .bold),
+                                    .foregroundColor: NSColor.controlAccentColor], range: range)
+            }
+        }
+        if signatures.count > 1 {
+            text.append(NSAttributedString(string: "  (\(active + 1)/\(signatures.count))",
+                                           attributes: [.font: NSFont.systemFont(ofSize: 10), .foregroundColor: NSColor.secondaryLabelColor]))
+        }
+        return text
+    }
+
+    private func showSignature(_ help: [String: Any]?, at caret: Int) {
+        hideSignature()
+        guard let help, let text = signatureText(help), let textView = code?.textView, let content = textView.window?.contentView,
+              let layout = textView.layoutManager, let container = textView.textContainer, caret <= (textView.string as NSString).length else { return }
+        let glyph = layout.glyphIndexForCharacter(at: max(caret - 1, 0))
+        let rect = layout.boundingRect(forGlyphRange: NSRange(location: glyph, length: 1), in: container)
+            .offsetBy(dx: textView.textContainerOrigin.x, dy: textView.textContainerOrigin.y)
+        let anchor = textView.convert(rect, to: content)
+        let view = LSPPopup(text)
+        var y = anchor.maxY + 3
+        if y + view.frame.height > content.bounds.maxY - 4 { y = anchor.minY - view.frame.height - 3 }
+        view.setFrameOrigin(NSPoint(x: max(min(anchor.minX, content.bounds.maxX - view.frame.width - 6), 6), y: y))
+        content.addSubview(view, positioned: .above, relativeTo: nil)
+        signaturePopup = view
+    }
+
+    @objc private func hideSignature() {
+        if let signatureRequest { doc?.server.cancel(signatureRequest) }
+        signatureRequest = nil
+        signaturePopup?.removeFromSuperview()
+        signaturePopup = nil
+    }
+
+    private var hintsEnabled: Bool { PluginStore.setting(LSPClientPlugin.pluginID, "inlayHints") == "true" }
+
+    @objc private func scheduleHints() {
+        hintWork?.cancel()
+        guard hintsEnabled, doc != nil else { return clearHints() }
+        let item = DispatchWorkItem { [weak self] in self?.requestHints() }
+        hintWork = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6, execute: item)
+    }
+
+    private func requestHints() {
+        guard let doc, let textView = code?.textView, let layout = textView.layoutManager, let container = textView.textContainer,
+              doc.server.capabilities["inlayHintProvider"] != nil else { return clearHints() }
+        flush()
+        let visible = textView.visibleRect
+        let glyphs = layout.glyphRange(forBoundingRect: visible, in: container)
+        let chars = layout.characterRange(forGlyphRange: glyphs, actualGlyphRange: nil)
+        let text = doc.text as NSString
+        guard NSMaxRange(chars) <= text.length else { return }
+        let params: [String: Any] = ["textDocument": ["uri": doc.uri],
+                                     "range": ["start": LSPText.position(chars.location, in: text),
+                                               "end": LSPText.position(NSMaxRange(chars), in: text)]]
+        if let hintRequest { doc.server.cancel(hintRequest) }
+        let version = doc.version
+        hintRequest = doc.server.request("textDocument/inlayHint", params) { [weak self] result in
+            guard let self, let doc = self.doc, doc.version == version else { return }
+            self.hintRequest = nil
+            self.showHints(result as? [[String: Any]] ?? [], in: doc.text as NSString)
+        }
+    }
+
+    private static func hintLabel(_ hint: [String: Any]) -> String {
+        if let label = hint["label"] as? String { return label.trimmingCharacters(in: .whitespaces) }
+        let parts = hint["label"] as? [[String: Any]] ?? []
+        return parts.compactMap { $0["value"] as? String }.joined().trimmingCharacters(in: .whitespaces)
+    }
+
+    private func showHints(_ hints: [[String: Any]], in text: NSString) {
+        clearHints()
+        guard hintsEnabled, let textView = code?.textView, let layout = textView.layoutManager,
+              (textView.string as NSString).length == text.length else { return }
+        let starts = LSPText.lineStarts(text)
+        var lines: [Int: [String]] = [:]
+        for hint in hints {
+            let offset = LSPText.offset(hint["position"] as? [String: Any], in: text, starts: starts)
+            let label = Self.hintLabel(hint)
+            guard !label.isEmpty, offset <= text.length else { continue }
+            let line = text.lineRange(for: NSRange(location: min(offset, max(text.length - 1, 0)), length: 0))
+            lines[line.location, default: []].append(label)
+        }
+        let font = NSFont.monospacedSystemFont(ofSize: max(Settings.fontSize - 1, 9), weight: .regular)
+        let origin = textView.textContainerOrigin
+        for (start, labels) in lines {
+            var content = text.lineRange(for: NSRange(location: start, length: 0))
+            while content.length > 0, "\r\n".contains(text.substring(with: NSRange(location: NSMaxRange(content) - 1, length: 1))) { content.length -= 1 }
+            let last = max(NSMaxRange(content) - 1, content.location)
+            guard last < text.length else { continue }
+            let glyph = layout.glyphIndexForCharacter(at: last)
+            guard layout.propertyForGlyph(at: glyph) != .null else { continue }
+            let used = layout.lineFragmentUsedRect(forGlyphAt: glyph, effectiveRange: nil)
+            let label = LSPHintLabel(labelWithString: labels.joined(separator: "  "))
+            label.font = font
+            label.textColor = .tertiaryLabelColor
+            label.sizeToFit()
+            label.frame.origin = NSPoint(x: origin.x + used.maxX + 16, y: origin.y + used.minY + (used.height - label.frame.height) / 2)
+            textView.addSubview(label)
+            hintLabels.append(label)
+        }
+    }
+
+    private func clearHints() {
+        hintLabels.forEach { $0.removeFromSuperview() }
+        hintLabels = []
     }
 
     private func text(of url: URL) -> String? {
@@ -826,10 +991,16 @@ final class LSPTextAddon: NSObject, TextAddon, TextDecorating, CommandProviding 
         DispatchQueue.main.asyncAfter(deadline: .now() + 1) { NotificationCenter.default.post(name: LSPHub.reopen, object: nil) }
     }
 
-    func dismiss() { hideHover() }
+    func dismiss() {
+        hideHover()
+        hideSignature()
+    }
 
     func detach() {
         hideHover()
+        hideSignature()
+        hintWork?.cancel()
+        clearHints()
         removeBulb()
         changeWork?.cancel()
         NotificationCenter.default.removeObserver(self)

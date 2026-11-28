@@ -143,6 +143,19 @@ enum PluginStore {
 
     private static func isValidID(_ id: String) -> Bool { id.range(of: #"^[a-z0-9][a-z0-9_-]*$"#, options: .regularExpression) != nil }
 
+    private static var remoteRaw: [String: [String: Any]] = rawCatalog((try? Data(contentsOf: cacheURL)) ?? Data())
+
+    private static func rawCatalog(_ data: Data) -> [String: [String: Any]] {
+        let list = (try? JSONSerialization.jsonObject(with: data)) as? [[String: Any]] ?? []
+        return Dictionary(list.compactMap { item in (item["id"] as? String).map { ($0, item) } }, uniquingKeysWith: { a, _ in a })
+    }
+
+    static func rawManifest(_ id: String) -> [String: Any]? {
+        if isValidID(id), let data = try? Data(contentsOf: manifest(id)),
+           let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] { return object }
+        return remoteRaw[id]
+    }
+
     private static func loadCache() -> [PluginInfo] {
         guard let data = try? Data(contentsOf: cacheURL) else { return [] }
         return (try? JSONDecoder().decode([PluginInfo].self, from: data)) ?? []
@@ -170,7 +183,18 @@ enum PluginStore {
     }
 
     private static func fetch(_ path: String, _ completion: @escaping (Result<Data, Error>) -> Void) {
-        let url = source.appendingPathComponent(path)
+        fetch(url: source.appendingPathComponent(path), completion)
+    }
+
+    static func releaseBinaryURL(_ id: String, version: String) -> URL {
+        let parts = source.path.split(separator: "/")
+        guard source.host == "raw.githubusercontent.com", parts.count >= 2 else {
+            return source.appendingPathComponent("\(id)/\(NativePlugins.binary)")
+        }
+        return URL(string: "https://github.com/\(parts[0])/\(parts[1])/releases/download/plugins-api\(NativePlugins.apiVersion)/\(id)-\(version).dylib")!
+    }
+
+    private static func fetch(url: URL, _ completion: @escaping (Result<Data, Error>) -> Void) {
         let request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData)
         URLSession.shared.dataTask(with: request) { data, response, error in
             let status = (response as? HTTPURLResponse)?.statusCode ?? 200
@@ -226,6 +250,10 @@ enum PluginStore {
     static func compatibility(_ info: PluginInfo) -> String? {
         let native = info.files?.contains(NativePlugins.binary) ?? (info.apiVersion != nil)
         guard native else { return nil }
+        let raw = rawManifest(info.id)
+        if HostAPI.isCABI(raw) {
+            return HostAPI.required(raw) <= HostAPI.version ? nil : "\(appName) を最新版にアップデートしてください"
+        }
         guard let api = info.apiVersion, api <= NativePlugins.apiVersion else {
             return info.apiVersion == nil ? "この版の \(appName) には対応していません（プラグインの更新待ち）" : "\(appName) を最新版にアップデートしてください"
         }
@@ -289,6 +317,7 @@ enum PluginStore {
     static func hasUpdate(_ id: String) -> Bool {
         guard let local = installed(id), let latest = remote.first(where: { $0.id == id }) else { return false }
         return isNewer(latest.version, than: local.version) && compatibility(latest) == nil
+            && UserDefaults.standard.string(forKey: skipKey(id)) != latest.version
     }
 
     static func refreshCatalog() {
@@ -309,6 +338,7 @@ enum PluginStore {
                 }
                 if let list = try? JSONDecoder().decode([PluginInfo].self, from: data) {
                     remote = list.filter { isValidID($0.id) }
+                    remoteRaw = rawCatalog(data)
                     catalogError = nil
                     try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
                     try? data.write(to: cacheURL, options: .atomic)
@@ -479,9 +509,12 @@ enum PluginStore {
         let group = DispatchGroup()
         let queue = DispatchQueue(label: "\(appName).plugins.install.\(id)", qos: .userInitiated)
         var firstError: Error?
+        let fromRelease = ((try? JSONSerialization.jsonObject(with: data)) as? [String: Any])?["binary"] as? String == "release"
         for file in files {
             group.enter()
-            fetch("\(id)/\(file)") { result in
+            let url = fromRelease && file == NativePlugins.binary ? releaseBinaryURL(id, version: info.version)
+                : source.appendingPathComponent("\(id)/\(file)")
+            fetch(url: url) { result in
                 queue.async {
                     defer { group.leave() }
                     do {
@@ -503,6 +536,7 @@ enum PluginStore {
                 do {
                     try fm.createDirectory(at: directory, withIntermediateDirectories: true)
                     if fm.fileExists(atPath: folder(id).path) {
+                        keepPrevious(id)
                         _ = try fm.replaceItemAt(folder(id), withItemAt: staging)
                     } else {
                         try fm.moveItem(at: staging, to: folder(id))
@@ -519,8 +553,49 @@ enum PluginStore {
         }
     }
 
+    private static func skipKey(_ id: String) -> String { "Plugins.Skip.\(id)" }
+
+    static func previousFolder(_ id: String) -> URL { directory.appendingPathComponent(".previous").appendingPathComponent(id) }
+
+    private static func keepPrevious(_ id: String) {
+        let fm = FileManager.default
+        let target = previousFolder(id)
+        try? fm.removeItem(at: target)
+        try? fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? fm.copyItem(at: folder(id), to: target)
+    }
+
+    static func previousVersion(_ id: String) -> PluginInfo? {
+        guard isValidID(id), let data = try? Data(contentsOf: previousFolder(id).appendingPathComponent("plugin.json")),
+              let info = try? JSONDecoder().decode(PluginInfo.self, from: data), info.version != installed(id)?.version,
+              compatibility(info) == nil else { return nil }
+        return info
+    }
+
+    static func rollback(_ id: String) throws {
+        guard let previous = previousVersion(id), let current = installed(id) else { throw failure("戻せる版がありません") }
+        let fm = FileManager.default
+        if let reason = PluginTrust.verifyInstalled(previousFolder(id), info: previous, files: previous.files ?? ["main.js"]) {
+            throw failure(reason)
+        }
+        let staging = directory.appendingPathComponent(".\(id)-rollback-\(UUID().uuidString)")
+        try fm.moveItem(at: previousFolder(id), to: staging)
+        do {
+            _ = try fm.replaceItemAt(folder(id), withItemAt: staging)
+        } catch {
+            try? fm.removeItem(at: staging)
+            throw error
+        }
+        UserDefaults.standard.set(current.version, forKey: skipKey(id))
+        PluginPermission.grant(previous)
+        invalidate()
+        changed()
+    }
+
     static func uninstall(_ id: String) throws {
         guard isValidID(id) else { return }
+        try? FileManager.default.removeItem(at: previousFolder(id))
+        UserDefaults.standard.removeObject(forKey: skipKey(id))
         try FileManager.default.removeItem(at: folder(id))
         detailsCache[id] = nil
         PluginPermission.revoke(id)
@@ -808,6 +883,21 @@ final class PluginList: NSView {
         return wrap
     }
 
+    private func offlineNotice(cached: Bool, error: Error) -> NSView {
+        let label = NSTextField(wrappingLabelWithString: cached ? "オフライン（キャッシュを使用中）" : "プラグイン一覧を取得できませんでした")
+        label.font = .systemFont(ofSize: 11, weight: .semibold)
+        label.textColor = .systemOrange
+        label.toolTip = error.localizedDescription
+        label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        let retry = NSButton(title: "再試行", target: self, action: #selector(refreshClicked))
+        retry.bezelStyle = .rounded
+        retry.controlSize = .small
+        let wrap = NSStackView(views: [label, retry])
+        wrap.spacing = 8
+        wrap.edgeInsets = NSEdgeInsets(top: 8, left: 12, bottom: 2, right: 12)
+        return wrap
+    }
+
     @objc private func refreshClicked() { PluginStore.refreshCatalog() }
 
     @objc private func categoryChanged() {
@@ -887,8 +977,8 @@ final class PluginList: NSView {
     @objc func reload() {
         list.arrangedSubviews.forEach { $0.removeFromSuperview() }
         if PluginStore.loading { list.addArrangedSubview(header("プラグイン一覧を取得中…")) }
-        if let error = PluginStore.catalogError {
-            list.addArrangedSubview(header("プラグイン一覧を取得できませんでした: \(error.localizedDescription)"))
+        if let error = PluginStore.catalogError, !PluginStore.loading {
+            list.addArrangedSubview(offlineNotice(cached: !PluginStore.remote.isEmpty, error: error))
         }
         fillCategories()
         let found = PluginStore.search(search.stringValue, category: selectedCategory)
@@ -1002,7 +1092,7 @@ final class PluginPage: NSView {
     func refresh() {
         guard let id = pluginID, let info = PluginStore.info(id) else { return }
         let installed = PluginStore.isInstalled(id)
-        let state = PluginStore.hasUpdate(id) ? "更新あり" : installed ? "インストール済み" : "未インストール"
+        let state = NativePlugins.needsRestart(id) ? "再起動後に反映" : PluginStore.hasUpdate(id) ? "更新あり" : installed ? "インストール済み" : "未インストール"
         icon.image = PluginStore.symbol(info.symbol, size: 40)
         name.stringValue = info.name
         let notes = [PluginStore.requirementNames(info), PluginStore.compatibility(info)].compactMap { $0 }
@@ -1203,9 +1293,11 @@ final class PluginManagerView: NSView {
         if PluginStore.hasUpdate(info.id), let latest = PluginStore.latestVersion(info.id) { detail += "　·　v\(latest) があります" }
         let stopped = PluginGuard.isDisabled(info.id)
         if stopped { detail += "　·　続けて終了したため停止中" }
+        let pending = NativePlugins.needsRestart(info.id)
+        if pending { detail += "　·　再起動後に反映" }
         let meta = NSTextField(labelWithString: detail)
         meta.font = .systemFont(ofSize: 11)
-        meta.textColor = PluginStore.hasUpdate(info.id) || stopped ? .systemOrange : .secondaryLabelColor
+        meta.textColor = PluginStore.hasUpdate(info.id) || stopped || pending ? .systemOrange : .secondaryLabelColor
         meta.toolTip = "権限: " + PluginPermission.summary(info)
         let texts = NSStackView(views: [name, meta])
         texts.orientation = .vertical
@@ -1221,6 +1313,17 @@ final class PluginManagerView: NSView {
             views.append(update)
         }
         if stopped { views.append(PluginActionButton(title: "有効にする") { PluginGuard.enable(info.id) }) }
+        if pending { views.append(PluginActionButton(title: "今すぐ再起動") { Updater.relaunch() }) }
+        if let previous = PluginStore.previousVersion(info.id), !busy {
+            views.append(PluginActionButton(title: "v\(previous.version) に戻す") { [weak self] in
+                do {
+                    try PluginStore.rollback(info.id)
+                    Toasts.post("\(info.name) を v\(previous.version) に戻しました", in: self?.window)
+                } catch {
+                    if let window = self?.window { NSAlert(error: error).beginSheetModal(for: window) }
+                }
+            })
+        }
         let settings = PluginActionButton(title: "設定") { [weak self] in
             Popups.show("plugin-settings-\(info.id)", title: "\(info.name) の設定", over: self?.window) { PluginSettingsView(id: info.id) }
         }
@@ -1240,7 +1343,7 @@ final class PluginManagerView: NSView {
     @objc private func reload() {
         auto.state = Settings.pluginAutoUpdate ? .on : .off
         unsigned.state = PluginTrust.allowUnsigned ? .on : .off
-        status.stringValue = PluginStore.loading ? "確認中…" : PluginStore.catalogError != nil ? "確認できませんでした" : ""
+        status.stringValue = PluginStore.loading ? "確認中…" : PluginStore.catalogError == nil ? "" : PluginStore.remote.isEmpty ? "確認できませんでした" : "オフライン（キャッシュを使用中）"
         updateAll.isHidden = PluginStore.updatableIDs.isEmpty
         list.arrangedSubviews.forEach { $0.removeFromSuperview() }
         let installed = PluginStore.installedIDs.compactMap(PluginStore.installed)

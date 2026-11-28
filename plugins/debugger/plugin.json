@@ -1,0 +1,22 @@
+{
+  "id": "debugger",
+  "name": "Debugger",
+  "version": "1.0",
+  "author": "FlareStackIDE",
+  "symbol": "ladybug",
+  "summary": "ブレークポイント・ステップ実行・変数の表示でデバッグ（Python は debugpy、Swift / C / Rust などは lldb-dap）",
+  "fileExtensions": [],
+  "category": "実行・ツール",
+  "permissions": ["process", "files"],
+  "requires": ["lines"],
+  "files": ["plugin.dylib", "README.md"],
+  "settings": [
+    { "key": "python", "title": "Python のコマンド（空なら python3）", "type": "string" },
+    { "key": "lldbDap", "title": "lldb-dap のパス（空なら自動）", "type": "string" }
+  ],
+  "apiVersion": 4,
+  "hashes": {
+    "README.md": "887e0d3993ad5e66c15719d8635e04bb2f3fc18091ca716731081f39498e3b8d",
+    "plugin.dylib": "03c51f0fd3dabee6f32f256a721d0a1a59774b473500b5168eb2bb4596beab14"
+  }
+}

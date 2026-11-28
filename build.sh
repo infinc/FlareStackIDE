@@ -34,13 +34,47 @@ swiftc -target arm64-apple-macos13 -O -enable-testing -module-name "$NAME" -emit
     -emit-module-path "$MODULE/$NAME.swiftmodule" "$ROOT"/Sources/*.swift \
     -o "$APP/Contents/MacOS/$NAME" -Xlinker -export_dynamic
 
+SERVICE="$APP/Contents/XPCServices/FlareStackPluginHost.xpc/Contents"
+mkdir -p "$SERVICE/MacOS"
+swiftc -target arm64-apple-macos13 -O -module-name FlareStackPluginHost "$ROOT"/Worker/*.swift -o "$SERVICE/MacOS/FlareStackPluginHost"
+cat > "$SERVICE/Info.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleIdentifier</key><string>com.flarestackide.app.PluginHost</string>
+    <key>CFBundleName</key><string>FlareStackPluginHost</string>
+    <key>CFBundleExecutable</key><string>FlareStackPluginHost</string>
+    <key>CFBundlePackageType</key><string>XPC!</string>
+    <key>CFBundleShortVersionString</key><string>$VERSION</string>
+    <key>CFBundleVersion</key><string>$VERSION</string>
+    <key>XPCService</key>
+    <dict>
+        <key>ServiceType</key><string>Application</string>
+    </dict>
+</dict>
+</plist>
+PLIST
+
 progress "プラグインのコンパイル (plugins/*/plugin.dylib)"
+STAMPS="$ROOT/build/plugin-stamps"
+mkdir -p "$STAMPS"
 for dir in "$ROOT"/plugins/*/; do
     sources=("$dir"*.swift)
     [ -e "${sources[0]}" ] || continue
     id="$(basename "$dir")"
-    swiftc -target arm64-apple-macos13 -O -emit-library -module-name "FSPlugin_${id//-/_}" -I "$MODULE" \
-        "${sources[@]}" "$ROOT"/PluginKit/*.swift -o "$dir/plugin.dylib" -Xlinker -undefined -Xlinker dynamic_lookup
+    if grep -q '"abi": *"c"' "$dir/plugin.json" 2>/dev/null; then
+        stamp="$(cat "${sources[@]}" "$ROOT"/PluginKit/CAPI/*.swift | shasum -a 256 | cut -d' ' -f1)"
+        if [ -f "$dir/plugin.dylib" ] && [ "$(cat "$STAMPS/$id" 2>/dev/null)" = "$stamp" ]; then continue; fi
+        swiftc -target arm64-apple-macos13 -O -emit-library -module-name "FSPlugin_${id//-/_}" \
+            "${sources[@]}" "$ROOT"/PluginKit/CAPI/*.swift -o "$dir/plugin.dylib"
+    else
+        stamp="$(cat "${sources[@]}" "$ROOT"/PluginKit/*.swift "$MODULE/$NAME.swiftmodule" | shasum -a 256 | cut -d' ' -f1)"
+        if [ -f "$dir/plugin.dylib" ] && [ "$(cat "$STAMPS/$id" 2>/dev/null)" = "$stamp" ]; then continue; fi
+        swiftc -target arm64-apple-macos13 -O -emit-library -module-name "FSPlugin_${id//-/_}" -I "$MODULE" \
+            "${sources[@]}" "$ROOT"/PluginKit/*.swift -o "$dir/plugin.dylib" -Xlinker -undefined -Xlinker dynamic_lookup
+    fi
+    printf '%s' "$stamp" > "$STAMPS/$id"
 done
 
 json() { local s="${1//\\/\\\\}"; s="${s//\"/\\\"}"; printf '"%s"' "$s"; }
@@ -74,6 +108,7 @@ emit() {
 
 progress "マニフェストと署名 (plugins/*/plugin.sig)"
 swift "$ROOT/tools/manifest.swift" "$ROOT" >/dev/null
+swift "$ROOT/tools/l10n-check.swift" "$ROOT" >/dev/null
 
 progress "アイコン生成"
 for s in 16 32 128 256 512; do

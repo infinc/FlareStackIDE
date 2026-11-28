@@ -21,6 +21,9 @@ enum PluginEvent {
     static let commentKeyRequest = name("commentKeyRequest")
     static let symbols = name("symbols")
     static let symbolsRequest = name("symbolsRequest")
+    static let breakpoints = name("breakpoints")
+    static let breakpointsRequest = name("breakpointsRequest")
+    static let debugLine = name("debugLine")
 
     private static func name(_ id: String) -> Notification.Name { Notification.Name("FlareStackIDE." + id) }
 }

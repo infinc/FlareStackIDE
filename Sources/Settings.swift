@@ -1019,7 +1019,8 @@ final class BaseSettingsView: NSView {
         crashNote.preferredMaxLayoutWidth = 500
         let exportButton = NSButton(title: "書き出す…", target: SettingsTransfer.shared, action: #selector(SettingsTransfer.exportClicked(_:)))
         let importButton = NSButton(title: "読み込む…", target: SettingsTransfer.shared, action: #selector(SettingsTransfer.importClicked(_:)))
-        [exportButton, importButton].forEach { $0.bezelStyle = .rounded }
+        let jsonButton = NSButton(title: "JSON で編集…", target: SettingsTransfer.shared, action: #selector(SettingsTransfer.editJSONClicked(_:)))
+        [exportButton, importButton, jsonButton].forEach { $0.bezelStyle = .rounded }
 
         func section(_ title: String) -> NSTextField {
             let label = NSTextField(labelWithString: title)
@@ -1039,7 +1040,7 @@ final class BaseSettingsView: NSView {
             section("プロジェクト"), row([NSTextField(labelWithString: "開いたファイル・フォルダを一覧に"), projectAdd]),
             section("保存"), row([autosave, interval]),
             section("言語"), row([NSTextField(labelWithString: "表示の言語（再起動後に反映）"), language]),
-            section("設定ファイル"), row([NSTextField(labelWithString: "外観・エディタ・プラグインの設定を1つのファイルに"), exportButton, importButton]),
+            section("設定ファイル"), row([NSTextField(labelWithString: "外観・エディタ・プラグインの設定を1つのファイルに"), exportButton, importButton, jsonButton]),
             section("クラッシュ報告"), crashReport, crashNote,
             versionLabel,
         ])

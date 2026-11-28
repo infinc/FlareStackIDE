@@ -8,9 +8,21 @@ enum LocalHistory {
         let size: Int
     }
 
-    static let maxEntries = 50
-    static let maxBytes = 2_000_000
-    static let mergeInterval: TimeInterval = 30
+    static let entriesKey = "LocalHistory.MaxEntries"
+    static let bytesKey = "LocalHistory.MaxBytes"
+    static let mergeKey = "LocalHistory.MergeSeconds"
+    static let entriesRange = 1...1000
+    static let megabytesRange = 1...50
+    static let mergeRange = 0...3600
+
+    static var maxEntries: Int { stored(entriesKey, 50, entriesRange) }
+    static var maxBytes: Int { stored(bytesKey, 2, megabytesRange) * 1_000_000 }
+    static var mergeInterval: TimeInterval { TimeInterval(stored(mergeKey, 30, mergeRange)) }
+
+    private static func stored(_ key: String, _ fallback: Int, _ range: ClosedRange<Int>) -> Int {
+        guard UserDefaults.standard.object(forKey: key) != nil else { return fallback }
+        return min(max(UserDefaults.standard.integer(forKey: key), range.lowerBound), range.upperBound)
+    }
     private static let enabledKey = "LocalHistory.Projects"
     private static let queue = DispatchQueue(label: "FlareStackIDE.LocalHistory", qos: .utility)
     private static let stamp: DateFormatter = {
@@ -271,10 +283,38 @@ final class ProjectSettingsView: NSView {
     private let history = NSButton(checkboxWithTitle: "ローカル履歴を保存する", target: nil, action: nil)
     private let usage = NSTextField(labelWithString: "")
     private let clear = NSButton(title: "履歴を削除…", target: nil, action: nil)
+    private let note = NSTextField(wrappingLabelWithString: "")
+    private let entries = ProjectSettingsView.numberField()
+    private let merge = ProjectSettingsView.numberField()
+    private let megabytes = ProjectSettingsView.numberField()
+
+    private static func numberField() -> NSTextField {
+        let field = NSTextField(string: "")
+        field.alignment = .right
+        field.controlSize = .small
+        field.font = .systemFont(ofSize: 11)
+        let formatter = NumberFormatter()
+        formatter.allowsFloats = false
+        formatter.minimum = 0
+        field.formatter = formatter
+        field.widthAnchor.constraint(equalToConstant: 56).isActive = true
+        return field
+    }
+
+    private static func limitRow(_ title: String, _ field: NSTextField, _ unit: String) -> NSStackView {
+        let label = NSTextField(labelWithString: title)
+        label.font = .systemFont(ofSize: 11)
+        let suffix = NSTextField(labelWithString: unit)
+        suffix.font = .systemFont(ofSize: 11)
+        suffix.textColor = .secondaryLabelColor
+        let row = NSStackView(views: [label, field, suffix])
+        row.spacing = 6
+        return row
+    }
 
     init(project: Project) {
         self.project = project
-        super.init(frame: NSRect(x: 0, y: 0, width: 460, height: 220))
+        super.init(frame: NSRect(x: 0, y: 0, width: 460, height: 250))
         let title = NSTextField(labelWithString: project.name)
         title.font = .systemFont(ofSize: 15, weight: .bold)
         let path = NSTextField(labelWithString: project.path)
@@ -285,7 +325,6 @@ final class ProjectSettingsView: NSView {
         section.font = .systemFont(ofSize: 12, weight: .semibold)
         history.target = self
         history.action = #selector(historyChanged)
-        let note = NSTextField(wrappingLabelWithString: "保存のたびにファイルの版を残し、タブやディレクトリの右クリック「ローカル履歴…」から戻せます。Git を使っていないプロジェクトでも使えます（\(Int(LocalHistory.mergeInterval)) 秒以内の保存は1つにまとめ、1ファイルあたり最新 \(LocalHistory.maxEntries) 件まで）。")
         note.font = .systemFont(ofSize: 11)
         note.textColor = .secondaryLabelColor
         note.preferredMaxLayoutWidth = 400
@@ -297,7 +336,15 @@ final class ProjectSettingsView: NSView {
         clear.action = #selector(clearClicked)
         let usageRow = NSStackView(views: [usage, clear])
         usageRow.spacing = 10
-        let stack = NSStackView(views: [title, path, section, history, note, usageRow])
+        for field in [entries, merge, megabytes] {
+            field.target = self
+            field.action = #selector(limitsChanged)
+        }
+        let limits = NSStackView(views: [Self.limitRow("1ファイルあたり", entries, "件まで"),
+                                         Self.limitRow("まとめる間隔", merge, "秒"),
+                                         Self.limitRow("対象のファイル", megabytes, "MB 以下")])
+        limits.spacing = 14
+        let stack = NSStackView(views: [title, path, section, history, note, limits, usageRow])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 8
@@ -326,9 +373,21 @@ final class ProjectSettingsView: NSView {
 
     @objc private func load() {
         history.state = LocalHistory.isEnabled(project.path) ? .on : .off
+        note.stringValue = "保存のたびにファイルの版を残し、タブやディレクトリの右クリック「ローカル履歴…」から戻せます。Git を使っていないプロジェクトでも使えます（\(Int(LocalHistory.mergeInterval)) 秒以内の保存は1つにまとめ、1ファイルあたり最新 \(LocalHistory.maxEntries) 件まで）。"
+        entries.integerValue = LocalHistory.maxEntries
+        merge.integerValue = Int(LocalHistory.mergeInterval)
+        megabytes.integerValue = LocalHistory.maxBytes / 1_000_000
         let bytes = LocalHistory.usage(of: project.path)
         usage.stringValue = "使用量: \(ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file))"
         clear.isEnabled = bytes > 0
+    }
+
+    @objc private func limitsChanged() {
+        let defaults = UserDefaults.standard
+        defaults.set(min(max(entries.integerValue, LocalHistory.entriesRange.lowerBound), LocalHistory.entriesRange.upperBound), forKey: LocalHistory.entriesKey)
+        defaults.set(min(max(merge.integerValue, LocalHistory.mergeRange.lowerBound), LocalHistory.mergeRange.upperBound), forKey: LocalHistory.mergeKey)
+        defaults.set(min(max(megabytes.integerValue, LocalHistory.megabytesRange.lowerBound), LocalHistory.megabytesRange.upperBound), forKey: LocalHistory.bytesKey)
+        load()
     }
 
     @objc private func historyChanged() {

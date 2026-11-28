@@ -60,44 +60,6 @@ enum LSPLanguage {
     }
 }
 
-enum LoginShell {
-    private static let lock = NSLock()
-    private static var cachedPath: String?
-
-    static func run(_ executable: String, _ arguments: [String]) -> String? {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: executable)
-        process.arguments = arguments
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = FileHandle.nullDevice
-        process.standardInput = FileHandle.nullDevice
-        do { try process.run() } catch { return nil }
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        guard process.terminationStatus == 0 else { return nil }
-        return String(decoding: data, as: UTF8.self).split(separator: "\n").last.map(String.init)
-    }
-
-    static var path: String {
-        lock.lock()
-        defer { lock.unlock() }
-        if let cachedPath { return cachedPath }
-        let found = run("/bin/zsh", ["-lc", "printf '%s\\n' \"$PATH\""]) ?? "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
-        cachedPath = found
-        return found
-    }
-
-    static func which(_ name: String) -> String? {
-        if name.hasPrefix("/") { return FileManager.default.isExecutableFile(atPath: name) ? name : nil }
-        for dir in path.split(separator: ":") {
-            let file = (String(dir) as NSString).appendingPathComponent(name)
-            if FileManager.default.isExecutableFile(atPath: file) { return file }
-        }
-        return nil
-    }
-}
-
 enum SwiftWorkspace {
     private static let markers = ["Package.swift", "compile_commands.json", "compile_flags.txt", "buildServer.json", ".bsp",
                                   "build/compile_commands.json", "build/compile_flags.txt"]
@@ -242,6 +204,9 @@ final class LSPServer {
                     "rename": ["prepareSupport": false],
                     "publishDiagnostics": ["versionSupport": true],
                     "documentSymbol": ["hierarchicalDocumentSymbolSupport": true],
+                    "signatureHelp": ["signatureInformation": ["documentationFormat": ["plaintext"],
+                                                               "parameterInformation": ["labelOffsetSupport": true]]],
+                    "inlayHint": ["dynamicRegistration": false],
                     "codeAction": [
                         "codeActionLiteralSupport": ["codeActionKind": ["valueSet": ["", "quickfix", "refactor", "refactor.extract",
                                                                                      "refactor.inline", "refactor.rewrite", "source",
@@ -306,9 +271,7 @@ final class LSPServer {
         let process = process
         let handle = input.fileHandleForWriting
         writeQueue.async {
-            guard process.isRunning, let body = try? JSONSerialization.data(withJSONObject: message) else { return }
-            var data = Data("Content-Length: \(body.count)\r\n\r\n".utf8)
-            data.append(body)
+            guard process.isRunning, let data = ContentLengthPipe.frame(message) else { return }
             try? handle.write(contentsOf: data)
         }
     }
@@ -322,21 +285,7 @@ final class LSPServer {
                 DispatchQueue.main.async { [weak self] in messages.forEach { self?.handle($0) } }
             }
         }
-        while let separator = buffer.range(of: Data("\r\n\r\n".utf8)) {
-            let header = String(decoding: buffer[buffer.startIndex..<separator.lowerBound], as: UTF8.self)
-            guard let line = header.split(separator: "\r\n").first(where: { $0.lowercased().hasPrefix("content-length:") }),
-                  let length = Int(line.split(separator: ":")[1].trimmingCharacters(in: .whitespaces)) else {
-                buffer.removeSubrange(buffer.startIndex..<separator.upperBound)
-                continue
-            }
-            let start = separator.upperBound
-            guard buffer.distance(from: start, to: buffer.endIndex) >= length else { return }
-            let end = buffer.index(start, offsetBy: length)
-            let body = buffer[start..<end]
-            buffer.removeSubrange(buffer.startIndex..<end)
-            buffer = Data(buffer)
-            if let message = try? JSONSerialization.jsonObject(with: body) as? [String: Any] { messages.append(message) }
-        }
+        messages = ContentLengthPipe.parse(&buffer)
     }
 
     private func handle(_ message: [String: Any]) {
