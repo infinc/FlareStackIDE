@@ -593,6 +593,7 @@ enum PluginStore {
     }
 
     static func makeHighlighter(for url: URL) -> Highlighter? {
+        guard !LargeFile.isLimited(url) else { return nil }
         let keys = [url.pathExtension.lowercased(), url.lastPathComponent.lowercased()].filter { !$0.isEmpty }
         for id in installedIDs {
             guard let info = installed(id), info.fileExtensions.contains(where: keys.contains) else { continue }

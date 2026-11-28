@@ -254,6 +254,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
         restoreFrame()
         NotificationCenter.default.addObserver(self, selector: #selector(applySettings), name: .settingsChanged, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(pluginsChanged), name: .pluginsChanged, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(largeFileAllowed), name: .largeFileAllowed, object: nil)
         applyPlugins()
         if !root.isDirectory { open(root.url) }
         applySettings()
@@ -920,6 +921,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
         buffers[url] = buffer
         current = buffer
         selectedURL = url
+        syncAddons()
         addTab(for: url, title: url.lastPathComponent)
         placeholder.isHidden = true
         textView.string = buffer.text
@@ -935,6 +937,29 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
         textView.scrollToBeginningOfDocument(nil)
         window?.makeFirstResponder(textView)
         updateTitle()
+        if LargeFile.isLimited(url) { LargeFile.notify(url, in: window) }
+    }
+
+    @objc private func largeFileAllowed(_ notification: Notification) {
+        guard let current, current.url.standardizedFileURL == notification.object as? URL else { return }
+        storeCurrent()
+        syncAddons()
+        textView.isEditable = current.editable
+        highlighter = current.editable ? PluginStore.makeHighlighter(for: current.url) : nil
+        recolor()
+        textAddons.each { $0.fileOpened() }
+        windowAddons.each { $0.fileOpened() }
+        attachExtension()
+    }
+
+    private func syncAddons() {
+        if let current, LargeFile.isLimited(current.url) {
+            textAddons.detachAll()
+            windowAddons.detachAll()
+        } else {
+            textAddons.sync()
+            windowAddons.sync()
+        }
     }
 
     private func openPluginPage(_ id: String) {
@@ -946,6 +971,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
         addTab(for: url, title: info.name)
         highlighter = nil
         detachExtension()
+        syncAddons()
         windowAddons.each { $0.fileOpened() }
         pluginPage.show(id)
         show(pluginPage, in: bodyHost)
@@ -956,6 +982,10 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
 
     private func attachExtension() {
         guard let current else { return detachExtension() }
+        guard !LargeFile.isLimited(current.url) else {
+            textView.isEditable = false
+            return detachExtension()
+        }
         let viewer = NativePlugins.viewer(for: current.url)
         textView.isEditable = current.editable && viewer == nil
         ext = viewer ?? (current.editable ? NativePlugins.codePreview(for: current.url, code: editorScroll) ?? PluginStore.makeExtension(for: current.url, code: editorScroll) : nil)
@@ -1016,6 +1046,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
         detachExtension()
         textView.string = ""
         textView.isEditable = false
+        syncAddons()
         textAddons.each { $0.fileOpened() }
         windowAddons.each { $0.fileOpened() }
         placeholder.isHidden = false
@@ -1036,8 +1067,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSOutl
     }
 
     private func applyPlugins() {
-        textAddons.sync()
-        windowAddons.sync()
+        syncAddons()
         splitPane?.applyPlugins()
     }
 

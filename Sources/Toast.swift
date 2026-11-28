@@ -241,6 +241,12 @@ enum Toasts {
         return toast
     }
 
+    @discardableResult
+    static func notice(_ title: String, message: String? = nil, actions: [Toast.Action] = [], in window: NSWindow? = nil) -> Toast? {
+        let toast = Toast(title: title, message: message, actions: actions)
+        return show(toast, in: window) ? toast : nil
+    }
+
     static func progress(_ title: String, in window: NSWindow? = nil) -> Toast? {
         let toast = Toast(title: title, showsProgress: true)
         return show(toast, in: window) ? toast : nil

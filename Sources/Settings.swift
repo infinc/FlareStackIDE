@@ -225,6 +225,11 @@ enum Settings {
 
     static var autosaveImmediate: Bool { autosaveEnabled && autosaveInterval == 0 }
 
+    static var largeFileLimit: Int {
+        get { value("Editor.LargeFileLimit", 1_000_000) }
+        set { set(newValue, "Editor.LargeFileLimit") }
+    }
+
     static var terminalCursorBlink: Bool {
         get { value("Terminal.CursorBlink", true) }
         set { set(newValue, "Terminal.CursorBlink") }

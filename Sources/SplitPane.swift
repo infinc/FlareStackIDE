@@ -282,6 +282,7 @@ final class SplitPane: NSView, NSTextViewDelegate {
         ])
         host(scroll, in: bodyHost)
         CodeView.onScroll(scroll, self, #selector(scrolled))
+        NotificationCenter.default.addObserver(self, selector: #selector(largeFileAllowed), name: .largeFileAllowed, object: nil)
         applyPlugins()
         applySettings()
     }
@@ -318,6 +319,7 @@ final class SplitPane: NSView, NSTextViewDelegate {
         tabs.forEach { $0.value.selected = $0.key == url }
         if let tab = tabs[url] { strip.reveal(tab) }
         current = buffer
+        syncAddons()
         textView.string = buffer.text
         CodeView.style(textView)
         textView.isEditable = buffer.editable
@@ -329,6 +331,22 @@ final class SplitPane: NSView, NSTextViewDelegate {
         textView.setSelectedRange(NSRange(location: 0, length: 0))
         textView.scrollToBeginningOfDocument(nil)
         window?.makeFirstResponder(textView)
+        if LargeFile.isLimited(url) { LargeFile.notify(url, in: window) }
+    }
+
+    private func syncAddons() {
+        if let current, LargeFile.isLimited(current.url) { addons.detachAll() } else { addons.sync() }
+    }
+
+    @objc private func largeFileAllowed(_ notification: Notification) {
+        guard let current, current.url.standardizedFileURL == notification.object as? URL else { return }
+        storeCurrent()
+        syncAddons()
+        textView.isEditable = current.editable
+        highlighter = current.editable ? PluginStore.makeHighlighter(for: current.url) : nil
+        recolor()
+        addons.each { $0.fileOpened() }
+        attachExtension()
     }
 
     func select(_ url: URL) {
@@ -472,7 +490,7 @@ final class SplitPane: NSView, NSTextViewDelegate {
     }
 
     func applyPlugins() {
-        addons.sync()
+        syncAddons()
         if let current {
             storeCurrent()
             highlighter = current.editable ? PluginStore.makeHighlighter(for: current.url) : nil
@@ -499,6 +517,10 @@ final class SplitPane: NSView, NSTextViewDelegate {
     private func attachExtension() {
         detachExtension()
         guard let current else { return }
+        guard !LargeFile.isLimited(current.url) else {
+            textView.isEditable = false
+            return
+        }
         let viewer = NativePlugins.viewer(for: current.url)
         textView.isEditable = current.editable && viewer == nil
         ext = viewer ?? (current.editable ? NativePlugins.codePreview(for: current.url, code: scroll) ?? PluginStore.makeExtension(for: current.url, code: scroll) : nil)

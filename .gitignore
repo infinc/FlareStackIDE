@@ -13,3 +13,4 @@ venv/
 *.dmg.sig
 
 ARCHITECTURE.md
+graphify-out/
