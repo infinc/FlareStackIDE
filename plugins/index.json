@@ -219,7 +219,7 @@
   },
   {
     "id": "picture-video-viewer",
-    "name": "Picture/Video Viewer",
+    "name": "Picture & Video Viewer",
     "version": "1.5",
     "author": "FlareStackIDE",
     "symbol": "photo.on.rectangle",
@@ -474,6 +474,18 @@
     "summary": "Mermaid（.mmd / .mermaid）の図をコードの横にリアルタイムで表示",
     "fileExtensions": ["mmd", "mermaid"],
     "category": "ビューア",
+    "apiVersion": 4
+  },
+  {
+    "id": "html-preview",
+    "name": "HTML Preview",
+    "version": "1.0",
+    "author": "FlareStackIDE",
+    "symbol": "globe",
+    "summary": "HTML ファイルを同じフォルダの CSS / JS と一緒にリアルタイムでプレビュー",
+    "fileExtensions": ["html", "htm", "xhtml"],
+    "category": "ビューア",
+    "permissions": ["network"],
     "apiVersion": 4
   },
   {

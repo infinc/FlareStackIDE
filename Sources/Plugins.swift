@@ -1505,8 +1505,11 @@ final class ScriptExtension: NSObject, EditorExtension, WKNavigationDelegate {
         mode = next
         modes.selectedSegment = next.rawValue
         updateCollapsed()
-        code.isHidden = next == .preview
-        preview.isHidden = next == .code
+        let shown: [NSView] = next == .code ? [code] : next == .preview ? [preview] : [code, preview]
+        if split.arrangedSubviews != shown {
+            split.arrangedSubviews.forEach { split.removeArrangedSubview($0); $0.removeFromSuperview() }
+            shown.forEach { $0.isHidden = false; split.addArrangedSubview($0) }
+        }
         split.adjustSubviews()
         render()
         if next == .split {

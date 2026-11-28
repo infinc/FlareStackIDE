@@ -884,5 +884,8 @@ LSP: クイックフィックス => LSP: Quick Fix
 SVG をコピー => Copy SVG
 SVG をコピーしました => SVG copied
 Mermaid（.mmd / .mermaid）の図をコードの横にリアルタイムで表示 => Show Mermaid (.mmd / .mermaid) diagrams live next to the code
+HTML ファイルを同じフォルダの CSS / JS と一緒にリアルタイムでプレビュー => Live preview for HTML files with CSS / JS from the same folder
+同じフォルダの CSS / JS を自動で読み込む => Load CSS / JS in the same folder automatically
+外部（http / https）の読み込みを許可 => Allow loading external (http / https) resources
 """#
 }

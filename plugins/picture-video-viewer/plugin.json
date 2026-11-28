@@ -1,6 +1,6 @@
 {
   "id": "picture-video-viewer",
-  "name": "Picture/Video Viewer",
+  "name": "Picture & Video Viewer",
   "version": "1.5",
   "author": "FlareStackIDE",
   "symbol": "photo.on.rectangle",
@@ -11,7 +11,7 @@
   "files": ["plugin.dylib", "README.md"],
   "apiVersion": 4,
   "hashes": {
-    "README.md": "63ef42d34f7479db7a89a7b936adcea08e4afc1cc5a540077b6ab1f763c842a5",
+    "README.md": "ca21cb9abb04ce106b8de9123798bc4724c20992b7555c5367c03787de7e5c39",
     "plugin.dylib": "47053ceecfe327cad7a59200f05c43be278b81b29e5a72d3c3cab68663b4dce4"
   }
 }

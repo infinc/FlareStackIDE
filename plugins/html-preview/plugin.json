@@ -1,0 +1,26 @@
+{
+  "id": "html-preview",
+  "name": "HTML Preview",
+  "version": "1.0",
+  "author": "FlareStackIDE",
+  "symbol": "globe",
+  "summary": "HTML ファイルを同じフォルダの CSS / JS と一緒にリアルタイムでプレビュー",
+  "fileExtensions": ["html", "htm", "xhtml"],
+  "category": "ビューア",
+  "loadOnOpen": true,
+  "permissions": ["network"],
+  "files": ["plugin.dylib", "README.md"],
+  "settings": [
+    { "key": "autoInclude", "title": "同じフォルダの CSS / JS を自動で読み込む", "type": "bool", "default": "true" },
+    { "key": "allowNetwork", "title": "外部（http / https）の読み込みを許可", "type": "bool", "default": "false" },
+    { "key": "barColor", "title": "タブの背景色", "type": "color" },
+    { "key": "barTransparent", "title": "透明（ボタンだけを表示）", "type": "bool", "default": "true" },
+    { "key": "barMinimize", "title": "透明表示のとき最小化する", "type": "bool" },
+    { "key": "barPosition", "title": "透明表示のボタンの位置", "type": "choice", "options": ["右下", "右上", "左下", "左上"], "default": "右下" }
+  ],
+  "apiVersion": 4,
+  "hashes": {
+    "README.md": "720839398c02a312137054b18450700d7f4e957dbef7e27dd3dd6b2000f5c442",
+    "plugin.dylib": "c47303de2a0a425e7dc8d055a4fca57f682e4ac5a795013953194d1e0e2ea275"
+  }
+}

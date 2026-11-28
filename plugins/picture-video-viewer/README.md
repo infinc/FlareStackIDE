@@ -1,4 +1,4 @@
-# Picture/Video Viewer
+# Picture & Video Viewer
 
 写真と動画をファイル編集画面で表示するプラグインです。表示のみで、編集はできません。
 
